@@ -12,8 +12,6 @@ export default function ShopifyPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
-  const [isSending, setIsSending] = useState(false);
-  const [sendResult, setSendResult] = useState(null);
   // Hardcoded Bitrix webhook base URL
   const [bitrixWebhookUrl, setBitrixWebhookUrl] = useState('https://bfcshoes.bitrix24.eu/rest/52/i6l05o71ywxb8j1l');
   const [previewEvent, setPreviewEvent] = useState(null); // Event to preview
@@ -76,65 +74,6 @@ export default function ShopifyPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleSendToBitrix = async () => {
-    if (selectedEvents.length === 0) {
-      alert('Выберите хотя бы одно событие для отправки');
-      return;
-    }
-
-    if (!bitrixWebhookUrl || bitrixWebhookUrl.trim() === '') {
-      alert('Пожалуйста, укажите URL вебхука Bitrix');
-      return;
-    }
-
-    setIsSending(true);
-    setSendResult(null);
-
-    try {
-      const response = await fetch('/api/send-to-bitrix', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          selectedEvents,
-          bitrixWebhookUrl: bitrixWebhookUrl.trim()
-        })
-      });
-
-      const result = await response.json();
-
-      if (response.ok || response.status === 207) {
-        // 200 - все успешно, 207 - частичный успех
-        setSendResult({ 
-          success: result.success !== false, 
-          message: result.message,
-          details: result.errors && result.errors.length > 0 ? result.errors : null,
-          total: result.total,
-          successful: result.successful,
-          failed: result.failed,
-          results: result.results || [] // Store results for preview
-        });
-      } else {
-        // 400, 500 - ошибки
-        setSendResult({ 
-          success: false, 
-          message: result.error || 'Failed to send',
-          details: result.details || (result.errors && result.errors.length > 0 ? result.errors : null),
-          results: result.results || [] // Store results for preview
-        });
-      }
-    } catch (error) {
-      console.error('Send to Bitrix error:', error);
-      setSendResult({ 
-        success: false, 
-        message: 'Network error',
-        details: [{ error: error.message || 'Unknown network error' }]
-      });
-    } finally {
-      setIsSending(false);
-    }
-  };
 
   const handlePreviewEvent = (event) => {
     try {
@@ -149,15 +88,6 @@ export default function ShopifyPage() {
     }
   };
 
-  const handlePreviewFromResult = (resultItem) => {
-    if (resultItem.shopifyData && resultItem.bitrixData) {
-      setPreviewEvent(resultItem.shopifyData);
-      setPreviewData({
-        shopifyData: resultItem.shopifyData,
-        bitrixData: resultItem.bitrixData
-      });
-    }
-  };
 
   const handleSelectAll = () => {
     if (events.length > 0) {
@@ -169,63 +99,6 @@ export default function ShopifyPage() {
     setSelectedEvents([]);
   };
 
-  const handleSendPreviewEvent = async () => {
-    if (!previewEvent) {
-      alert('Нет события для отправки');
-      return;
-    }
-
-    if (!bitrixWebhookUrl || bitrixWebhookUrl.trim() === '') {
-      alert('Пожалуйста, укажите URL вебхука Bitrix');
-      return;
-    }
-
-    setIsSending(true);
-    setSendResult(null);
-
-    try {
-      const response = await fetch('/api/send-to-bitrix', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          selectedEvents: [previewEvent],
-          bitrixWebhookUrl: bitrixWebhookUrl.trim()
-        })
-      });
-
-      const result = await response.json();
-
-      if (response.ok || response.status === 207) {
-        setSendResult({ 
-          success: result.success !== false, 
-          message: result.message,
-          details: result.errors && result.errors.length > 0 ? result.errors : null,
-          total: result.total,
-          successful: result.successful,
-          failed: result.failed,
-          results: result.results || []
-        });
-      } else {
-        setSendResult({ 
-          success: false, 
-          message: result.error || 'Failed to send',
-          details: result.details || (result.errors && result.errors.length > 0 ? result.errors : null),
-          results: result.results || []
-        });
-      }
-    } catch (error) {
-      console.error('Send to Bitrix error:', error);
-      setSendResult({ 
-        success: false, 
-        message: 'Network error',
-        details: [{ error: error.message || 'Unknown network error' }]
-      });
-    } finally {
-      setIsSending(false);
-    }
-  };
 
   return (
     <>
@@ -246,59 +119,6 @@ export default function ShopifyPage() {
             </p>
           </div>
           <div className="header-actions">
-            {events.length > 0 && (
-              <>
-                {selectedEvents.length === events.length ? (
-                  <button
-                    onClick={handleDeselectAll}
-                    className="btn"
-                    style={{
-                      marginRight: '12px',
-                      background: '#6b7280',
-                      border: 'none',
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      color: 'white',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Снять выбор
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleSelectAll}
-                    className="btn"
-                    style={{
-                      marginRight: '12px',
-                      background: '#3b82f6',
-                      border: 'none',
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      color: 'white',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    ✓ Выбрать все ({events.length})
-                  </button>
-                )}
-              </>
-            )}
-            <button
-              onClick={handleSendToBitrix}
-              className="btn"
-              disabled={isSending || selectedEvents.length === 0}
-              style={{
-                marginRight: '12px',
-                background: selectedEvents.length > 0 ? '#059669' : '#6b7280',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '6px',
-                color: 'white',
-                cursor: selectedEvents.length > 0 ? 'pointer' : 'not-allowed'
-              }}
-            >
-              {isSending ? 'Отправка...' : `📤 Отправить в Bitrix (${selectedEvents.length})`}
-            </button>
             <button
               onClick={fetchEvents}
               className="btn"
@@ -312,107 +132,6 @@ export default function ShopifyPage() {
             </Link>
           </div>
         </header>
-
-        {sendResult && (
-          <div style={{
-            padding: '16px',
-            borderRadius: '8px',
-            marginBottom: '20px',
-            background: sendResult.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-            border: `1px solid ${sendResult.success ? '#059669' : '#ef4444'}`,
-            color: sendResult.success ? '#059669' : '#ef4444'
-          }}>
-            <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-              {sendResult.message}
-            </div>
-            {sendResult.total !== undefined && (
-              <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                Всего: {sendResult.total} | Успешно: {sendResult.successful || 0} | Ошибок: {sendResult.failed || 0}
-              </div>
-            )}
-            {sendResult.details && sendResult.details.length > 0 && (
-              <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали ошибок:</div>
-                {sendResult.details.map((err, idx) => (
-                  <div key={idx} style={{ 
-                    fontSize: '0.8rem', 
-                    marginBottom: '6px',
-                    padding: '6px 8px',
-                    background: 'rgba(0, 0, 0, 0.2)',
-                    borderRadius: '4px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}>
-                    <div>
-                      {err.eventId && <strong>Event ID {err.eventId}: </strong>}
-                      {err.error || err.message || 'Unknown error'}
-                      {err.details && <div style={{ marginTop: '4px', opacity: 0.8 }}>{err.details}</div>}
-                      {err.status && <div style={{ marginTop: '4px', opacity: 0.8 }}>HTTP {err.status}: {err.statusText || ''}</div>}
-                    </div>
-                    {(err.shopifyData && err.bitrixData) && (
-                      <button
-                        onClick={() => handlePreviewFromResult(err)}
-                        style={{
-                          padding: '4px 8px',
-                          background: '#3b82f6',
-                          border: 'none',
-                          borderRadius: '4px',
-                          color: '#f1f5f9',
-                          cursor: 'pointer',
-                          fontSize: '0.75rem',
-                          marginLeft: '8px'
-                        }}
-                      >
-                        👁️ Preview
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            {sendResult.results && sendResult.results.length > 0 && (
-              <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Результаты отправки:</div>
-                {sendResult.results.map((result, idx) => (
-                  <div key={idx} style={{ 
-                    fontSize: '0.8rem', 
-                    marginBottom: '6px',
-                    padding: '6px 8px',
-                    background: result.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                    borderRadius: '4px',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}>
-                    <div>
-                      {result.eventId && <strong>Event ID {result.eventId}: </strong>}
-                      {result.success ? '✓ Успешно отправлено' : (result.error || 'Ошибка отправки')}
-                      {result.status && <div style={{ marginTop: '4px', opacity: 0.8 }}>HTTP {result.status}</div>}
-                    </div>
-                    {(result.shopifyData && result.bitrixData) && (
-                      <button
-                        onClick={() => handlePreviewFromResult(result)}
-                        style={{
-                          padding: '4px 8px',
-                          background: '#3b82f6',
-                          border: 'none',
-                          borderRadius: '4px',
-                          color: '#f1f5f9',
-                          cursor: 'pointer',
-                          fontSize: '0.75rem',
-                          marginLeft: '8px'
-                        }}
-                      >
-                        👁️ Preview
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {lastRefresh && (
           <div style={{
@@ -496,8 +215,6 @@ export default function ShopifyPage() {
             shopifyData={previewData.shopifyData}
             bitrixData={previewData.bitrixData}
             eventId={previewEvent.id}
-            onSendEvent={handleSendPreviewEvent}
-            isSending={isSending}
           />
         )}
       </main>

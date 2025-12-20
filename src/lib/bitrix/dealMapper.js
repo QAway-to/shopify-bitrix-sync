@@ -125,3 +125,14 @@ export function mapShopifyOrderToBitrixDealFields(shopifyOrder, contactId = null
   return fields;
 }
 
+
+
+
+
+
+
+
+
+
+
+

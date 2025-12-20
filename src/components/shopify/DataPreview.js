@@ -1,36 +1,22 @@
 import { useState } from 'react';
 
-export default function DataPreview({ shopifyData, bitrixData, eventId, onSendEvent, isSending }) {
-  const [activeTab, setActiveTab] = useState('shopify'); // 'shopify' or 'bitrix'
+export default function DataPreview({ shopifyData, bitrixData, eventId, onSendEvent, isSending, eventType }) {
+  const [activeTab, setActiveTab] = useState(shopifyData ? 'shopify' : 'bitrix'); // 'shopify' or 'bitrix'
 
   if (!shopifyData && !bitrixData) {
     return null;
   }
 
+  const previewTitle = eventType === 'bitrix' 
+    ? `Data Preview ${eventId ? `(Deal #${eventId})` : ''}`
+    : `Data Preview ${eventId ? `(Order #${eventId})` : ''}`;
+
   return (
     <div className="card" style={{ marginTop: '20px' }}>
       <header className="card-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2>Data Preview {eventId && `(Order #${eventId})`}</h2>
+          <h2>{previewTitle}</h2>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {onSendEvent && shopifyData && (
-              <button
-                onClick={onSendEvent}
-                disabled={isSending}
-                style={{
-                  padding: '6px 12px',
-                  background: isSending ? '#6b7280' : '#059669',
-                  border: 'none',
-                  borderRadius: '6px',
-                  color: '#f1f5f9',
-                  cursor: isSending ? 'not-allowed' : 'pointer',
-                  fontSize: '0.9rem',
-                  fontWeight: 600
-                }}
-              >
-                {isSending ? 'Отправка...' : '📤 Отправить это событие'}
-              </button>
-            )}
             {shopifyData && (
               <button
                 onClick={() => setActiveTab('shopify')}
@@ -113,7 +99,9 @@ export default function DataPreview({ shopifyData, bitrixData, eventId, onSendEv
         {activeTab === 'bitrix' && bitrixData && (
           <div>
             <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ color: '#f1f5f9', fontSize: '1rem', margin: 0 }}>Transformed Bitrix24 Deal Data</h3>
+              <h3 style={{ color: '#f1f5f9', fontSize: '1rem', margin: 0 }}>
+                {eventType === 'bitrix' ? 'Bitrix24 Deal Data' : 'Transformed Bitrix24 Deal Data'}
+              </h3>
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(JSON.stringify(bitrixData, null, 2));

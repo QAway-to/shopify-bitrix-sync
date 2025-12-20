@@ -3,25 +3,25 @@
 
 export const BITRIX_CONFIG = {
   // Category ID (Funnel ID) for deals
-  CATEGORY_ID: 0, // TODO: Set actual category ID
+  CATEGORY_ID: 0, // Stock (in the shop) - default category
 
-  // Default stage IDs (should be replaced with actual stage IDs from your Bitrix24)
+  // Default stage IDs (matching Bitrix24 stages)
   STAGES: {
-    PAID: '', // TODO: Set stage ID for paid orders
-    PENDING: '', // TODO: Set stage ID for pending payment
-    REFUNDED: '', // TODO: Set stage ID for refunded
-    CANCELLED: '', // TODO: Set stage ID for cancelled
-    DEFAULT: '' // TODO: Set default stage ID
+    PAID: 'WON', // Success stage for paid orders
+    PENDING: 'NEW', // New stage for pending payment
+    REFUNDED: 'LOSE', // Loss stage for refunded
+    CANCELLED: 'LOSE', // Loss stage for cancelled
+    DEFAULT: 'NEW' // Default to NEW stage
   },
 
   // Source IDs mapping
   SOURCES: {
-    SHOPIFY_DRAFT_ORDER: '', // TODO: Set source ID for shopify_draft_order
-    SHOPIFY: '' // TODO: Set source ID for shopify
+    SHOPIFY_DRAFT_ORDER: 'WEB', // Use WEB for draft orders
+    SHOPIFY: 'WEB' // Use WEB for shopify orders
   },
 
-  // Product ID for shipping
-  SHIPPING_PRODUCT_ID: 0, // TODO: Set product ID for shipping if needed
+  // Product ID for shipping (from working script)
+  SHIPPING_PRODUCT_ID: 3000, // Real shipping product ID
 
   // SKU to Product ID mapping
   // TODO: Replace with actual product IDs from Bitrix24

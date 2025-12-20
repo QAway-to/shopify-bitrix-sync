@@ -3,10 +3,14 @@
  * Returns both deal fields and product rows
  */
 
-import { BITRIX_CONFIG, financialStatusToStageId, sourceNameToSourceId } from './config.js';
+import { BITRIX_CONFIG, financialStatusToStageId, financialStatusToPaymentStatus, sourceNameToSourceId } from './config.js';
 import skuMapping from './skuMapping.json' assert { type: 'json' };
 import handleMapping from './handleMapping.json' assert { type: 'json' };
 import brandMapping from './brandMapping.json' assert { type: 'json' };
+// ENHANCED MAPPING (закомментировано - используется семантический маппинг)
+// import skuMappingEnhanced from './skuMappingEnhanced.json' assert { type: 'json' };
+// ✅ SEMANTIC MAPPING: Используем семантический маппинг с 100% совпадениями
+import skuMappingSemantic from './skuMappingSemantic.json' assert { type: 'json' };
 import { resolveResponsibleId } from './responsible.js';
 
 /**
@@ -95,10 +99,19 @@ function parseColorFromTitle(title, properties = []) {
  * @returns {Object} { dealFields, productRows }
  */
 export function mapShopifyOrderToBitrixDeal(order) {
-  // Aggregates
+  // Aggregates - Log price calculation for refund detection
+  console.log(`[ORDER MAPPER] ===== PRICE CALCULATION =====`);
+  console.log(`[ORDER MAPPER] order.current_total_price: ${order.current_total_price}`);
+  console.log(`[ORDER MAPPER] order.total_price: ${order.total_price}`);
+  console.log(`[ORDER MAPPER] order.current_total_tax: ${order.current_total_tax}`);
+  console.log(`[ORDER MAPPER] order.total_tax: ${order.total_tax}`);
+  
   const totalPrice = Number(order.current_total_price || order.total_price || 0);
   const totalDiscount = Number(order.current_total_discounts || order.total_discounts || 0);
   const totalTax = Number(order.current_total_tax || 0);
+  
+  console.log(`[ORDER MAPPER] Calculated totalPrice: ${totalPrice}`);
+  console.log(`[ORDER MAPPER] Calculated totalTax: ${totalTax}`);
   const shippingPrice = Number(
     order.current_total_shipping_price_set?.shop_money?.amount ||
     order.total_shipping_price_set?.shop_money?.amount ||
@@ -107,42 +120,137 @@ export function mapShopifyOrderToBitrixDeal(order) {
     0
   );
 
-  // Determine if preorder
-  const isPreorder = order.source_name === 'pos'; // Add your conditions if needed
-  const sourceName = isPreorder ? 'offline (pre-order)' : 'online (stock)';
+  // Determine category based on order tags (pre-order tags → cat_8, otherwise cat_2)
+  const orderTags = Array.isArray(order.tags) 
+    ? order.tags 
+    : (order.tags ? String(order.tags).split(',').map(t => t.trim()) : []);
+  
+  const preorderTags = ['pre-order', 'preorder-product-added'];
+  const hasPreorderTag = orderTags.some(tag => 
+    preorderTags.some(preorderTag => tag.toLowerCase() === preorderTag.toLowerCase())
+  );
+  
+  const categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
+  console.log(`[ORDER MAPPER] Category determined: ${categoryId} (${hasPreorderTag ? 'Pre-order' : 'Stock'}) based on tags:`, orderTags);
 
   // Customer name
   const customerName = order.customer
     ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() || null
     : null;
 
-  // Map financial status to stage ID
-  const stageId = financialStatusToStageId(order.financial_status) || BITRIX_CONFIG.STAGES.DEFAULT;
+  // Map financial status to stage ID (based on category)
+  const stageId = financialStatusToStageId(order.financial_status, categoryId);
+  console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Stage "${stageId}" for category ${categoryId}`);
+  
+  // Map financial status to payment status field
+  const paymentStatusEnumId = financialStatusToPaymentStatus(order.financial_status);
+  console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Payment status enum ID "${paymentStatusEnumId}"`);
   
   // Map source name to source ID
   const sourceId = sourceNameToSourceId(order.source_name);
+  // SOURCE_DESCRIPTION: use actual source_name if available, otherwise default to 'shopify_draft_order'
+  const sourceName = order.source_name || 'shopify_draft_order';
 
-  // Deal fields (matching Python script structure)
+  // Determine order type based on source and pre-order status
+  // Bitrix field: UF_CRM_1739183268662 (enumeration)
+  // Values: "44" = "online (stock)", "46" = "ofline (stock)", "48" = "online (pre-order)", "50" = "ofline (pre-order)"
+  let orderTypeId = null;
+  if (order.source_name === 'pos') {
+    orderTypeId = hasPreorderTag ? '50' : '46'; // ofline (pre-order) or ofline (stock)
+  } else {
+    orderTypeId = hasPreorderTag ? '48' : '44'; // online (pre-order) or online (stock)
+  }
+  console.log(`[ORDER MAPPER] Order type determined: ID "${orderTypeId}" (source: ${order.source_name}, preorder: ${hasPreorderTag})`);
+
+  // Determine delivery method from shipping_lines
+  // Bitrix field: UF_CRM_1739183302609 (enumeration)
+  // Values: "52" = "Pick up in shop", "54" = "Delivery by courier"
+  let deliveryMethodId = null;
+  if (order.shipping_lines && Array.isArray(order.shipping_lines) && order.shipping_lines.length > 0) {
+    const shippingLine = order.shipping_lines[0];
+    // Check if it's pickup (shop pickup, store pickup, etc.)
+    const shippingTitle = (shippingLine.title || shippingLine.code || '').toLowerCase();
+    const shippingCode = (shippingLine.code || '').toLowerCase();
+    
+    if (shippingTitle.includes('pick') || shippingTitle.includes('shop') || 
+        shippingCode.includes('pick') || shippingCode.includes('shop') ||
+        shippingTitle.includes('самовывоз') || shippingTitle.includes('магазин')) {
+      deliveryMethodId = '52'; // Pick up in shop
+    } else {
+      deliveryMethodId = '54'; // Delivery by courier
+    }
+  } else {
+    // Also check fulfillment status for pickup
+    if (order.fulfillment_status) {
+      const fulfillmentStatus = String(order.fulfillment_status).toLowerCase();
+      if (fulfillmentStatus.includes('pick') || fulfillmentStatus.includes('shop')) {
+        deliveryMethodId = '52'; // Pick up in shop
+      } else {
+        deliveryMethodId = '54'; // Delivery by courier
+      }
+    } else if (shippingPrice > 0) {
+      // Default to courier delivery if shipping price > 0
+      deliveryMethodId = '54'; // Delivery by courier
+    }
+  }
+  
+  console.log(`[ORDER MAPPER] Delivery method determined: ID "${deliveryMethodId}"`);
+
+  // ✅ Calculate paid amount (total - refunds)
+  // current_total_price reflects refunds, total_price is original
+  const paidAmount = Number(order.current_total_price || order.total_price || 0);
+
+  // Deal fields - using REAL Bitrix UF_CRM_* fields only
   const dealFields = {
     TITLE: order.name || `Order #${order.id}`,
     OPPORTUNITY: totalPrice, // Final amount as in Shopify
     CURRENCY_ID: order.currency || 'EUR',
     COMMENTS: `Shopify order ${order.name || order.id}`,
-    CATEGORY_ID: BITRIX_CONFIG.CATEGORY_ID > 0 ? BITRIX_CONFIG.CATEGORY_ID : 0, // Use 0 if not configured
-    STAGE_ID: stageId || 'NEW', // Default to 'NEW' if not mapped
+    CATEGORY_ID: categoryId, // 2 = Stock (site), 8 = Pre-order (site) - REQUIRED for create, immutable after
+    STAGE_ID: stageId,
     SOURCE_ID: sourceId || 'WEB', // Default to 'WEB' if not mapped
-    SOURCE_DESCRIPTION: sourceName,
+    SOURCE_DESCRIPTION: sourceName || 'shopify_draft_order',
 
-    // Key to Shopify order
-    UF_SHOPIFY_ORDER_ID: String(order.id),
-    UF_SHOPIFY_CUSTOMER_EMAIL: order.email || order.customer?.email || null,
-    UF_SHOPIFY_CUSTOMER_NAME: customerName,
+    // ✅ Key to Shopify order - REAL Bitrix field
+    // UF_CRM_1742556489 (Shopify number) - store stable order.id (numeric Shopify order ID)
+    // NEVER use eventId here - eventId is webhook-specific and changes per webhook call
+    UF_CRM_1742556489: String(order.id),
 
-    // Aggregates for reports (as in Python script)
-    UF_SHOPIFY_TOTAL_DISCOUNT: totalDiscount,
-    UF_SHOPIFY_SHIPPING_PRICE: shippingPrice,
-    UF_SHOPIFY_TOTAL_TAX: totalTax,
+    // Order total - REAL Bitrix field
+    // UF_CRM_1741634415367 (Order total)
+    UF_CRM_1741634415367: Number(totalPrice),
+
+    // Paid amount - REAL Bitrix field
+    // UF_CRM_1741634439258 (Paid amount) - фактически оплачено (total - refunds)
+    UF_CRM_1741634439258: paidAmount,
+
+    // Delivery price - REAL Bitrix field (optional)
+    // UF_CRM_67BEF8B2AA721 (Delivery price)
+    ...(shippingPrice > 0 ? { UF_CRM_67BEF8B2AA721: shippingPrice } : {}),
+
+    // Payment status (enumeration) - REAL Bitrix field
+    // UF_CRM_1739183959976 (Payment status)
+    // Values: "56" = "Paid", "58" = "Unpaid", "60" = "10% prepayment"
+    UF_CRM_1739183959976: paymentStatusEnumId,
+
+    // Order type (enumeration) - UF_CRM_1739183268662
+    // Values: "44" = "online (stock)", "46" = "ofline (stock)", "48" = "online (pre-order)", "50" = "ofline (pre-order)"
+    UF_CRM_1739183268662: orderTypeId,
+
+    // Delivery method (enumeration) - UF_CRM_1739183302609
+    // Values: "52" = "Pick up in shop", "54" = "Delivery by courier"
+    // Only set if determined, otherwise leave empty (Bitrix will show empty)
+    ...(deliveryMethodId ? { UF_CRM_1739183302609: deliveryMethodId } : {}),
   };
+  
+  // Log all fields being sent for debugging
+  console.log(`[ORDER MAPPER] Deal fields prepared:`, {
+    ORDER_TYPE_ID: orderTypeId,
+    DELIVERY_METHOD_ID: deliveryMethodId,
+    PAYMENT_STATUS_ID: paymentStatusEnumId,
+    CATEGORY_ID: categoryId,
+    STAGE_ID: stageId
+  });
 
   // Resolve responsible: assign explicitly on create per mapping (Bitrix can reassign later)
   const assigneeId = resolveResponsibleId(order);
@@ -271,11 +379,29 @@ export function mapShopifyOrderToBitrixDeal(order) {
       : 3000; // Default shipping product ID
     
     for (const item of order.line_items) {
+      // ✅ ИСПРАВЛЕНИЕ: Используем current_quantity и пропускаем товары с quantity <= 0 (refunded/removed)
+      const currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
+      
+      if (currentQuantity <= 0) {
+        console.log(`[ORDER MAPPER] ⏭️ Skipping item ${item.id} (SKU: ${item.sku || 'N/A'}) - current_quantity is 0 (refunded/removed)`);
+        continue;
+      }
+      
       // CRITICAL: line_items are ALWAYS products, NEVER shipping
       // Even if a product has the same ID as shipping, it's still a product from line_items
       
-      // Try SKU mapping first
-      const productIdFromFile = item.sku ? skuMapping[item.sku] : null;
+      // ===== SEMANTIC MAPPING LOGIC (используется семантический маппинг с 100% совпадениями) =====
+      // Семантический маппинг использует:
+      // - Взвешенное сопоставление (Brand 40%, Model 30%, Color 20%, Type 10%)
+      // - Семантический анализ цветов (синонимы: lion=beige, jeans=blue, и т.д.)
+      // - Расширенный словарь цветов (50+ цветов)
+      // - Динамические пороги сопоставления
+      // - Jaccard similarity + Sequence similarity для семантического анализа
+      // Try semantic SKU mapping first (with semantic analysis and weighted matching)
+      const productIdFromSemantic = item.sku ? skuMappingSemantic[item.sku] : null;
+      // ENHANCED MAPPING (закомментировано - используется семантический)
+      // const productIdFromEnhanced = item.sku ? skuMappingEnhanced[item.sku] : null; // Fallback to enhanced
+      const productIdFromOldMapping = item.sku ? skuMapping[item.sku] : null; // Fallback to old mapping
       const productIdFromConfig = item.sku ? BITRIX_CONFIG.SKU_TO_PRODUCT_ID[item.sku] : null;
 
       // Try handle-based mapping (with a small normalization removing "barefoot-")
@@ -283,7 +409,15 @@ export function mapShopifyOrderToBitrixDeal(order) {
       const normHandle = rawHandle ? rawHandle.toLowerCase().replace('barefoot-', '') : null;
       const productIdFromHandle = normHandle ? (handleMapping[normHandle] || handleMapping[rawHandle]) : null;
 
-      let productId = productIdFromFile || productIdFromHandle || productIdFromConfig || null;
+      // Use semantic mapping with fallback chain
+      let productId = productIdFromSemantic || productIdFromOldMapping || productIdFromHandle || productIdFromConfig || null;
+      
+      // Log if semantic mapping was used
+      if (productIdFromSemantic) {
+        if (!productIdFromOldMapping) {
+          console.log(`[ORDER MAPPER] ✅ Semantic mapping used for SKU: ${item.sku} -> Product ID: ${productIdFromSemantic}`);
+        }
+      }
       
       // Safety check: if product ID matches shipping ID, log warning but keep it as product
       // (line_items are always products, even if they accidentally have shipping ID)
@@ -366,7 +500,8 @@ export function mapShopifyOrderToBitrixDeal(order) {
         taxRate = Number(order.tax_lines[0].rate || 0) * 100;
       }
 
-      const quantity = Number(item.quantity || 1);
+      // ✅ ИСПРАВЛЕНИЕ: Используем currentQuantity (актуальное количество после refund)
+      const quantity = currentQuantity;
 
       // Add one row per quantity
       // IMPORTANT: Always include PRODUCT_NAME even when PRODUCT_ID is set
@@ -439,16 +574,16 @@ export function mapShopifyOrderToBitrixDeal(order) {
   const hasValidShippingTitle = shippingLineTitle && shippingLineTitle.trim().length > 0;
   
   if (actualShippingPrice > 0 && hasValidShippingTitle && (hasShippingLines || hasExplicitShippingPrice)) {
-    // CRITICAL: Shipping should NEVER use PRODUCT_ID to avoid conflicts with regular products
-    // Some products may have PRODUCT_ID = 3000 (or SHIPPING_PRODUCT_ID), which would cause confusion
-    // Solution: Use ONLY PRODUCT_NAME for shipping, NO PRODUCT_ID
-    // This ensures shipping is always displayed correctly, regardless of product mappings
+    // Use PRODUCT_ID for shipping (matching working script)
+    const shippingProductId = BITRIX_CONFIG.SHIPPING_PRODUCT_ID > 0 
+      ? BITRIX_CONFIG.SHIPPING_PRODUCT_ID 
+      : 3000; // Default shipping product ID from working script
     
-    const shippingName = `Shipping: ${shippingLineTitle}`;
+    const shippingName = shippingLineTitle || 'Shipping';
     
     productRows.push({
-      // DO NOT set PRODUCT_ID for shipping - this prevents conflicts with products that might have the same ID
-      PRODUCT_NAME: shippingName, // Explicit name - this is the ONLY identifier for shipping
+      PRODUCT_ID: shippingProductId, // Use shipping product ID (3000 from working script)
+      PRODUCT_NAME: shippingName, // Explicit name for visibility
       PRICE: actualShippingPrice,
       QUANTITY: 1,
       DISCOUNT_TYPE_ID: 1,
@@ -457,7 +592,7 @@ export function mapShopifyOrderToBitrixDeal(order) {
       TAX_RATE: 19.0, // Default tax rate for shipping
     });
     
-    console.log(`[ORDER MAPPER] Added shipping row (NO PRODUCT_ID): ${shippingName}, Price: ${actualShippingPrice}`);
+    console.log(`[ORDER MAPPER] Added shipping row (PRODUCT_ID: ${shippingProductId}): ${shippingName}, Price: ${actualShippingPrice}`);
   } else if (shippingPrice > 0 && !hasShippingLines) {
     // Log warning if we have shipping price but no shipping_lines (potential data issue)
     console.warn(`[ORDER MAPPER] Shipping price detected (${shippingPrice}) but no shipping_lines found. Skipping shipping row to avoid confusion.`);

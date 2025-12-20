@@ -119,4 +119,3 @@ export async function setBitrixDealProductRows(webhookUrl, dealId, rows) {
     return false;
   }
 }
-

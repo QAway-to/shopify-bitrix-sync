@@ -1,6 +1,51 @@
 // Shopify Webhook Adapter
-// In-memory storage for received events
-let receivedEvents = [];
+// Persistent storage for received events
+import { mapShopifyOrderToBitrixDeal } from '../../bitrix/orderMapper.js';
+import { BITRIX_CONFIG, financialStatusToStageId } from '../../bitrix/config.js';
+import fs from 'fs';
+import path from 'path';
+
+// Storage file path
+const STORAGE_DIR = path.join(process.cwd(), '.data');
+const STORAGE_FILE = path.join(STORAGE_DIR, 'shopify-events.json');
+
+// Ensure storage directory exists
+function ensureStorageDir() {
+  if (!fs.existsSync(STORAGE_DIR)) {
+    fs.mkdirSync(STORAGE_DIR, { recursive: true });
+    console.log(`[SHOPIFY ADAPTER] Created storage directory: ${STORAGE_DIR}`);
+  }
+}
+
+// Load events from file
+function loadEventsFromFile() {
+  try {
+    ensureStorageDir();
+    if (fs.existsSync(STORAGE_FILE)) {
+      const fileContent = fs.readFileSync(STORAGE_FILE, 'utf8');
+      const events = JSON.parse(fileContent);
+      console.log(`[SHOPIFY ADAPTER] ✅ Loaded ${events.length} events from persistent storage`);
+      return events;
+    }
+  } catch (error) {
+    console.error(`[SHOPIFY ADAPTER] ⚠️ Error loading events from file:`, error);
+  }
+  return [];
+}
+
+// Save events to file
+function saveEventsToFile(events) {
+  try {
+    ensureStorageDir();
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify(events, null, 2), 'utf8');
+    console.log(`[SHOPIFY ADAPTER] 💾 Saved ${events.length} events to persistent storage`);
+  } catch (error) {
+    console.error(`[SHOPIFY ADAPTER] ⚠️ Error saving events to file:`, error);
+  }
+}
+
+// Initialize with persistent storage
+let receivedEvents = loadEventsFromFile();
 
 /**
  * Shopify Webhook Adapter
@@ -9,6 +54,7 @@ let receivedEvents = [];
 export class ShopifyAdapter {
   constructor() {
     this.storage = receivedEvents; // Reference to in-memory array
+    console.log(`[SHOPIFY ADAPTER] Initialized with ${this.storage.length} events from storage`);
   }
 
   getName() {
@@ -121,9 +167,10 @@ export class ShopifyAdapter {
   /**
    * Store webhook event
    * @param {Object} payload - Validated webhook payload
+   * @param {string} topic - Webhook topic (e.g., 'orders/create', 'orders/updated')
    * @returns {Object} Stored event with timestamp
    */
-  storeEvent(payload) {
+  storeEvent(payload, topic = null) {
     // Generate unique event ID (timestamp + random to ensure uniqueness)
     const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
@@ -132,33 +179,60 @@ export class ShopifyAdapter {
       received_at: new Date().toISOString(),
       id: uniqueId, // Unique ID for each event
       eventId: uniqueId, // Also store as eventId for clarity
-      orderId: payload.id || null // Store original order ID separately
+      orderId: payload.id || null, // Store original order ID separately
+      topic: topic || payload.topic || payload.x_shopify_topic || 'unknown' // Store topic for deduplication
     };
     
+    console.log(`[SHOPIFY ADAPTER] 📥 Storing event: orderId=${event.orderId}, topic=${event.topic}, eventId=${event.id}`);
+    
     this.storage.push(event);
+    
+    // Save to persistent storage (sync, blocking to ensure data is saved)
+    saveEventsToFile(this.storage);
+    
+    console.log(`[SHOPIFY ADAPTER] ✅ Event stored. Total events: ${this.storage.length}`);
+    
     return event;
   }
 
   /**
-   * Get all events (newest first, deduplicated by orderId + received_at)
+   * Get all events (newest first, deduplicated by orderId + topic)
+   * Keeps separate events for different topics (orders/create, orders/updated)
    * @returns {Array<Object>} All stored events
    */
   getAllEvents() {
-    // Remove duplicates: keep only the latest event for each unique orderId
+    // Remove duplicates: keep only the latest event for each unique (orderId + topic) combination
     const seen = new Map();
     const uniqueEvents = [];
+    let skippedCount = 0;
+    
+    console.log(`[SHOPIFY ADAPTER] 🔍 Starting deduplication: ${this.storage.length} total events`);
     
     // Process in reverse order (newest first) and keep only the first occurrence
     for (let i = this.storage.length - 1; i >= 0; i--) {
       const event = this.storage[i];
       const orderId = event.orderId || event.id;
+      const topic = event.topic || event.x_shopify_topic || 'unknown';
       
-      // If we haven't seen this orderId yet, or this event is newer, keep it
-      if (!seen.has(orderId)) {
-        seen.set(orderId, event);
+      // Create unique key: orderId + topic (so orders/create and orders/updated are separate)
+      const dedupeKey = `${orderId}:${topic}`;
+      
+      // If we haven't seen this (orderId + topic) combination yet, keep it
+      if (!seen.has(dedupeKey)) {
+        seen.set(dedupeKey, event);
         uniqueEvents.unshift(event); // Add to beginning to maintain newest-first order
+        
+        // Log deduplication decision
+        console.log(`[SHOPIFY ADAPTER] ✅ Keeping event: orderId=${orderId}, topic=${topic}, eventId=${event.id || event.eventId}, received_at=${event.received_at}`);
+      } else {
+        // Log what we're skipping
+        const existingEvent = seen.get(dedupeKey);
+        skippedCount++;
+        console.log(`[SHOPIFY ADAPTER] ⏭️ Skipping duplicate: orderId=${orderId}, topic=${topic}, existingEventId=${existingEvent.id || existingEvent.eventId} (${existingEvent.received_at}), newEventId=${event.id || event.eventId} (${event.received_at})`);
       }
     }
+    
+    console.log(`[SHOPIFY ADAPTER] 📊 Deduplication result: ${this.storage.length} total events → ${uniqueEvents.length} unique events (skipped ${skippedCount} duplicates)`);
     
     return uniqueEvents;
   }
@@ -189,12 +263,16 @@ export class ShopifyAdapter {
   clearEvents() {
     const count = this.storage.length;
     this.storage.length = 0;
+    // Also clear persistent storage
+    saveEventsToFile(this.storage);
+    console.log(`[SHOPIFY ADAPTER] 🗑️ Cleared ${count} events from memory and persistent storage`);
     return count;
   }
 
   /**
    * Transform Shopify order to Bitrix24 crm.deal.add format
-   * @param {Object} shopifyOrder - Shopify webhook order data
+   * Uses the unified mapShopifyOrderToBitrixDeal mapper to ensure consistency
+   * @param {Object} shopifyOrder - Shopify webhook order data (from storeEvent, may have orderId property)
    * @returns {Object} Bitrix24 deal format
    */
   transformToBitrix(shopifyOrder) {
@@ -202,113 +280,53 @@ export class ShopifyAdapter {
       throw new Error('Invalid Shopify order data');
     }
 
-    // Helper function to safely get value or null
-    const getValue = (value, transform = null) => {
-      if (value === undefined || value === null || value === '') {
-        return null;
-      }
-      return transform ? transform(value) : value;
-    };
-
-    // Helper to parse number from string
-    const parseNumber = (value) => {
-      if (value === null || value === undefined || value === '') return null;
-      const num = typeof value === 'string' ? parseFloat(value) : value;
-      return isNaN(num) ? null : num;
-    };
-
-    // Helper to format date
-    const formatDate = (dateString) => {
-      if (!dateString) return null;
-      try {
-        const date = new Date(dateString);
-        return date.toISOString().split('T')[0]; // YYYY-MM-DD format
-      } catch {
-        return null;
-      }
-    };
-
-    // Calculate totals - use real data from Shopify
-    const totalPrice = parseNumber(shopifyOrder.total_price || shopifyOrder.total_price_set?.shop_money?.amount);
-    const totalTax = parseNumber(shopifyOrder.total_tax || shopifyOrder.total_tax_set?.shop_money?.amount);
+    // ✅ CRITICAL: Use orderId (stable order.id from Shopify), not id (which might be eventId)
+    // In storeEvent, we store: id = eventId (unique), orderId = payload.id (stable order.id)
+    // So use orderId if available, otherwise fall back to id (for backward compatibility)
+    const stableOrderId = shopifyOrder.orderId || shopifyOrder.id;
     
-    // Calculate total discount from discount codes or discount_amount
-    let totalDiscount = null;
-    if (shopifyOrder.discount_codes && Array.isArray(shopifyOrder.discount_codes) && shopifyOrder.discount_codes.length > 0) {
-      totalDiscount = shopifyOrder.discount_codes.reduce((sum, code) => {
-        const amount = parseNumber(code.amount);
-        return sum + (amount || 0);
-      }, 0);
-      if (totalDiscount === 0) totalDiscount = null;
-    } else if (shopifyOrder.total_discounts) {
-      totalDiscount = parseNumber(shopifyOrder.total_discounts);
+    // Prepare order object for mapper (ensure id is the stable order.id, not eventId)
+    const orderForMapper = {
+      ...shopifyOrder,
+      id: stableOrderId, // Use stable order.id
+      // Preserve eventId if it exists for UF_SHOPIFY_EVENT_ID
+      eventId: shopifyOrder.eventId || shopifyOrder.id, // eventId might be in id if this came from storeEvent
+    };
+    
+    // Use the unified mapper function (same as webhook handlers)
+    // This ensures consistency: CATEGORY_ID, STAGE_ID, UF_SHOPIFY_ORDER_ID are all set correctly
+    const { dealFields } = mapShopifyOrderToBitrixDeal(orderForMapper);
+    
+    // ✅ ENSURE: UF_CRM_1742556489 (Shopify number) uses stable order.id (not eventId)
+    dealFields.UF_CRM_1742556489 = String(stableOrderId);
+
+    // ✅ ENSURE: CATEGORY_ID and STAGE_ID are set (they should be set by mapShopifyOrderToBitrixDeal)
+    // But verify they're not null (fail-safe check)
+    if (!dealFields.CATEGORY_ID) {
+      // Determine category based on order tags
+      const orderTags = Array.isArray(shopifyOrder.tags) 
+        ? shopifyOrder.tags 
+        : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
+      const preorderTags = ['pre-order', 'preorder-product-added'];
+      const hasPreorderTag = orderTags.some(tag => 
+        preorderTags.some(preorderTag => tag.toLowerCase() === preorderTag.toLowerCase())
+      );
+      dealFields.CATEGORY_ID = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
     }
     
-    const shippingPrice = parseNumber(
-      shopifyOrder.total_shipping_price_set?.shop_money?.amount || 
-      shopifyOrder.shipping_price || 
-      shopifyOrder.total_shipping_price_set?.amount
-    );
-
-    // Format line items - use real data from Shopify
-    const lineItems = shopifyOrder.line_items && Array.isArray(shopifyOrder.line_items)
-      ? shopifyOrder.line_items.map(item => ({
-          id: item.id || null,
-          title: item.title || item.name || null,
-          quantity: item.quantity || null,
-          price: parseNumber(item.price || item.price_set?.shop_money?.amount),
-          sku: item.sku || null,
-          variant_id: item.variant_id || item.variant_id || null,
-          product_id: item.product_id || null
-        }))
-      : null;
-
-    // Customer name - use real data
-    const customerName = shopifyOrder.customer
-      ? `${getValue(shopifyOrder.customer.first_name) || ''} ${getValue(shopifyOrder.customer.last_name) || ''}`.trim() || null
-      : (shopifyOrder.billing_address 
-          ? `${getValue(shopifyOrder.billing_address.first_name) || ''} ${getValue(shopifyOrder.billing_address.last_name) || ''}`.trim() || null
-          : null);
-
-    // Customer email - use real data
-    const customerEmail = shopifyOrder.customer?.email || 
-                         shopifyOrder.email || 
-                         shopifyOrder.billing_address?.email || 
-                         null;
-
-    // Order title - use real order number or name
-    const orderTitle = shopifyOrder.order_number 
-      ? `#${shopifyOrder.order_number}`
-      : (shopifyOrder.name || `Order #${shopifyOrder.id || 'Unknown'}`);
-
-    // Build Bitrix24 deal structure with real data
-    const bitrixDeal = {
-      fields: {
-        TITLE: orderTitle,
-        TYPE_ID: null, // Not available in Shopify order
-        STAGE_ID: null, // Not available in Shopify order
-        CATEGORY_ID: null, // Not available in Shopify order
-        CURRENCY_ID: getValue(shopifyOrder.currency) || null,
-        OPPORTUNITY: totalPrice,
-        ASSIGNED_BY_ID: null, // Not available in Shopify order
-        COMMENTS: getValue(shopifyOrder.note) || null,
-        UF_SHOPIFY_ORDER_ID: getValue(shopifyOrder.id?.toString()) || null,
-        UF_SHOPIFY_CUSTOMER_EMAIL: customerEmail,
-        UF_SHOPIFY_CUSTOMER_NAME: customerName,
-        UF_SHOPIFY_LINE_ITEMS: lineItems,
-        UF_SHOPIFY_TOTAL_TAX: totalTax,
-        UF_SHOPIFY_TOTAL_DISCOUNT: totalDiscount,
-        UF_SHOPIFY_SHIPPING_PRICE: shippingPrice,
-        CONTACT_ID: null, // Not available in Shopify order
-        COMPANY_ID: null, // Not available in Shopify order
-        BEGINDATE: formatDate(shopifyOrder.created_at),
-        CLOSEDATE: formatDate(shopifyOrder.updated_at || shopifyOrder.created_at),
-        SOURCE_ID: null, // Not available in Shopify order
-        SOURCE_DESCRIPTION: getValue(shopifyOrder.source_name) || null
-      }
+    if (!dealFields.STAGE_ID) {
+      // Map financial status to stage ID using the same function as webhook handlers
+      dealFields.STAGE_ID = financialStatusToStageId(
+        shopifyOrder.financial_status,
+        dealFields.CATEGORY_ID || BITRIX_CONFIG.CATEGORY_STOCK,
+        null // currentStageId (not needed for new deals)
+      );
+    }
+    
+    // Return in the format expected by send-to-bitrix endpoint
+    return {
+      fields: dealFields
     };
-
-    return bitrixDeal;
   }
 }
 

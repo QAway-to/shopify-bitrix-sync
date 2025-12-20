@@ -1,13 +1,13 @@
-export default function EventsList({ events, onSelectionChange, selectedEvents = [], onPreviewEvent }) {
+export default function BitrixEventsList({ events, selectedEvents = [], onSelectionChange, onPreviewEvent }) {
   if (!events || events.length === 0) {
     return (
       <div className="card">
         <header className="card-header">
-          <h2>Received Events</h2>
+          <h2>Bitrix → Shopify Events</h2>
         </header>
         <div className="alert alert-info">
           <strong>No events yet</strong>
-          <p>Webhook events will appear here once Shopify starts sending them.</p>
+          <p>Webhook events from Bitrix will appear here once Bitrix starts sending them.</p>
         </div>
       </div>
     );
@@ -32,22 +32,18 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
   };
 
   const handleSelectEvent = (event, checked) => {
-    // Use event.id (unique event ID) for comparison, not orderId
     const eventId = event.id || event.eventId;
     
     if (checked) {
-      // Only add if not already selected
       if (!selectedEvents.some(e => (e.id || e.eventId) === eventId)) {
         onSelectionChange([...selectedEvents, event]);
       }
     } else {
-      // Remove by unique event ID
       onSelectionChange(selectedEvents.filter(e => (e.id || e.eventId) !== eventId));
     }
   };
 
   const isSelected = (event) => {
-    // Use unique event ID for comparison
     const eventId = event.id || event.eventId;
     return selectedEvents.some(e => (e.id || e.eventId) === eventId);
   };
@@ -58,7 +54,7 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
     <div className="card" style={{ width: '100%', minHeight: '300px', display: 'flex', flexDirection: 'column' }}>
       <header className="card-header" style={{ flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2>Received Events ({events.length})</h2>
+          <h2>Bitrix → Shopify Events ({events.length})</h2>
           {selectedEvents.length > 0 && (
             <span style={{ color: '#3b82f6', fontSize: '0.9rem' }}>
               Выбрано: {selectedEvents.length}
@@ -70,7 +66,7 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
         <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
           <thead>
             <tr style={{ borderBottom: '2px solid #334155' }}>
-              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', width: '50px' }}>
+              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', width: '40px' }}>
                 <input
                   type="checkbox"
                   checked={isAllSelected}
@@ -78,12 +74,12 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
                   style={{ margin: 0 }}
                 />
               </th>
-              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>ID</th>
-              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Email</th>
-              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Total</th>
-              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Currency</th>
+              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Deal ID</th>
+              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Shopify Order ID</th>
+              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Category</th>
+              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Stage</th>
+              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Fulfillment</th>
               <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Received At</th>
-              <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8' }}>Items</th>
               {onPreviewEvent && (
                 <th style={{ padding: '12px', textAlign: 'left', color: '#94a3b8', width: '60px' }}>Preview</th>
               )}
@@ -92,8 +88,24 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
           <tbody>
             {events.map((event, index) => {
               const eventId = event.id || event.eventId || `event-${index}`;
-              const orderId = event.orderId || event.id || 'N/A';
+              const dealId = event.dealId || 'N/A';
+              const shopifyOrderId = event.shopifyOrderId || 'N/A';
+              const categoryId = event.categoryId || 'N/A';
+              const stageId = event.stageId || 'N/A';
+              const fulfillmentState = event.fulfillmentState || 'unknown';
               const isEventSelected = isSelected(event);
+
+              // Format fulfillment state for display
+              const getFulfillmentStateDisplay = (state) => {
+                const stateMap = {
+                  'fulfilled': { text: 'fulfilled', color: '#10b981' },
+                  'partial': { text: 'partial', color: '#f59e0b' },
+                  'unfulfilled': { text: 'unfulfilled', color: '#ef4444' },
+                  'unknown': { text: 'unknown', color: '#94a3b8' }
+                };
+                return stateMap[state] || stateMap['unknown'];
+              };
+              const fulfillmentDisplay = getFulfillmentStateDisplay(fulfillmentState);
               
               return (
               <tr
@@ -102,12 +114,6 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
                   borderBottom: '1px solid #334155',
                   backgroundColor: isEventSelected ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
                   transition: 'background-color 0.2s'
-                }}
-                onMouseEnter={() => {
-                  // Do nothing on hover - prevent auto-selection
-                }}
-                onMouseLeave={() => {
-                  // Do nothing on hover - prevent auto-selection
                 }}
               >
                 <td style={{ padding: '12px' }}>
@@ -124,15 +130,21 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
                     style={{ margin: 0, cursor: 'pointer' }}
                   />
                 </td>
-                <td style={{ padding: '12px', color: '#f1f5f9' }}>{orderId}</td>
-                <td style={{ padding: '12px', color: '#f1f5f9' }}>{event.email || 'N/A'}</td>
-                <td style={{ padding: '12px', color: '#f1f5f9' }}>{event.total_price || 'N/A'}</td>
-                <td style={{ padding: '12px', color: '#f1f5f9' }}>{event.currency || 'N/A'}</td>
+                <td style={{ padding: '12px', color: '#f1f5f9' }}>{dealId}</td>
+                <td style={{ padding: '12px', color: '#f1f5f9' }}>{shopifyOrderId}</td>
+                <td style={{ padding: '12px', color: '#f1f5f9' }}>{categoryId}</td>
+                <td style={{ padding: '12px', color: '#f1f5f9' }}>{stageId}</td>
+                <td style={{ padding: '12px' }}>
+                  <span style={{
+                    color: fulfillmentDisplay.color,
+                    fontWeight: 600,
+                    fontSize: '0.9rem'
+                  }}>
+                    {fulfillmentDisplay.text}
+                  </span>
+                </td>
                 <td style={{ padding: '12px', color: '#94a3b8', fontSize: '0.9rem' }}>
                   {formatDate(event.received_at || event.created_at)}
-                </td>
-                <td style={{ padding: '12px', color: '#f1f5f9' }}>
-                  {event.line_items ? event.line_items.length : 0}
                 </td>
                 {onPreviewEvent && (
                   <td style={{ padding: '12px', textAlign: 'center' }}>
