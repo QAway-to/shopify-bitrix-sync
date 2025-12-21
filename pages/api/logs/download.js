@@ -57,48 +57,16 @@ export default async function handler(req, res) {
           const eventId = event.id || event.eventId || `event-${index}`;
           const orderId = event.orderId || event.id || 'N/A';
           const receivedAt = event.received_at || event.created_at || 'N/A';
+          const totalPrice = event.current_total_price || event.total_price || 'N/A';
           const currency = event.currency || 'EUR';
           const financialStatus = event.financial_status || 'N/A';
           const lineItemsCount = event.line_items ? event.line_items.length : 0;
-
-          // ✅ Calculate sum of active items (matches Bitrix OPPORTUNITY calculation)
-          let activeItemsTotal = 0;
-          if (event.line_items && Array.isArray(event.line_items)) {
-            for (const item of event.line_items) {
-              const currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
-              if (currentQuantity > 0) {
-                const itemPrice = Number(item.price || 0);
-                const itemTotal = itemPrice * currentQuantity;
-                const itemDiscount = Number(
-                  item.discount_allocations?.[0]?.amount ||
-                  item.discount_allocations?.[0]?.amount_set?.shop_money?.amount ||
-                  item.total_discount ||
-                  0
-                );
-                activeItemsTotal += itemTotal - itemDiscount;
-              }
-            }
-            // Add shipping
-            const shippingPrice = Number(
-              event.current_total_shipping_price_set?.shop_money?.amount ||
-              event.total_shipping_price_set?.shop_money?.amount ||
-              event.shipping_price ||
-              event.shipping_lines?.[0]?.price ||
-              0
-            );
-            activeItemsTotal += shippingPrice;
-          }
-          // Fallback if calculation failed
-          if (activeItemsTotal === 0) {
-            activeItemsTotal = Number(event.current_total_price || event.total_price || 0);
-          }
 
           logs.push(`Event #${index + 1}: ${eventId}`);
           logs.push(`  Order ID: ${orderId}`);
           logs.push(`  Email: ${event.email || 'N/A'}`);
           logs.push(`  Received At: ${receivedAt}`);
-          logs.push(`  Total Price (Paid): ${event.current_total_price || event.total_price || 'N/A'} ${currency}`);
-          logs.push(`  Active Items Total (Sum of active items): ${activeItemsTotal.toFixed(2)} ${currency}`);
+          logs.push(`  Total Price: ${totalPrice} ${currency}`);
           logs.push(`  Financial Status: ${financialStatus}`);
           logs.push(`  Line Items: ${lineItemsCount}`);
           
@@ -221,6 +189,145 @@ export default async function handler(req, res) {
       logs.push('');
     }
 
+    // ✅ Add RETRY ATTEMPTS section
+    logs.push('='.repeat(80));
+    logs.push('RETRY ATTEMPTS');
+    logs.push('='.repeat(80));
+    logs.push('');
+
+    try {
+      const operations = successAdapter.getAllOperations();
+      
+      if (operations && operations.length > 0) {
+        const operationsWithRetries = operations.filter(op => op.attempt && op.attempt > 1);
+        
+        if (operationsWithRetries.length > 0) {
+          logs.push(`Total operations with retries: ${operationsWithRetries.length}`);
+          logs.push('');
+          
+          operationsWithRetries.forEach((op, index) => {
+            logs.push(`Retry Operation #${index + 1}: ${op.id || op.operationId}`);
+            logs.push(`  Type: ${op.operationType || 'N/A'}`);
+            logs.push(`  Deal ID: ${op.dealId || 'N/A'}`);
+            logs.push(`  Shopify Order ID: ${op.shopifyOrderId || 'N/A'}`);
+            logs.push(`  Attempt: ${op.attempt || 'N/A'}`);
+            logs.push(`  Was Duplicate: ${op.wasDuplicate ? 'Yes' : 'No'}`);
+            logs.push(`  Timestamp: ${op.timestamp || op.stored_at || 'N/A'}`);
+            logs.push('');
+          });
+        } else {
+          logs.push('No operations required retries (all succeeded on first attempt).');
+          logs.push('');
+        }
+      } else {
+        logs.push('No operations found to analyze retries.');
+        logs.push('');
+      }
+    } catch (error) {
+      logs.push(`Error collecting retry information: ${error.message}`);
+      logs.push('');
+    }
+
+    // ✅ Add VERIFICATION RESULTS section
+    logs.push('='.repeat(80));
+    logs.push('VERIFICATION RESULTS');
+    logs.push('='.repeat(80));
+    logs.push('');
+
+    try {
+      const operations = successAdapter.getAllOperations();
+      
+      if (operations && operations.length > 0) {
+        const verifiedOperations = operations.filter(op => op.verified === true);
+        const unverifiedOperations = operations.filter(op => op.verified === false);
+        
+        logs.push(`Total operations: ${operations.length}`);
+        logs.push(`  Verified: ${verifiedOperations.length}`);
+        logs.push(`  Unverified: ${unverifiedOperations.length}`);
+        logs.push('');
+        
+        if (unverifiedOperations.length > 0) {
+          logs.push(`Unverified Operations (${unverifiedOperations.length}):`);
+          logs.push('');
+          unverifiedOperations.forEach((op, index) => {
+            logs.push(`  ${index + 1}. Operation: ${op.id || op.operationId}`);
+            logs.push(`     Type: ${op.operationType || 'N/A'}`);
+            logs.push(`     Deal ID: ${op.dealId || 'N/A'}`);
+            logs.push(`     Shopify Order ID: ${op.shopifyOrderId || 'N/A'}`);
+            logs.push(`     Timestamp: ${op.timestamp || op.stored_at || 'N/A'}`);
+            logs.push(`     Note: Deal may have been deleted or verification failed`);
+            logs.push('');
+          });
+        } else {
+          logs.push('All operations were successfully verified.');
+          logs.push('');
+        }
+      } else {
+        logs.push('No operations found to analyze verification.');
+        logs.push('');
+      }
+    } catch (error) {
+      logs.push(`Error collecting verification information: ${error.message}`);
+      logs.push('');
+    }
+
+    // ✅ Add ERRORS AND FAILURES section
+    logs.push('='.repeat(80));
+    logs.push('ERRORS AND FAILURES');
+    logs.push('='.repeat(80));
+    logs.push('');
+    logs.push('Note: Detailed error logs are available in server-side console output.');
+    logs.push('This section tracks operations that may indicate issues:');
+    logs.push('');
+    
+    try {
+      const operations = successAdapter.getAllOperations();
+      
+      if (operations && operations.length > 0) {
+        // Check for operations with high retry counts (may indicate issues)
+        const highRetryOperations = operations.filter(op => op.attempt && op.attempt >= 3);
+        
+        // Check for unverified operations (may indicate failures)
+        const unverifiedOperations = operations.filter(op => op.verified === false);
+        
+        // Check for operations with zero product rows (may indicate data issues)
+        const zeroProductRowsOperations = operations.filter(op => op.productRowsCount === 0 && op.operationType === 'CREATE');
+        
+        if (highRetryOperations.length > 0 || unverifiedOperations.length > 0 || zeroProductRowsOperations.length > 0) {
+          if (highRetryOperations.length > 0) {
+            logs.push(`Operations with high retry counts (${highRetryOperations.length}):`);
+            highRetryOperations.forEach((op, index) => {
+              logs.push(`  ${index + 1}. Operation: ${op.id || op.operationId}`);
+              logs.push(`     Deal ID: ${op.dealId || 'N/A'}, Shopify Order: ${op.shopifyOrderId || 'N/A'}`);
+              logs.push(`     Attempts: ${op.attempt || 'N/A'}`);
+              logs.push(`     Note: High retry count may indicate Bitrix API issues or race conditions`);
+              logs.push('');
+            });
+          }
+          
+          if (zeroProductRowsOperations.length > 0) {
+            logs.push(`Operations with zero product rows (${zeroProductRowsOperations.length}):`);
+            zeroProductRowsOperations.forEach((op, index) => {
+              logs.push(`  ${index + 1}. Operation: ${op.id || op.operationId}`);
+              logs.push(`     Deal ID: ${op.dealId || 'N/A'}, Shopify Order: ${op.shopifyOrderId || 'N/A'}`);
+              logs.push(`     Note: Created deal with no product rows - may indicate all items were refunded/removed`);
+              logs.push('');
+            });
+          }
+        } else {
+          logs.push('No obvious error indicators found in successful operations.');
+          logs.push('All operations completed with reasonable retry counts and verification.');
+          logs.push('');
+        }
+      } else {
+        logs.push('No operations found to analyze for errors.');
+        logs.push('');
+      }
+    } catch (error) {
+      logs.push(`Error analyzing operations for failures: ${error.message}`);
+      logs.push('');
+    }
+
     logs.push('='.repeat(80));
     logs.push('NOTE');
     logs.push('='.repeat(80));
@@ -236,9 +343,14 @@ export default async function handler(req, res) {
     logs.push('  - Line items information with current_quantity');
     logs.push('  - Bitrix mapping details (product rows, OPPORTUNITY calculation)');
     logs.push('  - Successful operations (created/updated deals with verification status)');
+    logs.push('  - Retry attempts (operations that required multiple attempts)');
+    logs.push('  - Verification results (deals verified after creation/update)');
+    logs.push('  - Errors and failures (operations with high retry counts, unverified deals, etc.)');
     logs.push('');
-    logs.push('Note: Error tracking is currently logged to console only.');
-    logs.push('Future versions will include error storage and retrieval in logs.');
+    logs.push('Note: Detailed error logs (console.log output) are available in server-side logs.');
+    logs.push('For production environments, check:');
+    logs.push('  - Server console output (stdout/stderr)');
+    logs.push('  - Application logs in deployment platform (Vercel, Render, etc.)');
     logs.push('');
     logs.push('='.repeat(80));
     logs.push(`End of log file - ${new Date().toISOString()}`);

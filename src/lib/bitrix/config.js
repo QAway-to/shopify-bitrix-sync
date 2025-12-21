@@ -5,7 +5,7 @@ export const BITRIX_CONFIG = {
   // Category IDs (Funnel IDs) for deals
   CATEGORY_STOCK: 2, // Stock (in the shop)
   CATEGORY_PREORDER: 8, // Pre-order (site)
-  CATEGORY_ID: 2, // Default category (Stock)
+  CATEGORY_ID: 2, // Default category (Stock) - kept for backward compatibility
 
   // Default stage IDs (matching Bitrix24 stages)
   STAGES: {
@@ -15,12 +15,6 @@ export const BITRIX_CONFIG = {
     REFUNDED: 'LOSE', // Loss stage for fully refunded
     CANCELLED: 'LOSE', // Loss stage for cancelled
     DEFAULT: 'NEW' // Default to NEW stage
-  },
-
-  // Stage IDs for Category 2 (Stock funnel)
-  STAGES_CAT_2: {
-    EXECUTING: 'C2:EXECUTING', // Executing stage for delivery trigger
-    PREPARATION: 'C2:PREPARATION' // Preparation stage
   },
 
   // Source IDs mapping
@@ -43,7 +37,6 @@ export const BITRIX_CONFIG = {
 
 // Financial status to stage ID mapping
 // Note: categoryId parameter is for future use if different categories have different stage mappings
-// Currently all categories use the same stage mapping
 export const financialStatusToStageId = (financialStatus, categoryId = null) => {
   const status = financialStatus?.toLowerCase() || '';
   const mapping = {
@@ -51,7 +44,7 @@ export const financialStatusToStageId = (financialStatus, categoryId = null) => 
     'pending': BITRIX_CONFIG.STAGES.PENDING, // NEW - ожидает оплаты
     'refunded': BITRIX_CONFIG.STAGES.REFUNDED, // LOSE - полностью возвращен
     'cancelled': BITRIX_CONFIG.STAGES.CANCELLED, // LOSE - отменен
-    'partially_paid': BITRIX_CONFIG.STAGES.PENDING, // NEW - частично оплачен, ожидает полной оплаты
+    'partially_paid': BITRIX_CONFIG.STAGES.PENDING, // NEW - частично оплачен, ожидает оплаты
     'partially_refunded': BITRIX_CONFIG.STAGES.PREPARATION, // C2:PREPARATION - частично возвращен, заказ еще активен
     'voided': BITRIX_CONFIG.STAGES.CANCELLED // LOSE - аннулирован
   };
@@ -60,18 +53,17 @@ export const financialStatusToStageId = (financialStatus, categoryId = null) => 
 
 // Financial status to payment status enum ID mapping
 // Bitrix field: UF_CRM_1739183959976 (Payment status)
-// Values: "56" = "Paid", "58" = "Unpaid", "60" = "10% prepayment"
-// Payment status shows if full payment was made or partial
+// Values: "56" = "Paid" (полная оплата), "58" = "Unpaid" (не оплачен), "60" = "10% prepayment" (частичная оплата)
 export const financialStatusToPaymentStatus = (financialStatus) => {
   const status = financialStatus?.toLowerCase() || '';
   const mapping = {
-    'paid': '56', // Paid - полная оплата произведена
+    'paid': '56', // Paid - полная оплата
     'pending': '58', // Unpaid - не оплачен
     'partially_paid': '60', // 10% prepayment - частичная оплата
-    'refunded': '58', // Unpaid - после полного возврата не оплачен
+    'refunded': '58', // Unpaid - после возврата не оплачен
     'partially_refunded': '60', // 10% prepayment - частично возвращен, но частично оплачен
     'cancelled': '58', // Unpaid - отменен, не оплачен
-    'voided': '58' // Unpaid - аннулирован, не оплачен
+    'voided': '58' // Unpaid - аннулирован
   };
   return mapping[status] || '58'; // Default to Unpaid
 };

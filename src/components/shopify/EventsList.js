@@ -55,11 +55,9 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
 
   const isAllSelected = events.length > 0 && selectedEvents.length === events.length;
 
-  // ✅ Helper function to calculate total from active line items (matches Bitrix calculation)
-  // Shows sum of all items still in order (current_quantity > 0), not total_price
+  // Helper function to calculate total from active line items (matches Bitrix calculation)
   const calculateActiveItemsTotal = (event) => {
     if (!event.line_items || !Array.isArray(event.line_items)) {
-      // Fallback to current_total_price or total_price if no line_items
       return event.current_total_price || event.total_price || 'N/A';
     }
     
@@ -171,12 +169,9 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
                 <td style={{ padding: '12px', color: '#f1f5f9' }}>{orderId}</td>
                 <td style={{ padding: '12px', color: '#f1f5f9' }}>{event.email || 'N/A'}</td>
                 <td style={{ padding: '12px', color: '#f1f5f9' }}>
-                  {(() => {
-                    const total = calculateActiveItemsTotal(event);
-                    return typeof total === 'number' 
-                      ? `${total} ${event.currency || 'EUR'}` 
-                      : total;
-                  })()}
+                  {typeof calculateActiveItemsTotal(event) === 'number' || !isNaN(calculateActiveItemsTotal(event))
+                    ? `${calculateActiveItemsTotal(event)} ${event.currency || 'EUR'}` 
+                    : calculateActiveItemsTotal(event)}
                 </td>
                 <td style={{ padding: '12px', color: '#f1f5f9' }}>{event.currency || 'N/A'}</td>
                 <td style={{ padding: '12px', color: '#94a3b8', fontSize: '0.9rem' }}>

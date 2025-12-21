@@ -324,10 +324,10 @@ export class ShopifyAdapter {
     
     if (!dealFields.STAGE_ID) {
       // Map financial status to stage ID using the same function as webhook handlers
-      // categoryId parameter is optional and currently not used in mapping logic
       dealFields.STAGE_ID = financialStatusToStageId(
         shopifyOrder.financial_status,
-        dealFields.CATEGORY_ID || BITRIX_CONFIG.CATEGORY_STOCK
+        dealFields.CATEGORY_ID || BITRIX_CONFIG.CATEGORY_STOCK,
+        null // currentStageId (not needed for new deals)
       );
     }
     
