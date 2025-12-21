@@ -198,9 +198,17 @@ export class ShopifyAdapter {
   /**
    * Get all events (newest first, deduplicated by orderId + topic)
    * Keeps separate events for different topics (orders/create, orders/updated)
+   * @param {boolean} includeAll - If true, returns all events without deduplication. Default: false (deduplicated)
    * @returns {Array<Object>} All stored events
    */
-  getAllEvents() {
+  getAllEvents(includeAll = false) {
+    // If includeAll is true, return all events without deduplication (newest first)
+    if (includeAll) {
+      const allEvents = [...this.storage].reverse(); // Newest first
+      console.log(`[SHOPIFY ADAPTER] 📊 Returning all ${allEvents.length} events (no deduplication)`);
+      return allEvents;
+    }
+
     // Remove duplicates: keep only the latest event for each unique (orderId + topic) combination
     const seen = new Map();
     const uniqueEvents = [];
@@ -317,9 +325,8 @@ export class ShopifyAdapter {
     if (!dealFields.STAGE_ID) {
       // Map financial status to stage ID using the same function as webhook handlers
       dealFields.STAGE_ID = financialStatusToStageId(
-        shopifyOrder.financial_status,
-        dealFields.CATEGORY_ID || BITRIX_CONFIG.CATEGORY_STOCK,
-        null // currentStageId (not needed for new deals)
+        shopifyOrder.financial_status
+        // categoryId parameter is optional and not currently used in mapping logic
       );
     }
     

@@ -106,7 +106,44 @@ export function mapShopifyOrderToBitrixDeal(order) {
   console.log(`[ORDER MAPPER] order.current_total_tax: ${order.current_total_tax}`);
   console.log(`[ORDER MAPPER] order.total_tax: ${order.total_tax}`);
   
-  const totalPrice = Number(order.current_total_price || order.total_price || 0);
+  // ✅ Calculate total from active line_items (current_quantity > 0) to get sum of active items
+  // This matches Shopify UI "Total" (sum of unfulfilled/active items), not "Paid" amount
+  let totalPrice = 0;
+  if (order.line_items && Array.isArray(order.line_items)) {
+    for (const item of order.line_items) {
+      const currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
+      if (currentQuantity > 0) {
+        const itemPrice = Number(item.price || 0);
+        const itemTotal = itemPrice * currentQuantity;
+        // Subtract discounts if present
+        const itemDiscount = Number(
+          item.discount_allocations?.[0]?.amount ||
+          item.discount_allocations?.[0]?.amount_set?.shop_money?.amount ||
+          item.total_discount ||
+          0
+        );
+        totalPrice += itemTotal - itemDiscount;
+      }
+    }
+    // Add shipping if present
+    const shippingPrice = Number(
+      order.current_total_shipping_price_set?.shop_money?.amount ||
+      order.total_shipping_price_set?.shop_money?.amount ||
+      order.shipping_price ||
+      order.shipping_lines?.[0]?.price ||
+      0
+    );
+    totalPrice += shippingPrice;
+    
+    console.log(`[ORDER MAPPER] ✅ Calculated totalPrice from active line_items: ${totalPrice}`);
+  }
+  
+  // Fallback to current_total_price or total_price if line_items calculation failed
+  if (totalPrice === 0) {
+    totalPrice = Number(order.current_total_price || order.total_price || 0);
+    console.log(`[ORDER MAPPER] ⚠️ Using fallback totalPrice from order totals: ${totalPrice}`);
+  }
+  
   const totalDiscount = Number(order.current_total_discounts || order.total_discounts || 0);
   const totalTax = Number(order.current_total_tax || 0);
   
@@ -203,7 +240,7 @@ export function mapShopifyOrderToBitrixDeal(order) {
   // Deal fields - using REAL Bitrix UF_CRM_* fields only
   const dealFields = {
     TITLE: order.name || `Order #${order.id}`,
-    OPPORTUNITY: totalPrice, // Final amount as in Shopify
+    OPPORTUNITY: totalPrice, // Sum of active line_items (current_quantity > 0) + shipping - matches Shopify UI "Total"
     CURRENCY_ID: order.currency || 'EUR',
     COMMENTS: `Shopify order ${order.name || order.id}`,
     CATEGORY_ID: categoryId, // 2 = Stock (site), 8 = Pre-order (site) - REQUIRED for create, immutable after
@@ -258,13 +295,18 @@ export function mapShopifyOrderToBitrixDeal(order) {
     dealFields.ASSIGNED_BY_ID = assigneeId;
   }
 
-  // Extract product properties from ALL line_items for UF-fields
-  // Aggregate Size and Color across all positions to preserve ordering
+  // Extract product properties from ACTIVE line_items (current_quantity > 0) for UF-fields
+  // Aggregate Size and Color across all active positions to preserve ordering
   if (order.line_items && Array.isArray(order.line_items) && order.line_items.length > 0) {
-    const lineItems = order.line_items;
+    // ✅ FILTER: Only process active items (current_quantity > 0) for UF-fields
+    const activeLineItems = order.line_items.filter(item => {
+      const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
+      return currentQty > 0;
+    });
+    const lineItems = activeLineItems;
     const itemsCount = lineItems.length;
 
-    console.log(`[ORDER MAPPER] Processing ${itemsCount} line_item(s) for UF-fields`);
+    console.log(`[ORDER MAPPER] Processing ${itemsCount} active line_item(s) for UF-fields (filtered from ${order.line_items.length} total)`);
 
     // ===== SIZE AGGREGATION =====
     if (itemsCount === 1) {
@@ -502,6 +544,13 @@ export function mapShopifyOrderToBitrixDeal(order) {
 
       // ✅ ИСПРАВЛЕНИЕ: Используем currentQuantity (актуальное количество после refund)
       const quantity = currentQuantity;
+      
+      // ✅ LOG: Log item details for debugging
+      console.log(`[ORDER MAPPER] 📦 Processing item: SKU=${item.sku || 'N/A'}, Title="${item.title || 'N/A'}"`);
+      console.log(`[ORDER MAPPER]   - quantity (original): ${item.quantity}`);
+      console.log(`[ORDER MAPPER]   - current_quantity (active): ${currentQuantity}`);
+      console.log(`[ORDER MAPPER]   - price: ${item.price}, priceAfterDiscount: ${priceAfterDiscount}`);
+      console.log(`[ORDER MAPPER]   - Will create ${quantity} product row(s)`);
 
       // Add one row per quantity
       // IMPORTANT: Always include PRODUCT_NAME even when PRODUCT_ID is set
@@ -529,9 +578,14 @@ export function mapShopifyOrderToBitrixDeal(order) {
         }
         
         productRows.push(row);
+        console.log(`[ORDER MAPPER]   ✅ Added product row ${i + 1}/${quantity}: ${productName}, Price: ${priceAfterDiscount}, QUANTITY: 1`);
       }
+      console.log(`[ORDER MAPPER] 📦 Finished processing item "${item.title || item.sku}": ${quantity} row(s) added`);
     }
   }
+  
+  // ✅ LOG: Log total product rows before shipping
+  console.log(`[ORDER MAPPER] 📊 Total product rows (before shipping): ${productRows.length}`);
 
   // Shipping as separate row - ONLY from shipping_lines, NEVER from line_items
   // Extract shipping price STRICTLY from shipping_lines to avoid confusion with regular products
@@ -605,9 +659,12 @@ export function mapShopifyOrderToBitrixDeal(order) {
   ).length;
   const regularProductRowsCount = productRowsCount - shippingRowsCount;
   
-  // Count expected items from Shopify
+  // Count expected items from Shopify (using current_quantity for accurate count)
   const expectedLineItemsCount = order.line_items 
-    ? order.line_items.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0)
+    ? order.line_items.reduce((sum, item) => {
+        const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
+        return sum + (currentQty > 0 ? currentQty : 0); // Only count active items
+      }, 0)
     : 0;
   const expectedShippingCount = (order.shipping_lines && order.shipping_lines.length > 0 && actualShippingPrice > 0) ? 1 : 0;
   const expectedTotalRows = expectedLineItemsCount + expectedShippingCount;
