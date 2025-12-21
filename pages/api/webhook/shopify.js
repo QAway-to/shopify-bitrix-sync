@@ -525,6 +525,13 @@ async function handleOrderCreated(order) {
  */
 async function handleOrderUpdated(order) {
   console.log(`[SHOPIFY WEBHOOK] Handling order updated: ${order.name || order.id}`);
+  
+  // ✅ CRITICAL: Log cancellation status
+  const financialStatus = order?.financial_status || 'N/A';
+  const isCancelled = financialStatus?.toLowerCase() === 'cancelled' || financialStatus?.toLowerCase() === 'voided';
+  if (isCancelled) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED DETECTED: financial_status="${financialStatus}" - should update Bitrix deal to LOSE stage`);
+  }
 
   const shopifyOrderId = String(order.id);
 
@@ -554,10 +561,17 @@ async function handleOrderUpdated(order) {
   
   console.log(`[SHOPIFY WEBHOOK] 📊 Mapped fields from orderMapper:`);
   console.log(`  - OPPORTUNITY: ${mappedFields.OPPORTUNITY}`);
-  console.log(`  - STAGE_ID: ${mappedFields.STAGE_ID}`);
+  console.log(`  - STAGE_ID: ${mappedFields.STAGE_ID} ${isCancelled ? '(should be LOSE for cancelled order)' : ''}`);
   console.log(`  - Payment Status (UF_CRM_1739183959976): ${mappedFields.UF_CRM_1739183959976}`);
   console.log(`  - Order Total (UF_CRM_1741634415367): ${mappedFields.UF_CRM_1741634415367}`);
   console.log(`  - Paid Amount (UF_CRM_1741634439258): ${mappedFields.UF_CRM_1741634439258}`);
+  console.log(`  - Financial Status: ${financialStatus} → Stage: ${mappedFields.STAGE_ID}`);
+  
+  // ✅ CRITICAL: Verify cancellation is mapped correctly
+  if (isCancelled && mappedFields.STAGE_ID !== 'LOSE') {
+    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: Cancelled order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "LOSE"!`);
+    console.error(`[SHOPIFY WEBHOOK] Financial status mapping may be incorrect. Check financialStatusToStageId function.`);
+  }
   
   const currentAmount = Number(deal.OPPORTUNITY || 0);
   const newAmount = Number(mappedFields.OPPORTUNITY || 0);
@@ -727,12 +741,19 @@ export default async function handler(req, res) {
   console.log(`[SHOPIFY WEBHOOK] Topic: ${topic || 'undefined'}`);
   console.log(`[SHOPIFY WEBHOOK] Order ID: ${order?.id || 'N/A'}`);
   console.log(`[SHOPIFY WEBHOOK] Order Name: ${order?.name || 'N/A'}`);
+  
+  // ✅ CRITICAL: Log financial_status and cancellation status for debugging
+  const financialStatus = order?.financial_status || 'N/A';
+  const isCancelled = financialStatus?.toLowerCase() === 'cancelled' || financialStatus?.toLowerCase() === 'voided';
+  console.log(`[SHOPIFY WEBHOOK] ⚠️ Financial Status: ${financialStatus} ${isCancelled ? '(CANCELLED/VOIDED - should update to LOSE)' : ''}`);
+  
   console.log(`[SHOPIFY WEBHOOK] Order Data Summary:`, {
     id: order?.id,
     name: order?.name,
     total_price: order?.total_price,
     current_total_price: order?.current_total_price,
-    financial_status: order?.financial_status,
+    financial_status: financialStatus,
+    cancelled: isCancelled,
     line_items_count: order?.line_items?.length || 0,
     created_at: order?.created_at,
     updated_at: order?.updated_at
@@ -760,6 +781,11 @@ export default async function handler(req, res) {
       await handleOrderCreated(order);
     } else if (topic === 'orders/updated') {
       console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/updated event...`);
+      await handleOrderUpdated(order);
+    } else if (topic === 'orders/cancelled' || topic === 'orders/cancel') {
+      // ✅ Handle cancellation as a special update event
+      console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/cancelled event...`);
+      console.log(`[SHOPIFY WEBHOOK] ⚠️ Cancellation webhook received - treating as update with cancelled status`);
       await handleOrderUpdated(order);
     } else {
       // For other topics just log and return 200 (don't block)
