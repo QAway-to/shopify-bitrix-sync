@@ -526,11 +526,18 @@ async function handleOrderCreated(order) {
 async function handleOrderUpdated(order) {
   console.log(`[SHOPIFY WEBHOOK] Handling order updated: ${order.name || order.id}`);
   
-  // ✅ CRITICAL: Log cancellation status
+  // ✅ CRITICAL: Log cancellation and refund status
   const financialStatus = order?.financial_status || 'N/A';
-  const isCancelled = financialStatus?.toLowerCase() === 'cancelled' || financialStatus?.toLowerCase() === 'voided';
+  const statusLower = financialStatus?.toLowerCase() || '';
+  const isCancelled = statusLower === 'cancelled' || statusLower === 'voided';
+  const isRefunded = statusLower === 'refunded';
+  const isLost = isCancelled || isRefunded; // Both should map to LOSE
+  
   if (isCancelled) {
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED DETECTED: financial_status="${financialStatus}" - should update Bitrix deal to LOSE stage`);
+  }
+  if (isRefunded) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER REFUNDED DETECTED: financial_status="${financialStatus}" - should update Bitrix deal to LOSE stage`);
   }
 
   const shopifyOrderId = String(order.id);
@@ -561,16 +568,19 @@ async function handleOrderUpdated(order) {
   
   console.log(`[SHOPIFY WEBHOOK] 📊 Mapped fields from orderMapper:`);
   console.log(`  - OPPORTUNITY: ${mappedFields.OPPORTUNITY}`);
-  console.log(`  - STAGE_ID: ${mappedFields.STAGE_ID} ${isCancelled ? '(should be LOSE for cancelled order)' : ''}`);
+  console.log(`  - STAGE_ID: ${mappedFields.STAGE_ID} ${isLost ? '(should be LOSE for cancelled/refunded order)' : ''}`);
   console.log(`  - Payment Status (UF_CRM_1739183959976): ${mappedFields.UF_CRM_1739183959976}`);
   console.log(`  - Order Total (UF_CRM_1741634415367): ${mappedFields.UF_CRM_1741634415367}`);
   console.log(`  - Paid Amount (UF_CRM_1741634439258): ${mappedFields.UF_CRM_1741634439258}`);
   console.log(`  - Financial Status: ${financialStatus} → Stage: ${mappedFields.STAGE_ID}`);
   
-  // ✅ CRITICAL: Verify cancellation is mapped correctly
-  if (isCancelled && mappedFields.STAGE_ID !== 'LOSE') {
-    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: Cancelled order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "LOSE"!`);
+  // ✅ CRITICAL: Verify cancellation/refund is mapped correctly
+  if (isLost && mappedFields.STAGE_ID !== 'LOSE') {
+    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: ${isCancelled ? 'Cancelled' : 'Refunded'} order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "LOSE"!`);
     console.error(`[SHOPIFY WEBHOOK] Financial status mapping may be incorrect. Check financialStatusToStageId function.`);
+    console.error(`[SHOPIFY WEBHOOK] Forcing STAGE_ID to LOSE to fix the issue.`);
+    // Force correct mapping
+    mappedFields.STAGE_ID = 'LOSE';
   }
   
   const currentAmount = Number(deal.OPPORTUNITY || 0);
@@ -612,12 +622,12 @@ async function handleOrderUpdated(order) {
   
   // Note: CATEGORY_ID is immutable after creation, so we don't update it
 
-  // ✅ CRITICAL: Force update STAGE_ID to LOSE if order is cancelled, even if other fields are the same
-  if (isCancelled && mappedFields.STAGE_ID === 'LOSE') {
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID update to LOSE for cancelled order ${shopifyOrderId}`);
+  // ✅ CRITICAL: Force update STAGE_ID to LOSE if order is cancelled or refunded
+  if (isLost) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID update to LOSE for ${isCancelled ? 'cancelled' : 'refunded'} order ${shopifyOrderId}`);
     // Ensure STAGE_ID is explicitly set to LOSE
     fields.STAGE_ID = 'LOSE';
-    // Also update payment status to Unpaid for cancelled orders
+    // Also update payment status to Unpaid for cancelled/refunded orders
     fields.UF_CRM_1739183959976 = '58'; // Unpaid
   }
   
@@ -758,10 +768,13 @@ export default async function handler(req, res) {
   console.log(`[SHOPIFY WEBHOOK] Order ID: ${order?.id || 'N/A'}`);
   console.log(`[SHOPIFY WEBHOOK] Order Name: ${order?.name || 'N/A'}`);
   
-  // ✅ CRITICAL: Log financial_status and cancellation status for debugging
+  // ✅ CRITICAL: Log financial_status and cancellation/refund status for debugging
   const financialStatus = order?.financial_status || 'N/A';
-  const isCancelled = financialStatus?.toLowerCase() === 'cancelled' || financialStatus?.toLowerCase() === 'voided';
-  console.log(`[SHOPIFY WEBHOOK] ⚠️ Financial Status: ${financialStatus} ${isCancelled ? '(CANCELLED/VOIDED - should update to LOSE)' : ''}`);
+  const statusLower = financialStatus?.toLowerCase() || '';
+  const isCancelled = statusLower === 'cancelled' || statusLower === 'voided';
+  const isRefunded = statusLower === 'refunded';
+  const isLost = isCancelled || isRefunded;
+  console.log(`[SHOPIFY WEBHOOK] ⚠️ Financial Status: ${financialStatus} ${isLost ? `(${isCancelled ? 'CANCELLED/VOIDED' : 'REFUNDED'} - should update to LOSE)` : ''}`);
   
   console.log(`[SHOPIFY WEBHOOK] Order Data Summary:`, {
     id: order?.id,
