@@ -612,8 +612,24 @@ async function handleOrderUpdated(order) {
   
   // Note: CATEGORY_ID is immutable after creation, so we don't update it
 
+  // ✅ CRITICAL: Force update STAGE_ID to LOSE if order is cancelled, even if other fields are the same
+  if (isCancelled && mappedFields.STAGE_ID === 'LOSE') {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID update to LOSE for cancelled order ${shopifyOrderId}`);
+    // Ensure STAGE_ID is explicitly set to LOSE
+    fields.STAGE_ID = 'LOSE';
+    // Also update payment status to Unpaid for cancelled orders
+    fields.UF_CRM_1739183959976 = '58'; // Unpaid
+  }
+  
   // ✅ ALWAYS update deal fields (even if values are the same, ensures sync and triggers update event)
   console.log(`[SHOPIFY WEBHOOK] Updating deal ${dealId} with fields:`, Object.keys(fields));
+  console.log(`[SHOPIFY WEBHOOK] Field values:`, {
+    STAGE_ID: fields.STAGE_ID,
+    OPPORTUNITY: fields.OPPORTUNITY,
+    PaymentStatus: fields.UF_CRM_1739183959976,
+    isCancelled: isCancelled
+  });
+  
   await callBitrix('/crm.deal.update.json', {
     id: dealId,
     fields,
