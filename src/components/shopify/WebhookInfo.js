@@ -44,9 +44,7 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
   const [password, setPassword] = useState('');
   const [unlocked, setUnlocked] = useState(false);
   const [copied, setCopied] = useState(false);
-  // ✅ Load Bitrix webhook URL from environment variable (via API)
-  const [bitrixWebhookUrl, setBitrixWebhookUrl] = useState(null);
-  const [isLoadingBitrixUrl, setIsLoadingBitrixUrl] = useState(true);
+  const [bitrixWebhookUrl, setBitrixWebhookUrl] = useState('https://bfcshoes.bitrix24.eu/rest/52/i6l05o71ywxb8j1l');
   const [bitrixPassword, setBitrixPassword] = useState('');
   const [bitrixUnlocked, setBitrixUnlocked] = useState(false);
   const [bitrixCopied, setBitrixCopied] = useState(false);
@@ -56,32 +54,9 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
   
   const CORRECT_PASSWORD = '1spotify2';
 
-  // ✅ Load Bitrix webhook URL from API (reads from BITRIX_WEBHOOK_BASE env var)
   useEffect(() => {
-    const fetchBitrixWebhookUrl = async () => {
-      setIsLoadingBitrixUrl(true);
-      try {
-        const response = await fetch('/api/config/bitrix-webhook-url');
-        const data = await response.json();
-        if (data.success && data.webhookUrl) {
-          setBitrixWebhookUrl(data.webhookUrl);
-          console.log(`[WebhookInfo] Bitrix webhook URL loaded from ${data.source}: ${data.webhookUrl}`);
-        } else {
-          console.error('Failed to fetch Bitrix webhook URL:', data.error);
-        }
-      } catch (err) {
-        console.error('Fetch Bitrix webhook URL error:', err);
-      } finally {
-        setIsLoadingBitrixUrl(false);
-      }
-    };
-    
-    fetchBitrixWebhookUrl();
-  }, []);
-
-  useEffect(() => {
-    // Notify parent component about Bitrix URL change (only when URL is loaded)
-    if (onBitrixUrlChange && bitrixWebhookUrl) {
+    // Notify parent component about Bitrix URL change
+    if (onBitrixUrlChange) {
       onBitrixUrlChange(bitrixWebhookUrl);
     }
   }, [bitrixWebhookUrl, onBitrixUrlChange]);
@@ -405,26 +380,22 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
               borderRadius: '8px',
               border: '1px solid #334155'
             }}>
-              {isLoadingBitrixUrl ? (
-                <span style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Loading from BITRIX_WEBHOOK_BASE...</span>
-              ) : (
-                <input
-                  type="text"
-                  value={bitrixWebhookUrl || ''}
-                  onChange={(e) => setBitrixWebhookUrl(e.target.value)}
-                  style={{
-                    flex: 1,
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#f1f5f9',
-                    fontSize: '0.9rem',
-                    fontFamily: 'monospace',
-                    outline: 'none',
-                    padding: '4px 8px'
-                  }}
-                  placeholder={bitrixWebhookUrl ? undefined : "Loading Bitrix webhook URL from BITRIX_WEBHOOK_BASE..."}
-                />
-              )}
+              <input
+                type="text"
+                value={bitrixWebhookUrl}
+                onChange={(e) => setBitrixWebhookUrl(e.target.value)}
+                style={{
+                  flex: 1,
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#f1f5f9',
+                  fontSize: '0.9rem',
+                  fontFamily: 'monospace',
+                  outline: 'none',
+                  padding: '4px 8px'
+                }}
+                placeholder="Enter Bitrix webhook URL"
+              />
               <button
                 onClick={handleBitrixCopy}
                 className="btn"

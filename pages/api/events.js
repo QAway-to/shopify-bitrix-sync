@@ -8,8 +8,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    // ✅ Return ALL events without deduplication so UI can show full history
-    const events = shopifyAdapter.getAllEvents(true); // includeAll = true
+    const events = shopifyAdapter.getAllEvents();
     
     return res.status(200).json({
       success: true,

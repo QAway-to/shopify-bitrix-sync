@@ -12,9 +12,8 @@ export default function ShopifyPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
-  // ✅ Bitrix webhook URL from environment variable (via API)
-  const [bitrixWebhookUrl, setBitrixWebhookUrl] = useState(null);
-  const [isLoadingWebhookUrl, setIsLoadingWebhookUrl] = useState(true);
+  // Hardcoded Bitrix webhook base URL
+  const [bitrixWebhookUrl, setBitrixWebhookUrl] = useState('https://bfcshoes.bitrix24.eu/rest/52/i6l05o71ywxb8j1l');
   const [previewEvent, setPreviewEvent] = useState(null); // Event to preview
   const [previewData, setPreviewData] = useState(null); // { shopifyData, bitrixData } for preview
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load
@@ -65,30 +64,11 @@ export default function ShopifyPage() {
     }
   };
 
-  const fetchBitrixWebhookUrl = async () => {
-    setIsLoadingWebhookUrl(true);
-    try {
-      const response = await fetch('/api/config/bitrix-webhook-url');
-      const data = await response.json();
-      if (data.success && data.webhookUrl) {
-        setBitrixWebhookUrl(data.webhookUrl);
-        console.log(`[ShopifyPage] Bitrix webhook URL loaded from ${data.source}: ${data.webhookUrl}`);
-      } else {
-        console.error('Failed to fetch Bitrix webhook URL:', data.error);
-      }
-    } catch (err) {
-      console.error('Fetch Bitrix webhook URL error:', err);
-    } finally {
-      setIsLoadingWebhookUrl(false);
-    }
-  };
-
   // Initial fetch
   useEffect(() => {
-    fetchBitrixWebhookUrl(); // Fetch webhook URL first
     fetchEvents();
 
-    // Auto-refresh every 5 seconds (don't refresh webhook URL - it comes from env)
+    // Auto-refresh every 5 seconds
     const interval = setInterval(fetchEvents, 5000);
 
     return () => clearInterval(interval);
