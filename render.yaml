@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: api-services-mvp
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+    # Add your environment variables here or in Render dashboard:
+    # - key: BITRIX_WEBHOOK_BASE
+    #   sync: false
+    # - key: BITRIX_WEBHOOK_URL
+    #   sync: false
+    # - key: SHOPIFY_STORE_URL
+    #   sync: false
+    # - key: SHOPIFY_ACCESS_TOKEN
+    #   sync: false
+
