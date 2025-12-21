@@ -2,6 +2,7 @@ services:
   - type: web
     name: api-services-mvp
     env: node
+    rootDir: agent_b/mvp_templates/api-services
     buildCommand: npm install && npm run build
     startCommand: npm start
     envVars:
