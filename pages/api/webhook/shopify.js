@@ -93,17 +93,40 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3) {
     try {
       console.log(`[SHOPIFY WEBHOOK] Creating deal attempt ${attempt}/${maxRetries} for order ${shopifyOrderId}`);
       
-      // ✅ CRITICAL: Check for existing deal BEFORE attempting creation (prevents race conditions)
-      // This is especially important when multiple webhooks arrive simultaneously
-      const existingCheckResp = await callBitrix('/crm.deal.list.json', {
-        filter: { 'UF_CRM_1742556489': shopifyOrderId },
-        select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
-      });
+      // ✅ CRITICAL: Aggressive duplicate check BEFORE creation with multiple retries
+      // This prevents race conditions when multiple webhooks arrive simultaneously
+      let existingDealId = null;
+      const maxPreCreateChecks = 3;
+      
+      for (let preCheck = 1; preCheck <= maxPreCreateChecks; preCheck++) {
+        const existingCheckResp = await callBitrix('/crm.deal.list.json', {
+          filter: { 'UF_CRM_1742556489': shopifyOrderId },
+          select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
+        });
 
-      if (existingCheckResp.result && existingCheckResp.result.length > 0) {
-        const existingDealId = existingCheckResp.result[0].ID;
-        console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists (found before creation attempt ${attempt}): ${existingDealId}`);
+        if (existingCheckResp.result && existingCheckResp.result.length > 0) {
+          // Sort by ID to get the oldest deal
+          const sortedDeals = existingCheckResp.result.sort((a, b) => Number(a.ID) - Number(b.ID));
+          existingDealId = sortedDeals[0].ID;
+          
+          if (existingCheckResp.result.length > 1) {
+            console.warn(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ MULTIPLE DEALS FOUND (pre-create check ${preCheck}): ${existingCheckResp.result.length} deals!`);
+            console.warn(`[SHOPIFY WEBHOOK] Deal IDs: ${existingCheckResp.result.map(d => d.ID).join(', ')}`);
+            console.warn(`[SHOPIFY WEBHOOK] Using oldest: ${existingDealId}`);
+          } else {
+            console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists (pre-create check ${preCheck}, attempt ${attempt}): ${existingDealId}`);
+          }
+          break; // Exit retry loop - deal exists
+        }
         
+        // No deal found - wait a bit before next check (in case deal is being created by another request)
+        if (preCheck < maxPreCreateChecks) {
+          const waitTime = 50 * preCheck; // 50ms, 100ms
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+      
+      if (existingDealId) {
         // Verify the found deal
         const verifiedDeal = await verifyDeal(existingDealId);
         
@@ -116,6 +139,9 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3) {
         };
       }
       
+      // ✅ No existing deal found after all checks - safe to create
+      console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxPreCreateChecks} pre-create checks, proceeding with creation`);
+      
       // Try to create deal
       const dealAddResp = await callBitrix('/crm.deal.add.json', {
         fields: dealFields,
@@ -126,22 +152,41 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3) {
         const dealId = dealAddResp.result;
         console.log(`[SHOPIFY WEBHOOK] ✅ Deal created successfully on attempt ${attempt}: ${dealId}`);
         
-        // ✅ CRITICAL: Double-check for duplicates after creation (race condition protection)
-        // Wait a bit for Bitrix to index the new deal, then check if multiple deals exist
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // ✅ CRITICAL: Aggressive duplicate check after creation with multiple retries
+        // Wait longer for Bitrix to index the new deal, then check multiple times
+        let duplicateFound = false;
+        let firstDealId = dealId;
         
-        const duplicateCheckResp = await callBitrix('/crm.deal.list.json', {
-          filter: { 'UF_CRM_1742556489': shopifyOrderId },
-          select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
-        });
-
-        if (duplicateCheckResp.result && duplicateCheckResp.result.length > 1) {
-          console.warn(`[SHOPIFY WEBHOOK] ⚠️ WARNING: Multiple deals found for order ${shopifyOrderId} (${duplicateCheckResp.result.length} deals)!`);
-          console.warn(`[SHOPIFY WEBHOOK] Deal IDs: ${duplicateCheckResp.result.map(d => d.ID).join(', ')}`);
-          console.warn(`[SHOPIFY WEBHOOK] Using the first (oldest) deal: ${duplicateCheckResp.result[0].ID}`);
+        for (let dupCheck = 1; dupCheck <= 3; dupCheck++) {
+          const waitTime = 150 * dupCheck; // 150ms, 300ms, 450ms
+          await new Promise(resolve => setTimeout(resolve, waitTime));
           
-          // Use the first (oldest) deal to maintain consistency
-          const firstDealId = duplicateCheckResp.result[0].ID;
+          const duplicateCheckResp = await callBitrix('/crm.deal.list.json', {
+            filter: { 'UF_CRM_1742556489': shopifyOrderId },
+            select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
+          });
+
+          if (duplicateCheckResp.result && duplicateCheckResp.result.length > 1) {
+            duplicateFound = true;
+            console.warn(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ DUPLICATE DETECTED (check ${dupCheck}): ${duplicateCheckResp.result.length} deals for order ${shopifyOrderId}!`);
+            console.warn(`[SHOPIFY WEBHOOK] Deal IDs: ${duplicateCheckResp.result.map(d => d.ID).join(', ')}`);
+            
+            // Sort by ID to get the oldest (first created) deal
+            const sortedDeals = duplicateCheckResp.result.sort((a, b) => Number(a.ID) - Number(b.ID));
+            firstDealId = sortedDeals[0].ID;
+            console.warn(`[SHOPIFY WEBHOOK] Using the oldest deal: ${firstDealId}`);
+            
+            // If this is not the oldest deal, we should delete the duplicate (but user said no deletion)
+            // So we just use the oldest one and mark as duplicate
+            if (firstDealId !== dealId) {
+              console.warn(`[SHOPIFY WEBHOOK] ⚠️ Created deal ${dealId} is NOT the oldest. Using oldest deal ${firstDealId} instead.`);
+            }
+            break; // Exit retry loop
+          }
+        }
+        
+        if (duplicateFound) {
+          // Use the oldest deal to maintain consistency
           const verifiedDeal = await verifyDeal(firstDealId);
           
           return { 
@@ -342,14 +387,51 @@ async function handleOrderCreated(order) {
     line_items_count: order.line_items?.length || 0
   });
 
-  // ✅ DUPLICATE PREVENTION: Check if deal already exists
-  try {
-    const existingDealResp = await callBitrix('/crm.deal.list.json', {
-      filter: { 'UF_CRM_1742556489': shopifyOrderId },
-      select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
-    });
+  // ✅ CRITICAL: MULTI-STEP DUPLICATE PREVENTION with retry and delays
+  // This prevents race conditions when multiple webhooks arrive simultaneously
+  let existingDeal = null;
+  const maxDuplicateChecks = 3;
+  
+  for (let checkAttempt = 1; checkAttempt <= maxDuplicateChecks; checkAttempt++) {
+    try {
+      console.log(`[SHOPIFY WEBHOOK] 🔍 Duplicate check attempt ${checkAttempt}/${maxDuplicateChecks} for order ${shopifyOrderId}`);
+      
+      const existingDealResp = await callBitrix('/crm.deal.list.json', {
+        filter: { 'UF_CRM_1742556489': shopifyOrderId },
+        select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
+      });
 
-    if (existingDealResp.result && existingDealResp.result.length > 0) {
+      if (existingDealResp.result && existingDealResp.result.length > 0) {
+        // Found existing deal(s) - use the first one
+        existingDeal = existingDealResp.result[0];
+        console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists (check ${checkAttempt}): ${existingDeal.ID}`);
+        
+        // If multiple deals found, log warning but use first
+        if (existingDealResp.result.length > 1) {
+          console.warn(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ MULTIPLE DEALS FOUND: ${existingDealResp.result.length} deals for order ${shopifyOrderId}!`);
+          console.warn(`[SHOPIFY WEBHOOK] Deal IDs: ${existingDealResp.result.map(d => d.ID).join(', ')}`);
+          console.warn(`[SHOPIFY WEBHOOK] Using first deal: ${existingDeal.ID}`);
+        }
+        break; // Exit retry loop - deal exists
+      }
+      
+      // No deal found - wait a bit before next check (in case deal is being created)
+      if (checkAttempt < maxDuplicateChecks) {
+        const waitTime = 50 * checkAttempt; // 50ms, 100ms, 150ms
+        console.log(`[SHOPIFY WEBHOOK] No deal found, waiting ${waitTime}ms before next check...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    } catch (checkError) {
+      console.error(`[SHOPIFY WEBHOOK] ⚠️ Error checking for existing deal (attempt ${checkAttempt}):`, checkError);
+      // Continue to next attempt or proceed with creation if last attempt
+      if (checkAttempt === maxDuplicateChecks) {
+        console.error(`[SHOPIFY WEBHOOK] ⚠️ All duplicate checks failed, proceeding with creation (may create duplicate)`);
+      }
+    }
+  }
+
+  // ✅ If deal exists, update it instead of creating duplicate
+  if (existingDeal) {
       const existingDeal = existingDealResp.result[0];
       const dealId = existingDeal.ID;
       
@@ -425,9 +507,9 @@ async function handleOrderCreated(order) {
 
       return dealId;
     }
-  } catch (checkError) {
-    console.error(`[SHOPIFY WEBHOOK] ⚠️ Error checking for existing deal (non-blocking, will attempt creation):`, checkError);
-    // Continue with creation if check fails
+  } else {
+    // ✅ No existing deal found after all checks - proceed with creation
+    console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxDuplicateChecks} checks, proceeding with creation`);
   }
 
   // Map order to Bitrix deal
