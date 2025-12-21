@@ -93,6 +93,29 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3) {
     try {
       console.log(`[SHOPIFY WEBHOOK] Creating deal attempt ${attempt}/${maxRetries} for order ${shopifyOrderId}`);
       
+      // ✅ CRITICAL: Check for existing deal BEFORE attempting creation (prevents race conditions)
+      // This is especially important when multiple webhooks arrive simultaneously
+      const existingCheckResp = await callBitrix('/crm.deal.list.json', {
+        filter: { 'UF_CRM_1742556489': shopifyOrderId },
+        select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
+      });
+
+      if (existingCheckResp.result && existingCheckResp.result.length > 0) {
+        const existingDealId = existingCheckResp.result[0].ID;
+        console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists (found before creation attempt ${attempt}): ${existingDealId}`);
+        
+        // Verify the found deal
+        const verifiedDeal = await verifyDeal(existingDealId);
+        
+        return { 
+          success: true, 
+          dealId: existingDealId, 
+          wasDuplicate: true,
+          attempt,
+          verifiedDeal
+        };
+      }
+      
       // Try to create deal
       const dealAddResp = await callBitrix('/crm.deal.add.json', {
         fields: dealFields,
@@ -102,6 +125,33 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3) {
       if (dealAddResp.result) {
         const dealId = dealAddResp.result;
         console.log(`[SHOPIFY WEBHOOK] ✅ Deal created successfully on attempt ${attempt}: ${dealId}`);
+        
+        // ✅ CRITICAL: Double-check for duplicates after creation (race condition protection)
+        // Wait a bit for Bitrix to index the new deal, then check if multiple deals exist
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        const duplicateCheckResp = await callBitrix('/crm.deal.list.json', {
+          filter: { 'UF_CRM_1742556489': shopifyOrderId },
+          select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
+        });
+
+        if (duplicateCheckResp.result && duplicateCheckResp.result.length > 1) {
+          console.warn(`[SHOPIFY WEBHOOK] ⚠️ WARNING: Multiple deals found for order ${shopifyOrderId} (${duplicateCheckResp.result.length} deals)!`);
+          console.warn(`[SHOPIFY WEBHOOK] Deal IDs: ${duplicateCheckResp.result.map(d => d.ID).join(', ')}`);
+          console.warn(`[SHOPIFY WEBHOOK] Using the first (oldest) deal: ${duplicateCheckResp.result[0].ID}`);
+          
+          // Use the first (oldest) deal to maintain consistency
+          const firstDealId = duplicateCheckResp.result[0].ID;
+          const verifiedDeal = await verifyDeal(firstDealId);
+          
+          return { 
+            success: true, 
+            dealId: firstDealId,
+            wasDuplicate: true, // Mark as duplicate since multiple deals exist
+            attempt,
+            verifiedDeal
+          };
+        }
         
         // Verify deal exists and get details
         const verifiedDeal = await verifyDeal(dealId);
