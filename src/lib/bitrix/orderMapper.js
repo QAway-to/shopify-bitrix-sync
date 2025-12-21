@@ -175,24 +175,25 @@ export function mapShopifyOrderToBitrixDeal(order) {
     ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() || null
     : null;
 
-  // ✅ CRITICAL: Check for cancellation/deletion indicators
-  // Shopify may not always set financial_status correctly, so check multiple fields
+  // ✅ CRITICAL: Check for refund/cancellation/deletion - ALL should map to LOSE
+  const financialStatus = (order.financial_status || '').toLowerCase();
   const cancelledAt = order.cancelled_at;
   const cancelReason = order.cancel_reason;
-  const financialStatus = order.financial_status || '';
-  const isCancelledOrDeleted = cancelledAt || cancelReason || 
-                                financialStatus.toLowerCase() === 'cancelled' || 
-                                financialStatus.toLowerCase() === 'voided';
   
-  // ✅ CRITICAL: If order is cancelled/deleted, force LOSE stage regardless of financial_status
-  let stageId;
-  if (isCancelledOrDeleted) {
-    stageId = BITRIX_CONFIG.STAGES.CANCELLED; // LOSE
-    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ ORDER CANCELLED/DELETED DETECTED: cancelled_at=${cancelledAt}, cancel_reason=${cancelReason}, financial_status="${financialStatus}" → FORCING Stage "LOSE"`);
+  // ✅ ONE LINE: full refund OR cancelled OR cancelled_at OR cancel_reason → LOSE
+  const isLost = financialStatus === 'refunded' || 
+                 financialStatus === 'cancelled' || 
+                 financialStatus === 'voided' || 
+                 !!cancelledAt || 
+                 !!cancelReason;
+  
+  // ✅ CRITICAL: Force LOSE for refunded/cancelled/deleted orders
+  const stageId = isLost ? 'LOSE' : financialStatusToStageId(order.financial_status || '', categoryId);
+  
+  if (isLost) {
+    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ ORDER LOST (refunded/cancelled/deleted): financial_status="${order.financial_status}", cancelled_at=${cancelledAt}, cancel_reason=${cancelReason} → FORCING Stage "LOSE"`);
   } else {
-    // Map financial status to stage ID (based on category)
-    stageId = financialStatusToStageId(financialStatus, categoryId);
-    console.log(`[ORDER MAPPER] Financial status "${financialStatus}" → Stage "${stageId}" for category ${categoryId}`);
+    console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Stage "${stageId}" for category ${categoryId}`);
   }
   
   // Map financial status to payment status field
