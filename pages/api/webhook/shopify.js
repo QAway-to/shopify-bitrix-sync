@@ -606,12 +606,28 @@ async function handleOrderCreated(order) {
 async function handleOrderUpdated(order) {
   console.log(`[SHOPIFY WEBHOOK] Handling order updated: ${order.name || order.id}`);
   
-  // ✅ CRITICAL: Log cancellation and refund status
-  const financialStatus = order?.financial_status || 'N/A';
+  // ✅ CRITICAL: Check for cancellation/deletion indicators (multiple checks)
+  const financialStatus = order?.financial_status || '';
   const statusLower = financialStatus?.toLowerCase() || '';
-  const isCancelled = statusLower === 'cancelled' || statusLower === 'voided';
+  const cancelledAt = order?.cancelled_at;
+  const cancelReason = order?.cancel_reason;
+  
+  // Check multiple indicators: financial_status, cancelled_at, cancel_reason
+  const isCancelled = statusLower === 'cancelled' || 
+                      statusLower === 'voided' || 
+                      !!cancelledAt || 
+                      !!cancelReason;
   const isRefunded = statusLower === 'refunded';
   const isLost = isCancelled || isRefunded; // Both should map to LOSE
+  
+  // ✅ CRITICAL: Log all cancellation indicators
+  if (isCancelled) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED/DELETED DETECTED:`);
+    console.log(`[SHOPIFY WEBHOOK]   - financial_status: "${financialStatus}"`);
+    console.log(`[SHOPIFY WEBHOOK]   - cancelled_at: ${cancelledAt || 'N/A'}`);
+    console.log(`[SHOPIFY WEBHOOK]   - cancel_reason: ${cancelReason || 'N/A'}`);
+    console.log(`[SHOPIFY WEBHOOK]   - MUST update Bitrix deal to LOSE stage`);
+  }
   
   if (isCancelled) {
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED DETECTED: financial_status="${financialStatus}" - should update Bitrix deal to LOSE stage`);

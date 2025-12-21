@@ -175,9 +175,25 @@ export function mapShopifyOrderToBitrixDeal(order) {
     ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() || null
     : null;
 
-  // Map financial status to stage ID (based on category)
-  const stageId = financialStatusToStageId(order.financial_status, categoryId);
-  console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Stage "${stageId}" for category ${categoryId}`);
+  // ✅ CRITICAL: Check for cancellation/deletion indicators
+  // Shopify may not always set financial_status correctly, so check multiple fields
+  const cancelledAt = order.cancelled_at;
+  const cancelReason = order.cancel_reason;
+  const financialStatus = order.financial_status || '';
+  const isCancelledOrDeleted = cancelledAt || cancelReason || 
+                                financialStatus.toLowerCase() === 'cancelled' || 
+                                financialStatus.toLowerCase() === 'voided';
+  
+  // ✅ CRITICAL: If order is cancelled/deleted, force LOSE stage regardless of financial_status
+  let stageId;
+  if (isCancelledOrDeleted) {
+    stageId = BITRIX_CONFIG.STAGES.CANCELLED; // LOSE
+    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ ORDER CANCELLED/DELETED DETECTED: cancelled_at=${cancelledAt}, cancel_reason=${cancelReason}, financial_status="${financialStatus}" → FORCING Stage "LOSE"`);
+  } else {
+    // Map financial status to stage ID (based on category)
+    stageId = financialStatusToStageId(financialStatus, categoryId);
+    console.log(`[ORDER MAPPER] Financial status "${financialStatus}" → Stage "${stageId}" for category ${categoryId}`);
+  }
   
   // Map financial status to payment status field
   const paymentStatusEnumId = financialStatusToPaymentStatus(order.financial_status);
