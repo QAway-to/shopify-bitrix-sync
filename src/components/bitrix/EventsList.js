@@ -1,5 +1,6 @@
-export default function BitrixEventsList({ events, selectedEvents = [], onSelectionChange, onPreviewEvent }) {
-  if (!events || events.length === 0) {
+export default function BitrixEventsList({ events, selectedEvents = [], onSelectionChange, onPreviewEvent, isLoading = false }) {
+  // ✅ Show empty state only if no events AND not loading
+  if ((!events || events.length === 0) && !isLoading) {
     return (
       <div className="card">
         <header className="card-header">
@@ -171,6 +172,29 @@ export default function BitrixEventsList({ events, selectedEvents = [], onSelect
               </tr>
               );
             })}
+            {/* ✅ Show loading row at the bottom if loading new data */}
+            {isLoading && (
+              <tr key="loading-row">
+                <td colSpan={onPreviewEvent ? 8 : 7} style={{ padding: '20px', textAlign: 'center', borderBottom: '1px solid #334155' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#94a3b8' }}>
+                    <div style={{
+                      width: '16px',
+                      height: '16px',
+                      border: '2px solid #334155',
+                      borderTopColor: '#3b82f6',
+                      borderRadius: '50%',
+                      animation: 'spin 1s linear infinite'
+                    }}></div>
+                    <span>Loading new events...</span>
+                  </div>
+                  <style>{`
+                    @keyframes spin {
+                      to { transform: rotate(360deg); }
+                    }
+                  `}</style>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

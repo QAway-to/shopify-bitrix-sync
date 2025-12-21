@@ -3,6 +3,8 @@
  * Collects logs from recent operations and returns as text file
  */
 import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
+import { successAdapter } from '../../../src/lib/adapters/success/index.js';
+import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -55,16 +57,48 @@ export default async function handler(req, res) {
           const eventId = event.id || event.eventId || `event-${index}`;
           const orderId = event.orderId || event.id || 'N/A';
           const receivedAt = event.received_at || event.created_at || 'N/A';
-          const totalPrice = event.current_total_price || event.total_price || 'N/A';
           const currency = event.currency || 'EUR';
           const financialStatus = event.financial_status || 'N/A';
           const lineItemsCount = event.line_items ? event.line_items.length : 0;
+
+          // ✅ Calculate sum of active items (matches Bitrix OPPORTUNITY calculation)
+          let activeItemsTotal = 0;
+          if (event.line_items && Array.isArray(event.line_items)) {
+            for (const item of event.line_items) {
+              const currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
+              if (currentQuantity > 0) {
+                const itemPrice = Number(item.price || 0);
+                const itemTotal = itemPrice * currentQuantity;
+                const itemDiscount = Number(
+                  item.discount_allocations?.[0]?.amount ||
+                  item.discount_allocations?.[0]?.amount_set?.shop_money?.amount ||
+                  item.total_discount ||
+                  0
+                );
+                activeItemsTotal += itemTotal - itemDiscount;
+              }
+            }
+            // Add shipping
+            const shippingPrice = Number(
+              event.current_total_shipping_price_set?.shop_money?.amount ||
+              event.total_shipping_price_set?.shop_money?.amount ||
+              event.shipping_price ||
+              event.shipping_lines?.[0]?.price ||
+              0
+            );
+            activeItemsTotal += shippingPrice;
+          }
+          // Fallback if calculation failed
+          if (activeItemsTotal === 0) {
+            activeItemsTotal = Number(event.current_total_price || event.total_price || 0);
+          }
 
           logs.push(`Event #${index + 1}: ${eventId}`);
           logs.push(`  Order ID: ${orderId}`);
           logs.push(`  Email: ${event.email || 'N/A'}`);
           logs.push(`  Received At: ${receivedAt}`);
-          logs.push(`  Total Price: ${totalPrice} ${currency}`);
+          logs.push(`  Total Price (Paid): ${event.current_total_price || event.total_price || 'N/A'} ${currency}`);
+          logs.push(`  Active Items Total (Sum of active items): ${activeItemsTotal.toFixed(2)} ${currency}`);
           logs.push(`  Financial Status: ${financialStatus}`);
           logs.push(`  Line Items: ${lineItemsCount}`);
           
@@ -79,6 +113,42 @@ export default async function handler(req, res) {
             });
           }
           
+          // ✅ Add Bitrix mapping details (product rows calculation)
+          try {
+            const { dealFields, productRows } = mapShopifyOrderToBitrixDeal(event);
+            logs.push(`  Bitrix Mapping Details:`);
+            logs.push(`    Total Product Rows: ${productRows.length}`);
+            logs.push(`    Deal OPPORTUNITY: ${dealFields.OPPORTUNITY || 'N/A'} ${dealFields.CURRENCY_ID || currency}`);
+            
+            // Count active line items
+            const activeLineItems = event.line_items?.filter(item => {
+              const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
+              return currentQty > 0;
+            }) || [];
+            
+            logs.push(`    Active Line Items: ${activeLineItems.length} (from ${event.line_items?.length || 0} total)`);
+            
+            // Show product rows breakdown
+            if (productRows.length > 0) {
+              logs.push(`    Product Rows Breakdown:`);
+              const productRowsBySku = {};
+              productRows.forEach(row => {
+                const productName = row.PRODUCT_NAME || 'Unknown';
+                const sku = productName.match(/SKU:\s*(\w+)/)?.[1] || 'N/A';
+                if (!productRowsBySku[sku]) {
+                  productRowsBySku[sku] = { count: 0, price: row.PRICE || 0, name: productName };
+                }
+                productRowsBySku[sku].count++;
+              });
+              
+              Object.entries(productRowsBySku).forEach(([sku, data]) => {
+                logs.push(`      - ${data.name}: ${data.count} row(s) × ${data.price} ${currency} = ${(data.count * data.price).toFixed(2)} ${currency}`);
+              });
+            }
+          } catch (mappingError) {
+            logs.push(`  Bitrix Mapping Error: ${mappingError.message}`);
+          }
+          
           logs.push('');
         });
       } else {
@@ -87,6 +157,67 @@ export default async function handler(req, res) {
       }
     } catch (error) {
       logs.push(`Error collecting events: ${error.message}`);
+      logs.push('');
+    }
+
+    // ✅ Add successful operations section
+    logs.push('='.repeat(80));
+    logs.push('SUCCESSFUL OPERATIONS');
+    logs.push('='.repeat(80));
+    logs.push('');
+
+    try {
+      const operations = successAdapter.getAllOperations();
+      
+      if (operations && operations.length > 0) {
+        logs.push(`Total successful operations: ${operations.length}`);
+        logs.push('');
+        
+        // Sort by timestamp (most recent first)
+        const sortedOperations = [...operations].sort((a, b) => {
+          const dateA = new Date(a.timestamp || a.stored_at || 0);
+          const dateB = new Date(b.timestamp || b.stored_at || 0);
+          return dateB - dateA;
+        });
+
+        sortedOperations.forEach((op, index) => {
+          logs.push(`Operation #${index + 1}: ${op.id || op.operationId}`);
+          logs.push(`  Type: ${op.operationType || 'N/A'}`);
+          logs.push(`  Deal ID: ${op.dealId || 'N/A'}`);
+          logs.push(`  Shopify Order ID: ${op.shopifyOrderId || 'N/A'}`);
+          logs.push(`  Shopify Order Name: ${op.shopifyOrderName || 'N/A'}`);
+          logs.push(`  Timestamp: ${op.timestamp || op.stored_at || 'N/A'}`);
+          logs.push(`  Verified: ${op.verified ? 'Yes' : 'No'}`);
+          if (op.attempt) {
+            logs.push(`  Attempt: ${op.attempt}`);
+          }
+          if (op.wasDuplicate) {
+            logs.push(`  Was Duplicate: Yes`);
+          }
+          if (op.productRowsCount !== undefined) {
+            logs.push(`  Product Rows Count: ${op.productRowsCount}`);
+          }
+          if (op.updatedFields && Array.isArray(op.updatedFields)) {
+            logs.push(`  Updated Fields: ${op.updatedFields.join(', ')}`);
+          }
+          
+          // Add deal data summary
+          if (op.dealData) {
+            logs.push(`  Deal Data Summary:`);
+            logs.push(`    TITLE: ${op.dealData.TITLE || 'N/A'}`);
+            logs.push(`    OPPORTUNITY: ${op.dealData.OPPORTUNITY || 'N/A'} ${op.dealData.CURRENCY_ID || 'EUR'}`);
+            logs.push(`    STAGE_ID: ${op.dealData.STAGE_ID || 'N/A'}`);
+            logs.push(`    CATEGORY_ID: ${op.dealData.CATEGORY_ID || 'N/A'}`);
+          }
+          
+          logs.push('');
+        });
+      } else {
+        logs.push('No successful operations found.');
+        logs.push('');
+      }
+    } catch (error) {
+      logs.push(`Error collecting successful operations: ${error.message}`);
       logs.push('');
     }
 
@@ -102,7 +233,12 @@ export default async function handler(req, res) {
     logs.push('This log file includes:');
     logs.push('  - Recent webhook events received from Shopify');
     logs.push('  - Event metadata (order ID, amounts, statuses)');
-    logs.push('  - Line items information');
+    logs.push('  - Line items information with current_quantity');
+    logs.push('  - Bitrix mapping details (product rows, OPPORTUNITY calculation)');
+    logs.push('  - Successful operations (created/updated deals with verification status)');
+    logs.push('');
+    logs.push('Note: Error tracking is currently logged to console only.');
+    logs.push('Future versions will include error storage and retrieval in logs.');
     logs.push('');
     logs.push('='.repeat(80));
     logs.push(`End of log file - ${new Date().toISOString()}`);

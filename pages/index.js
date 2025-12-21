@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import WebhookInfo from '../src/components/shopify/WebhookInfo';
 import EventsList from '../src/components/shopify/EventsList';
 import BitrixEventsList from '../src/components/bitrix/EventsList';
+import SuccessOperationsList from '../src/components/success/SuccessOperationsList';
 import DataPreview from '../src/components/shopify/DataPreview';
 import { shopifyAdapter } from '../src/lib/adapters/shopify';
 
@@ -11,24 +12,49 @@ export default function ShopifyPage() {
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [bitrixEvents, setBitrixEvents] = useState([]);
   const [selectedBitrixEvents, setSelectedBitrixEvents] = useState([]);
+  const [successOperations, setSuccessOperations] = useState([]);
+  const [selectedSuccessOperations, setSelectedSuccessOperations] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isBitrixLoading, setIsBitrixLoading] = useState(false);
+  const [isSuccessLoading, setIsSuccessLoading] = useState(false);
   const [error, setError] = useState(null);
   const [lastRefresh, setLastRefresh] = useState(null);
   const [isSending, setIsSending] = useState(false);
   const [isSendingToShopify, setIsSendingToShopify] = useState(false);
   const [sendResult, setSendResult] = useState(null);
   const [sendToShopifyResult, setSendToShopifyResult] = useState(null);
-  // Hardcoded Bitrix webhook base URL
-  const [bitrixWebhookUrl, setBitrixWebhookUrl] = useState('https://bfcshoes.bitrix24.eu/rest/52/i6l05o71ywxb8j1l');
+  // Bitrix webhook URL from environment variable (via API)
+  const [bitrixWebhookUrl, setBitrixWebhookUrl] = useState(null);
+  const [isLoadingWebhookUrl, setIsLoadingWebhookUrl] = useState(true);
   const [previewEvent, setPreviewEvent] = useState(null); // Event to preview (Shopify)
   const [previewData, setPreviewData] = useState(null); // { shopifyData, bitrixData } for preview (Shopify)
   const [bitrixPreviewEvent, setBitrixPreviewEvent] = useState(null); // Event to preview (Bitrix)
   const [bitrixPreviewData, setBitrixPreviewData] = useState(null); // { shopifyData, bitrixData } for preview (Bitrix)
+  const [successPreviewOperation, setSuccessPreviewOperation] = useState(null); // Operation to preview (Success)
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load
+  // ✅ Track if this is initial fetch to show loading state
+  const [isInitialFetch, setIsInitialFetch] = useState(true);
+
+  const fetchBitrixWebhookUrl = async () => {
+    setIsLoadingWebhookUrl(true);
+    try {
+      const response = await fetch('/api/config/bitrix-webhook-url');
+      const data = await response.json();
+      if (data.success && data.webhookUrl) {
+        setBitrixWebhookUrl(data.webhookUrl);
+        console.log(`[UI] Bitrix webhook URL loaded from ${data.source}: ${data.webhookUrl}`);
+      } else {
+        console.error('Failed to fetch Bitrix webhook URL:', data.error);
+      }
+    } catch (err) {
+      console.error('Fetch Bitrix webhook URL error:', err);
+    } finally {
+      setIsLoadingWebhookUrl(false);
+    }
+  };
 
   const fetchEvents = async () => {
-    setIsLoading(true);
+    // ✅ Don't set loading state - we'll show inline loader for new rows only
     setError(null);
 
     try {
@@ -37,12 +63,32 @@ export default function ShopifyPage() {
 
       if (data.success) {
         const fetchedEvents = data.events || [];
-        setEvents(fetchedEvents);
+        
+        // ✅ Smart merge: only add new events, preserve existing ones
+        setEvents(prevEvents => {
+          // Create a Set of existing event IDs for fast lookup
+          const existingIds = new Set(prevEvents.map(e => e.id || e.eventId));
+          
+          // Filter out events that already exist
+          const newEvents = fetchedEvents.filter(e => {
+            const eventId = e.id || e.eventId;
+            return !existingIds.has(eventId);
+          });
+          
+          // If there are new events, append them to the end
+          if (newEvents.length > 0) {
+            return [...prevEvents, ...newEvents];
+          }
+          
+          // If no new events, return previous state (no re-render needed)
+          return prevEvents;
+        });
+        
         setLastRefresh(new Date());
         
-        // Update preview if the previewed event still exists
+        // ✅ Update preview only if previewed event is selected and still exists
         if (previewEvent && previewData) {
-          const updatedEvent = fetchedEvents.find(e => e.id === previewEvent.id);
+          const updatedEvent = fetchedEvents.find(e => (e.id || e.eventId) === (previewEvent.id || previewEvent.eventId));
           if (updatedEvent) {
             try {
               const bitrixData = shopifyAdapter.transformToBitrix(updatedEvent);
@@ -56,25 +102,17 @@ export default function ShopifyPage() {
             }
           }
         }
-        
-        // Auto-select all events only on initial load (first time only)
-        if (isInitialLoad && fetchedEvents.length > 0) {
-          setSelectedEvents(fetchedEvents);
-          setIsInitialLoad(false);
-        }
       } else {
         setError(data.error || 'Failed to fetch events');
       }
     } catch (err) {
       console.error('Fetch events error:', err);
       setError(err.message || 'Network error');
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const fetchBitrixEvents = async () => {
-    setIsBitrixLoading(true);
+    // ✅ Don't set loading state - we'll show inline loader for new rows only
 
     try {
       const response = await fetch('/api/events/bitrix');
@@ -82,24 +120,91 @@ export default function ShopifyPage() {
 
       if (data.success) {
         const fetchedEvents = data.events || [];
-        setBitrixEvents(fetchedEvents);
+        
+        // ✅ Smart merge: only add new events, preserve existing ones
+        setBitrixEvents(prevEvents => {
+          const existingIds = new Set(prevEvents.map(e => e.id || e.eventId || e.dealId));
+          const newEvents = fetchedEvents.filter(e => {
+            const eventId = e.id || e.eventId || e.dealId;
+            return !existingIds.has(eventId);
+          });
+          if (newEvents.length > 0) {
+            return [...prevEvents, ...newEvents];
+          }
+          return prevEvents;
+        });
       }
     } catch (err) {
       console.error('Fetch Bitrix events error:', err);
-    } finally {
-      setIsBitrixLoading(false);
+    }
+  };
+
+  const fetchSuccessOperations = async () => {
+    // ✅ Don't set loading state - we'll show inline loader for new rows only
+
+    try {
+      const response = await fetch('/api/events/success');
+      const data = await response.json();
+
+      if (data.success) {
+        const fetchedOperations = data.operations || [];
+        
+        // ✅ Smart merge: only add new operations, preserve existing ones
+        setSuccessOperations(prevOperations => {
+          const existingIds = new Set(prevOperations.map(op => op.id || op.operationId));
+          const newOperations = fetchedOperations.filter(op => {
+            const opId = op.id || op.operationId;
+            return !existingIds.has(opId);
+          });
+          if (newOperations.length > 0) {
+            return [...prevOperations, ...newOperations];
+          }
+          return prevOperations;
+        });
+        
+        // ✅ Update preview only if previewed operation is selected
+        if (successPreviewOperation && previewData) {
+          const updatedOp = fetchedOperations.find(op => (op.id || op.operationId) === (successPreviewOperation.id || successPreviewOperation.operationId));
+          if (updatedOp) {
+            setSuccessPreviewOperation(updatedOp);
+            setPreviewData({
+              shopifyData: null,
+              bitrixData: updatedOp.dealData ? { fields: updatedOp.dealData } : { fields: {} },
+              operation: updatedOp
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Fetch success operations error:', err);
     }
   };
 
   // Initial fetch
   useEffect(() => {
-    fetchEvents();
-    fetchBitrixEvents();
+    fetchBitrixWebhookUrl(); // Fetch webhook URL first
+    
+    // First load - set loading states
+    setIsLoading(true);
+    setIsBitrixLoading(true);
+    setIsSuccessLoading(true);
+    
+    Promise.all([
+      fetchEvents(),
+      fetchBitrixEvents(),
+      fetchSuccessOperations()
+    ]).finally(() => {
+      setIsLoading(false);
+      setIsBitrixLoading(false);
+      setIsSuccessLoading(false);
+      setIsInitialFetch(false);
+    });
 
-    // Auto-refresh every 5 seconds
+    // Auto-refresh every 5 seconds (silent - no loading states, just fetch new data)
     const interval = setInterval(() => {
       fetchEvents();
       fetchBitrixEvents();
+      fetchSuccessOperations();
     }, 5000);
 
     return () => clearInterval(interval);
@@ -112,7 +217,11 @@ export default function ShopifyPage() {
     }
 
     if (!bitrixWebhookUrl || bitrixWebhookUrl.trim() === '') {
-      alert('Пожалуйста, укажите URL вебхука Bitrix');
+      if (isLoadingWebhookUrl) {
+        alert('Пожалуйста, подождите пока загружается URL вебхука Bitrix');
+      } else {
+        alert('URL вебхука Bitrix не настроен. Проверьте переменную окружения BITRIX_WEBHOOK_BASE');
+      }
       return;
     }
 
@@ -185,6 +294,16 @@ export default function ShopifyPage() {
     setBitrixPreviewData({
       bitrixData: event.rawDealData ? { fields: event.rawDealData } : { fields: event },
       shopifyData: null // Bitrix events don't have Shopify data in the event itself
+    });
+  };
+
+  const handleSuccessPreviewOperation = (operation) => {
+    // For success operations, show deal data
+    setSuccessPreviewOperation(operation);
+    setPreviewData({
+      shopifyData: null,
+      bitrixData: operation.dealData ? { fields: operation.dealData } : { fields: {} },
+      operation: operation
     });
   };
 
@@ -325,7 +444,11 @@ export default function ShopifyPage() {
     }
 
     if (!bitrixWebhookUrl || bitrixWebhookUrl.trim() === '') {
-      alert('Пожалуйста, укажите URL вебхука Bitrix');
+      if (isLoadingWebhookUrl) {
+        alert('Пожалуйста, подождите пока загружается URL вебхука Bitrix');
+      } else {
+        alert('URL вебхука Bitrix не настроен. Проверьте переменную окружения BITRIX_WEBHOOK_BASE');
+      }
       return;
     }
 
@@ -394,7 +517,7 @@ export default function ShopifyPage() {
               Monitor Shopify → Bitrix and Bitrix → Shopify webhook events in real-time
             </p>
           </div>
-          <div className="header-actions">
+          <div className="header-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
             {events.length > 0 && (
               <>
                 {selectedEvents.length === events.length ? (
@@ -402,13 +525,15 @@ export default function ShopifyPage() {
                     onClick={handleDeselectAll}
                     className="btn"
                     style={{
-                      marginRight: '12px',
                       background: '#6b7280',
                       border: 'none',
                       padding: '8px 16px',
                       borderRadius: '6px',
                       color: 'white',
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      minWidth: '180px',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
                     }}
                   >
                     Снять выбор
@@ -418,13 +543,15 @@ export default function ShopifyPage() {
                     onClick={handleSelectAll}
                     className="btn"
                     style={{
-                      marginRight: '12px',
                       background: '#3b82f6',
                       border: 'none',
                       padding: '8px 16px',
                       borderRadius: '6px',
                       color: 'white',
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      minWidth: '180px',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
                     }}
                   >
                     ✓ Выбрать все ({events.length})
@@ -437,13 +564,15 @@ export default function ShopifyPage() {
               className="btn"
               disabled={isSending || selectedEvents.length === 0}
               style={{
-                marginRight: '12px',
                 background: selectedEvents.length > 0 ? '#059669' : '#6b7280',
                 border: 'none',
                 padding: '8px 16px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: selectedEvents.length > 0 ? 'pointer' : 'not-allowed'
+                cursor: selectedEvents.length > 0 ? 'pointer' : 'not-allowed',
+                minWidth: '220px',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
               }}
             >
               {isSending ? 'Отправка...' : `📤 Отправить в Bitrix (${selectedEvents.length})`}
@@ -452,13 +581,15 @@ export default function ShopifyPage() {
               onClick={handleDownloadLogs}
               className="btn"
               style={{
-                marginRight: '12px',
                 background: '#7c3aed',
                 border: 'none',
                 padding: '8px 16px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                minWidth: '220px',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
               }}
               title="Download Shopify logs as .txt file"
             >
@@ -471,13 +602,15 @@ export default function ShopifyPage() {
                     onClick={() => setSelectedBitrixEvents([])}
                     className="btn"
                     style={{
-                      marginRight: '12px',
                       background: '#6b7280',
                       border: 'none',
                       padding: '8px 16px',
                       borderRadius: '6px',
                       color: 'white',
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      minWidth: '200px',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
                     }}
                   >
                     Снять выбор (Bitrix)
@@ -487,13 +620,15 @@ export default function ShopifyPage() {
                     onClick={() => setSelectedBitrixEvents(bitrixEvents)}
                     className="btn"
                     style={{
-                      marginRight: '12px',
                       background: '#3b82f6',
                       border: 'none',
                       padding: '8px 16px',
                       borderRadius: '6px',
                       color: 'white',
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      minWidth: '200px',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
                     }}
                   >
                     ✓ Выбрать все Bitrix ({bitrixEvents.length})
@@ -506,13 +641,15 @@ export default function ShopifyPage() {
               className="btn"
               disabled={isSendingToShopify || selectedBitrixEvents.length === 0}
               style={{
-                marginRight: '12px',
                 background: selectedBitrixEvents.length > 0 ? '#059669' : '#6b7280',
                 border: 'none',
                 padding: '8px 16px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: selectedBitrixEvents.length > 0 ? 'pointer' : 'not-allowed'
+                cursor: selectedBitrixEvents.length > 0 ? 'pointer' : 'not-allowed',
+                minWidth: '220px',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
               }}
             >
               {isSendingToShopify ? 'Отправка...' : `📤 Отправить в Shopify (${selectedBitrixEvents.length})`}
@@ -521,24 +658,41 @@ export default function ShopifyPage() {
               onClick={handleDownloadBitrixLogs}
               className="btn"
               style={{
-                marginRight: '12px',
                 background: '#7c3aed',
                 border: 'none',
                 padding: '8px 16px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                minWidth: '220px',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
               }}
               title="Download Bitrix logs as .txt file"
             >
               📥 Скачать логи (Bitrix)
             </button>
             <button
-              onClick={fetchEvents}
+              onClick={() => {
+                fetchEvents();
+                fetchBitrixEvents();
+                fetchSuccessOperations();
+              }}
               className="btn"
-              disabled={isLoading}
+              disabled={isLoading || isBitrixLoading || isSuccessLoading}
+              style={{
+                background: '#374151',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: '6px',
+                color: 'white',
+                cursor: (isLoading || isBitrixLoading || isSuccessLoading) ? 'not-allowed' : 'pointer',
+                minWidth: '140px',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}
             >
-              {isLoading ? 'Refreshing...' : '🔄 Refresh'}
+              {(isLoading || isBitrixLoading || isSuccessLoading) ? 'Refreshing...' : '🔄 Refresh'}
             </button>
           </div>
         </header>
@@ -666,7 +820,7 @@ export default function ShopifyPage() {
         {/* Webhook Configuration */}
         <WebhookInfo onBitrixUrlChange={setBitrixWebhookUrl} />
 
-        {/* Events Lists - Two fixed-width columns: Shopify → Bitrix and Bitrix → Shopify */}
+        {/* Events Lists - Three fixed-width columns: Shopify → Bitrix, Bitrix → Shopify, Success Operations */}
         <div style={{
           display: 'flex',
           gap: '20px',
@@ -674,7 +828,7 @@ export default function ShopifyPage() {
           alignItems: 'flex-start'
         }}>
           {/* Left column: Shopify → Bitrix - Fixed width */}
-          <div style={{ width: '450px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
             <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.5rem', flexShrink: 0 }}>
               Shopify → Middleware → Bitrix
             </h2>
@@ -684,12 +838,13 @@ export default function ShopifyPage() {
             selectedEvents={selectedEvents}
             onSelectionChange={setSelectedEvents}
             onPreviewEvent={handlePreviewEvent}
+            isLoading={isInitialFetch && isLoading}
           />
             </div>
           </div>
 
-          {/* Right column: Bitrix → Shopify - Fixed width */}
-          <div style={{ width: '450px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+          {/* Middle column: Bitrix → Shopify - Fixed width */}
+          <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
             <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.5rem', flexShrink: 0 }}>
               Bitrix → Middleware → Shopify
             </h2>
@@ -738,15 +893,32 @@ export default function ShopifyPage() {
                 selectedEvents={selectedBitrixEvents}
                 onSelectionChange={setSelectedBitrixEvents}
                 onPreviewEvent={handleBitrixPreviewEvent}
+                isLoading={isInitialFetch && isBitrixLoading}
+              />
+            </div>
+          </div>
+
+          {/* Right column: Success Operations - Fixed width */}
+          <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+            <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.5rem', flexShrink: 0 }}>
+              ✓ Успешные операции (Тестирование)
+            </h2>
+            <div style={{ flex: '1 1 auto', minHeight: 0 }}>
+              <SuccessOperationsList
+                operations={successOperations}
+                selectedOperations={selectedSuccessOperations}
+                onSelectionChange={setSelectedSuccessOperations}
+                onPreviewOperation={handleSuccessPreviewOperation}
+                isLoading={isInitialFetch && isSuccessLoading}
               />
             </div>
           </div>
         </div>
 
         {/* Data Preview - Wide block below */}
-        {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) ? (
+        {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation) ? (
           <div style={{ marginTop: '20px', width: '100%' }}>
-        {previewData && previewEvent && (
+        {previewData && previewEvent && !successPreviewOperation && (
           <DataPreview
             shopifyData={previewData.shopifyData}
             bitrixData={previewData.bitrixData}
@@ -761,6 +933,15 @@ export default function ShopifyPage() {
                 bitrixData={bitrixPreviewData.bitrixData}
                 eventId={bitrixPreviewEvent.dealId || bitrixPreviewEvent.id}
                 eventType="bitrix"
+              />
+            )}
+            {previewData && successPreviewOperation && (
+              <DataPreview
+                shopifyData={previewData.shopifyData}
+                bitrixData={previewData.bitrixData}
+                eventId={successPreviewOperation.dealId || successPreviewOperation.id}
+                eventType="success"
+                operation={successPreviewOperation}
               />
             )}
           </div>

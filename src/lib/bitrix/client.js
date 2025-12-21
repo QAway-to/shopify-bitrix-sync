@@ -63,6 +63,60 @@ export function getBitrixWebhookBase() {
 }
 
 /**
+ * Classify Bitrix API error type
+ * @param {Object} errorResponse - Error response from Bitrix API
+ * @returns {Object} { type: string, message: string, details: Object }
+ */
+export function classifyBitrixError(errorResponse) {
+  const errorCode = errorResponse.error || '';
+  const errorDesc = (errorResponse.error_description || errorResponse.error || '').toLowerCase();
+  const errorMsg = String(errorDesc);
+
+  // Validation errors (mandatory fields)
+  const validationKeywords = [
+    'mandatory', 'required', 'обязательное', 'обязательное поле',
+    'field is required', 'поле обязательно', 'must be filled',
+    'invalid value', 'неверное значение', 'validation'
+  ];
+  const isValidationError = validationKeywords.some(keyword => errorMsg.includes(keyword));
+
+  // Permission errors
+  const permissionKeywords = [
+    'permission', 'access denied', 'доступ запрещен', 'недостаточно прав',
+    'forbidden', 'unauthorized', 'access denied', 'no permission'
+  ];
+  const isPermissionError = permissionKeywords.some(keyword => errorMsg.includes(keyword));
+
+  // Duplicate errors
+  const duplicateKeywords = [
+    'duplicate', 'already exists', 'уже существует', 'уже есть',
+    'duplicate entry', 'повтор'
+  ];
+  const isDuplicateError = duplicateKeywords.some(keyword => errorMsg.includes(keyword));
+
+  // Network/timeout errors
+  const networkKeywords = [
+    'timeout', 'network', 'connection', 'econnrefused', 'enotfound',
+    'etimedout', 'failed to fetch'
+  ];
+  const isNetworkError = networkKeywords.some(keyword => errorMsg.includes(keyword));
+
+  let errorType = 'UNKNOWN';
+  if (isValidationError) errorType = 'VALIDATION';
+  else if (isPermissionError) errorType = 'PERMISSION';
+  else if (isDuplicateError) errorType = 'DUPLICATE';
+  else if (isNetworkError) errorType = 'NETWORK';
+  else if (errorCode) errorType = errorCode;
+
+  return {
+    type: errorType,
+    message: errorResponse.error_description || errorResponse.error || 'Unknown error',
+    code: errorCode,
+    details: errorResponse
+  };
+}
+
+/**
  * Call Bitrix24 REST API method (simplified wrapper)
  * @param {string} method - API method (e.g., '/crm.deal.add.json')
  * @param {Object} payload - Method parameters
@@ -85,16 +139,53 @@ export async function callBitrix(method, payload = {}) {
     const result = await response.json();
 
     if (!response.ok) {
-      throw new Error(`Bitrix API error: ${JSON.stringify(result)}`);
+      const errorInfo = classifyBitrixError(result);
+      console.error(`[BITRIX API] HTTP Error ${response.status} calling ${method}:`, {
+        type: errorInfo.type,
+        message: errorInfo.message,
+        code: errorInfo.code,
+        payload: payload
+      });
+      const error = new Error(`Bitrix API error (${errorInfo.type}): ${errorInfo.message}`);
+      error.errorType = errorInfo.type;
+      error.errorDetails = errorInfo.details;
+      throw error;
     }
 
     if (result.error) {
-      throw new Error(`Bitrix API error: ${result.error_description || result.error}`);
+      const errorInfo = classifyBitrixError(result);
+      console.error(`[BITRIX API] Error calling ${method}:`, {
+        type: errorInfo.type,
+        message: errorInfo.message,
+        code: errorInfo.code,
+        payload: payload
+      });
+      const error = new Error(`Bitrix API error (${errorInfo.type}): ${errorInfo.message}`);
+      error.errorType = errorInfo.type;
+      error.errorDetails = errorInfo.details;
+      throw error;
     }
 
     return result;
   } catch (error) {
-    console.error(`[BITRIX API] Error calling ${method}:`, error);
+    // If error already has errorType, re-throw as is
+    if (error.errorType) {
+      throw error;
+    }
+    
+    // Classify network/connection errors
+    const errorMsg = error.message.toLowerCase();
+    if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+      error.errorType = 'NETWORK';
+    } else {
+      error.errorType = 'UNKNOWN';
+    }
+    
+    console.error(`[BITRIX API] Error calling ${method}:`, {
+      type: error.errorType,
+      message: error.message,
+      payload: payload
+    });
     throw error;
   }
 }
