@@ -188,13 +188,20 @@ export default function EventsList({ events, onSelectionChange, selectedEvents =
                         onPreviewEvent(event);
                       }}
                       style={{
-                        padding: '6px 10px',
+                        padding: '6px 12px',
                         background: '#3b82f6',
                         border: 'none',
                         borderRadius: '4px',
                         color: '#f1f5f9',
                         cursor: 'pointer',
-                        fontSize: '1rem'
+                        fontSize: '1rem',
+                        minWidth: '44px',
+                        height: '36px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
                       }}
                       title="Preview event data"
                     >

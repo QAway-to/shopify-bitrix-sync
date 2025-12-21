@@ -396,12 +396,12 @@ async function handleOrderCreated(order) {
     try {
       console.log(`[SHOPIFY WEBHOOK] 🔍 Duplicate check attempt ${checkAttempt}/${maxDuplicateChecks} for order ${shopifyOrderId}`);
       
-      const existingDealResp = await callBitrix('/crm.deal.list.json', {
-        filter: { 'UF_CRM_1742556489': shopifyOrderId },
-        select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
-      });
+    const existingDealResp = await callBitrix('/crm.deal.list.json', {
+      filter: { 'UF_CRM_1742556489': shopifyOrderId },
+      select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
+    });
 
-      if (existingDealResp.result && existingDealResp.result.length > 0) {
+    if (existingDealResp.result && existingDealResp.result.length > 0) {
         // Found existing deal(s) - use the first one
         existingDeal = existingDealResp.result[0];
         console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists (check ${checkAttempt}): ${existingDeal.ID}`);
@@ -432,38 +432,38 @@ async function handleOrderCreated(order) {
 
   // ✅ If deal exists, update it instead of creating duplicate
   if (existingDeal) {
-    const dealId = existingDeal.ID;
-    
-    console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists for Shopify order ${shopifyOrderId}: Deal ID ${dealId}`);
-    console.log(`[SHOPIFY WEBHOOK] Skipping creation to prevent duplicate. Updating existing deal instead.`);
-    
-    // Update existing deal instead of creating duplicate
-    const { dealFields, productRows } = mapShopifyOrderToBitrixDeal(order);
-    
-    // Upsert contact (non-blocking)
-    let contactId = null;
-    try {
-      const bitrixBase = getBitrixWebhookBase();
-      contactId = await upsertBitrixContact(bitrixBase, order);
-      if (contactId) {
-        dealFields.CONTACT_ID = contactId;
+      const dealId = existingDeal.ID;
+      
+      console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists for Shopify order ${shopifyOrderId}: Deal ID ${dealId}`);
+      console.log(`[SHOPIFY WEBHOOK] Skipping creation to prevent duplicate. Updating existing deal instead.`);
+      
+      // Update existing deal instead of creating duplicate
+      const { dealFields, productRows } = mapShopifyOrderToBitrixDeal(order);
+      
+      // Upsert contact (non-blocking)
+      let contactId = null;
+      try {
+        const bitrixBase = getBitrixWebhookBase();
+        contactId = await upsertBitrixContact(bitrixBase, order);
+        if (contactId) {
+          dealFields.CONTACT_ID = contactId;
+        }
+      } catch (contactError) {
+        console.error('[SHOPIFY WEBHOOK] Contact upsert failed (non-blocking):', contactError);
       }
-    } catch (contactError) {
-      console.error('[SHOPIFY WEBHOOK] Contact upsert failed (non-blocking):', contactError);
-    }
 
     // Validate before update
     const validation = validateDealFields(dealFields);
     if (validation.warnings.length > 0) {
       console.warn(`[SHOPIFY WEBHOOK] ⚠️ Validation warnings before update:`, validation.warnings);
-    }
+      }
 
-    // Update deal fields
-    await callBitrix('/crm.deal.update.json', {
-      id: dealId,
-      fields: dealFields,
-    });
-    console.log(`[SHOPIFY WEBHOOK] ✅ Existing deal ${dealId} updated`);
+      // Update deal fields
+      await callBitrix('/crm.deal.update.json', {
+        id: dealId,
+        fields: dealFields,
+      });
+      console.log(`[SHOPIFY WEBHOOK] ✅ Existing deal ${dealId} updated`);
 
     // Verify updated deal
     const verifiedDeal = await verifyDeal(dealId);
@@ -491,20 +491,20 @@ async function handleOrderCreated(order) {
       console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to store success operation (non-blocking):`, storeError);
     }
 
-    // Update product rows
-    if (productRows.length > 0) {
-      try {
-        await callBitrix('/crm.deal.productrows.set.json', {
-          id: dealId,
-          rows: productRows,
-        });
-        console.log(`[SHOPIFY WEBHOOK] Product rows updated for deal ${dealId}: ${productRows.length} rows`);
-      } catch (productRowsError) {
-        console.error(`[SHOPIFY WEBHOOK] Product rows update error (non-blocking):`, productRowsError);
+      // Update product rows
+      if (productRows.length > 0) {
+        try {
+          await callBitrix('/crm.deal.productrows.set.json', {
+            id: dealId,
+            rows: productRows,
+          });
+          console.log(`[SHOPIFY WEBHOOK] Product rows updated for deal ${dealId}: ${productRows.length} rows`);
+        } catch (productRowsError) {
+          console.error(`[SHOPIFY WEBHOOK] Product rows update error (non-blocking):`, productRowsError);
+        }
       }
-    }
 
-    return dealId;
+      return dealId;
   }
   
   // ✅ No existing deal found after all checks - proceed with creation
@@ -605,41 +605,10 @@ async function handleOrderCreated(order) {
  */
 async function handleOrderUpdated(order) {
   console.log(`[SHOPIFY WEBHOOK] Handling order updated: ${order.name || order.id}`);
-  
-  // ✅ CRITICAL: Check for cancellation/deletion indicators (multiple checks)
-  const financialStatus = order?.financial_status || '';
-  const statusLower = financialStatus?.toLowerCase() || '';
-  const cancelledAt = order?.cancelled_at;
-  const cancelReason = order?.cancel_reason;
-  
-  // Check multiple indicators: financial_status, cancelled_at, cancel_reason
-  const isCancelled = statusLower === 'cancelled' || 
-                      statusLower === 'voided' || 
-                      !!cancelledAt || 
-                      !!cancelReason;
-  const isRefunded = statusLower === 'refunded';
-  const isLost = isCancelled || isRefunded; // Both should map to LOSE
-  
-  // ✅ CRITICAL: Log all cancellation indicators
-  if (isCancelled) {
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED/DELETED DETECTED:`);
-    console.log(`[SHOPIFY WEBHOOK]   - financial_status: "${financialStatus}"`);
-    console.log(`[SHOPIFY WEBHOOK]   - cancelled_at: ${cancelledAt || 'N/A'}`);
-    console.log(`[SHOPIFY WEBHOOK]   - cancel_reason: ${cancelReason || 'N/A'}`);
-    console.log(`[SHOPIFY WEBHOOK]   - MUST update Bitrix deal to LOSE stage`);
-  }
-  
-  if (isCancelled) {
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED DETECTED: financial_status="${financialStatus}" - should update Bitrix deal to LOSE stage`);
-  }
-  if (isRefunded) {
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER REFUNDED DETECTED: financial_status="${financialStatus}" - should update Bitrix deal to LOSE stage`);
-  }
 
   const shopifyOrderId = String(order.id);
 
   // 1. Find deal by UF_CRM_1742556489 (Shopify Order ID field)
-  // ✅ FIX: Use correct field name that matches orderMapper.js
   const listResp = await callBitrix('/crm.deal.list.json', {
     filter: { 'UF_CRM_1742556489': shopifyOrderId },
     select: ['ID', 'OPPORTUNITY', 'STAGE_ID'],
@@ -648,8 +617,6 @@ async function handleOrderUpdated(order) {
   const deal = listResp.result?.[0];
   if (!deal) {
     // ✅ CRITICAL FIX: Create deal if not found
-    // This handles case when orders/updated arrives before orders/create
-    // or when deal was not created due to previous error
     console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal not found for Shopify order ${shopifyOrderId}`);
     console.log(`[SHOPIFY WEBHOOK] Creating new deal from update event to prevent data loss`);
     return await handleOrderCreated(order);
@@ -662,6 +629,50 @@ async function handleOrderUpdated(order) {
   // This ensures OPPORTUNITY, payment status, stage, and all other fields are calculated correctly
   const { dealFields: mappedFields } = mapShopifyOrderToBitrixDeal(order);
   
+  // ✅ CRITICAL: Check for cancellation/deletion with ALL indicators
+  const financialStatus = order?.financial_status || '';
+  const statusLower = financialStatus?.toLowerCase() || '';
+  const cancelledAt = order?.cancelled_at;
+  const cancelReason = order?.cancel_reason;
+
+  // ✅ Check if order has active items
+  const hasActiveItems = order?.line_items && order.line_items.some(item => {
+    const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
+    return currentQty > 0;
+  });
+
+  // ✅ Check paid amount vs calculated total
+  const paidAmount = Number(order.current_total_price || order.total_price || 0);
+  const calculatedTotal = mappedFields.OPPORTUNITY || 0;
+
+  // ✅ Multiple cancellation checks (cancelled_at can be empty string, null, or timestamp)
+  const isCancelledByField = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
+  const isCancelledByReason = cancelReason !== null && cancelReason !== undefined && cancelReason !== '';
+  const isCancelledByStatus = statusLower === 'cancelled' || statusLower === 'voided';
+  const isCancelledByAmount = paidAmount === 0 && calculatedTotal === 0 && !hasActiveItems;
+
+  const isCancelled = isCancelledByField || isCancelledByReason || isCancelledByStatus || isCancelledByAmount;
+
+  // ✅ Partial refund check
+  const isPartialRefund = (statusLower === 'refunded' || statusLower === 'partially_refunded') && hasActiveItems;
+  const isFullRefund = (statusLower === 'refunded' || statusLower === 'partially_refunded') && !hasActiveItems;
+
+  const isLost = (isFullRefund || isCancelled) && !isPartialRefund;
+
+  // ✅ Log all indicators
+  if (isCancelled || isFullRefund || isPartialRefund) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER STATUS DETECTED:`);
+    console.log(`[SHOPIFY WEBHOOK]   - financial_status: "${financialStatus}"`);
+    console.log(`[SHOPIFY WEBHOOK]   - cancelled_at: ${cancelledAt || 'N/A'} (${isCancelledByField ? 'DETECTED' : 'NOT DETECTED'})`);
+    console.log(`[SHOPIFY WEBHOOK]   - cancel_reason: ${cancelReason || 'N/A'} (${isCancelledByReason ? 'DETECTED' : 'NOT DETECTED'})`);
+    console.log(`[SHOPIFY WEBHOOK]   - hasActiveItems: ${hasActiveItems}`);
+    console.log(`[SHOPIFY WEBHOOK]   - paidAmount: ${paidAmount}, totalPrice: ${calculatedTotal}`);
+    console.log(`[SHOPIFY WEBHOOK]   - isPartialRefund: ${isPartialRefund} → PREPARATION`);
+    console.log(`[SHOPIFY WEBHOOK]   - isFullRefund: ${isFullRefund} → LOSE`);
+    console.log(`[SHOPIFY WEBHOOK]   - isCancelled: ${isCancelled} → LOSE`);
+    console.log(`[SHOPIFY WEBHOOK]   - isLost: ${isLost} → ${isPartialRefund ? 'PREPARATION (has active items)' : 'LOSE'}`);
+  }
+
   console.log(`[SHOPIFY WEBHOOK] 📊 Mapped fields from orderMapper:`);
   console.log(`  - OPPORTUNITY: ${mappedFields.OPPORTUNITY}`);
   console.log(`  - STAGE_ID: ${mappedFields.STAGE_ID} ${isLost ? '(should be LOSE for cancelled/refunded order)' : ''}`);
@@ -671,11 +682,15 @@ async function handleOrderUpdated(order) {
   console.log(`  - Financial Status: ${financialStatus} → Stage: ${mappedFields.STAGE_ID}`);
   
   // ✅ CRITICAL: Verify cancellation/refund is mapped correctly
-  if (isLost && mappedFields.STAGE_ID !== 'LOSE') {
+  // Note: orderMapper.js should already handle this, but we double-check here
+  if (isPartialRefund && mappedFields.STAGE_ID !== 'C2:PREPARATION') {
+    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: Partial refund order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "C2:PREPARATION"!`);
+    console.error(`[SHOPIFY WEBHOOK] Forcing STAGE_ID to C2:PREPARATION to fix the issue.`);
+    mappedFields.STAGE_ID = 'C2:PREPARATION';
+  } else if (isLost && mappedFields.STAGE_ID !== 'LOSE') {
     console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: ${isCancelled ? 'Cancelled' : 'Refunded'} order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "LOSE"!`);
     console.error(`[SHOPIFY WEBHOOK] Financial status mapping may be incorrect. Check financialStatusToStageId function.`);
     console.error(`[SHOPIFY WEBHOOK] Forcing STAGE_ID to LOSE to fix the issue.`);
-    // Force correct mapping
     mappedFields.STAGE_ID = 'LOSE';
   }
   
@@ -718,12 +733,14 @@ async function handleOrderUpdated(order) {
   
   // Note: CATEGORY_ID is immutable after creation, so we don't update it
 
-  // ✅ CRITICAL: Force update STAGE_ID to LOSE if order is cancelled or refunded
-  if (isLost) {
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID update to LOSE for ${isCancelled ? 'cancelled' : 'refunded'} order ${shopifyOrderId}`);
-    // Ensure STAGE_ID is explicitly set to LOSE
+  // ✅ CRITICAL: Force update STAGE_ID based on refund/cancel status
+  if (isPartialRefund) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to C2:PREPARATION for partial refund order ${shopifyOrderId}`);
+    fields.STAGE_ID = 'C2:PREPARATION';
+    fields.UF_CRM_1739183959976 = '60'; // 10% prepayment (частичная оплата)
+  } else if (isLost) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to LOSE for ${isCancelled ? 'cancelled' : 'refunded'} order ${shopifyOrderId}`);
     fields.STAGE_ID = 'LOSE';
-    // Also update payment status to Unpaid for cancelled/refunded orders
     fields.UF_CRM_1739183959976 = '58'; // Unpaid
   }
   
@@ -736,10 +753,10 @@ async function handleOrderUpdated(order) {
     isCancelled: isCancelled
   });
   
-  await callBitrix('/crm.deal.update.json', {
-    id: dealId,
-    fields,
-  });
+    await callBitrix('/crm.deal.update.json', {
+      id: dealId,
+      fields,
+    });
   console.log(`[SHOPIFY WEBHOOK] ✅ Deal ${dealId} updated with fields:`, Object.keys(fields));
 
   // Verify updated deal

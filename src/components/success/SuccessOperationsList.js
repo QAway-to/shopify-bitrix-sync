@@ -59,13 +59,16 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
               <button
                 onClick={handleDeselectAll}
                 style={{
-                  padding: '4px 8px',
+                  padding: '4px 12px',
                   background: '#6b7280',
                   border: 'none',
                   borderRadius: '4px',
                   color: 'white',
                   cursor: 'pointer',
-                  fontSize: '0.75rem'
+                  fontSize: '0.75rem',
+                  minWidth: '110px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
                 }}
               >
                 Снять выбор
@@ -74,13 +77,16 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
               <button
                 onClick={handleSelectAll}
                 style={{
-                  padding: '4px 8px',
+                  padding: '4px 12px',
                   background: '#3b82f6',
                   border: 'none',
                   borderRadius: '4px',
                   color: 'white',
                   cursor: 'pointer',
-                  fontSize: '0.75rem'
+                  fontSize: '0.75rem',
+                  minWidth: '110px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
                 }}
               >
                 Выбрать все
@@ -98,21 +104,47 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
           const isCreate = operation.operationType === 'CREATE';
           const isUpdate = operation.operationType === 'UPDATE';
           const isVerified = operation.verified;
+          
+          // ✅ Determine status type for color coding
+          const stageId = dealData.STAGE_ID || '';
+          const isPartialRefund = stageId === 'C2:PREPARATION' && (dealData.UF_CRM_1739183959976 === '60' || dealData.UF_CRM_1739183959976 === 60);
+          const isCancelled = stageId === 'LOSE' && (dealData.UF_CRM_1739183959976 === '58' || dealData.UF_CRM_1739183959976 === 58);
+          const isRefunded = stageId === 'LOSE' && (dealData.UF_CRM_1739183959976 === '58' || dealData.UF_CRM_1739183959976 === 58);
+          
+          // Determine operation status text and color
+          let statusText = isCreate ? '✓ СОЗДАНА' : isUpdate ? '✓ ОБНОВЛЕНА' : '✓ УСПЕХ';
+          let statusBgColor = isCreate ? '#059669' : isUpdate ? '#3b82f6' : '#6b7280';
+          
+          if (isPartialRefund) {
+            statusText = '⚠️ ЧАСТИЧНЫЙ РЕФАНД';
+            statusBgColor = '#eab308'; // Yellow
+          } else if (isCancelled || isRefunded) {
+            statusText = '✗ ОТМЕНЕНА';
+            statusBgColor = '#ef4444'; // Red
+          }
 
           return (
             <div
               key={operation.id}
               style={{
-                background: isCreate 
-                  ? 'rgba(5, 150, 105, 0.1)' 
-                  : isUpdate 
-                    ? 'rgba(59, 130, 246, 0.1)' 
-                    : 'rgba(15, 23, 42, 0.5)',
-                border: `1px solid ${isCreate 
-                  ? 'rgba(5, 150, 105, 0.3)' 
-                  : isUpdate 
-                    ? 'rgba(59, 130, 246, 0.3)' 
-                    : 'rgba(148, 163, 184, 0.2)'}`,
+                background: isPartialRefund 
+                  ? 'rgba(234, 179, 8, 0.1)' 
+                  : isCancelled || isRefunded
+                    ? 'rgba(239, 68, 68, 0.1)'
+                    : isCreate 
+                      ? 'rgba(5, 150, 105, 0.1)' 
+                      : isUpdate 
+                        ? 'rgba(59, 130, 246, 0.1)' 
+                        : 'rgba(15, 23, 42, 0.5)',
+                border: `1px solid ${isPartialRefund
+                  ? 'rgba(234, 179, 8, 0.3)'
+                  : isCancelled || isRefunded
+                    ? 'rgba(239, 68, 68, 0.3)'
+                    : isCreate 
+                      ? 'rgba(5, 150, 105, 0.3)' 
+                      : isUpdate 
+                        ? 'rgba(59, 130, 246, 0.3)' 
+                        : 'rgba(148, 163, 184, 0.2)'}`,
                 borderRadius: '8px',
                 padding: '12px',
                 cursor: 'pointer',
@@ -140,10 +172,13 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
                           borderRadius: '4px',
                           fontSize: '0.75rem',
                           fontWeight: 600,
-                          background: isCreate ? '#059669' : '#3b82f6',
-                          color: 'white'
+                          background: statusBgColor,
+                          color: 'white',
+                          minWidth: '120px',
+                          textAlign: 'center',
+                          display: 'inline-block'
                         }}>
-                          {isCreate ? '✓ СОЗДАНА' : isUpdate ? '✓ ОБНОВЛЕНА' : '✓ УСПЕХ'}
+                          {statusText}
                         </span>
                         {isVerified && (
                           <span style={{
@@ -170,13 +205,16 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
                         onPreviewOperation(operation);
                       }}
                       style={{
-                        padding: '4px 8px',
+                        padding: '4px 12px',
                         background: '#3b82f6',
                         border: 'none',
                         borderRadius: '4px',
                         color: 'white',
                         cursor: 'pointer',
-                        fontSize: '0.75rem'
+                        fontSize: '0.75rem',
+                        minWidth: '90px',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
                       }}
                     >
                       👁️ Preview
