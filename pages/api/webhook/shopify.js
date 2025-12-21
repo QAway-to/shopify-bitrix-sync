@@ -432,85 +432,83 @@ async function handleOrderCreated(order) {
 
   // ✅ If deal exists, update it instead of creating duplicate
   if (existingDeal) {
-      const existingDeal = existingDealResp.result[0];
-      const dealId = existingDeal.ID;
-      
-      console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists for Shopify order ${shopifyOrderId}: Deal ID ${dealId}`);
-      console.log(`[SHOPIFY WEBHOOK] Skipping creation to prevent duplicate. Updating existing deal instead.`);
-      
-      // Update existing deal instead of creating duplicate
-      const { dealFields, productRows } = mapShopifyOrderToBitrixDeal(order);
-      
-      // Upsert contact (non-blocking)
-      let contactId = null;
-      try {
-        const bitrixBase = getBitrixWebhookBase();
-        contactId = await upsertBitrixContact(bitrixBase, order);
-        if (contactId) {
-          dealFields.CONTACT_ID = contactId;
-        }
-      } catch (contactError) {
-        console.error('[SHOPIFY WEBHOOK] Contact upsert failed (non-blocking):', contactError);
+    const dealId = existingDeal.ID;
+    
+    console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists for Shopify order ${shopifyOrderId}: Deal ID ${dealId}`);
+    console.log(`[SHOPIFY WEBHOOK] Skipping creation to prevent duplicate. Updating existing deal instead.`);
+    
+    // Update existing deal instead of creating duplicate
+    const { dealFields, productRows } = mapShopifyOrderToBitrixDeal(order);
+    
+    // Upsert contact (non-blocking)
+    let contactId = null;
+    try {
+      const bitrixBase = getBitrixWebhookBase();
+      contactId = await upsertBitrixContact(bitrixBase, order);
+      if (contactId) {
+        dealFields.CONTACT_ID = contactId;
       }
-
-      // Validate before update
-      const validation = validateDealFields(dealFields);
-      if (validation.warnings.length > 0) {
-        console.warn(`[SHOPIFY WEBHOOK] ⚠️ Validation warnings before update:`, validation.warnings);
-      }
-
-      // Update deal fields
-      await callBitrix('/crm.deal.update.json', {
-        id: dealId,
-        fields: dealFields,
-      });
-      console.log(`[SHOPIFY WEBHOOK] ✅ Existing deal ${dealId} updated`);
-
-      // Verify updated deal
-      const verifiedDeal = await verifyDeal(dealId);
-      if (verifiedDeal) {
-        console.log(`[SHOPIFY WEBHOOK] ✅ Deal verified after update:`, {
-          ID: verifiedDeal.ID,
-          TITLE: verifiedDeal.TITLE,
-          OPPORTUNITY: verifiedDeal.OPPORTUNITY,
-          STAGE_ID: verifiedDeal.STAGE_ID
-        });
-      }
-
-      // Store successful update operation
-      try {
-        successAdapter.storeOperation({
-          operationType: 'UPDATE',
-          dealId: dealId,
-          shopifyOrderId: shopifyOrderId,
-          shopifyOrderName: order.name,
-          dealData: verifiedDeal || existingDeal,
-          verified: !!verifiedDeal,
-          productRowsCount: productRows.length
-        });
-      } catch (storeError) {
-        console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to store success operation (non-blocking):`, storeError);
-      }
-
-      // Update product rows
-      if (productRows.length > 0) {
-        try {
-          await callBitrix('/crm.deal.productrows.set.json', {
-            id: dealId,
-            rows: productRows,
-          });
-          console.log(`[SHOPIFY WEBHOOK] Product rows updated for deal ${dealId}: ${productRows.length} rows`);
-        } catch (productRowsError) {
-          console.error(`[SHOPIFY WEBHOOK] Product rows update error (non-blocking):`, productRowsError);
-        }
-      }
-
-      return dealId;
+    } catch (contactError) {
+      console.error('[SHOPIFY WEBHOOK] Contact upsert failed (non-blocking):', contactError);
     }
-  } else {
-    // ✅ No existing deal found after all checks - proceed with creation
-    console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxDuplicateChecks} checks, proceeding with creation`);
+
+    // Validate before update
+    const validation = validateDealFields(dealFields);
+    if (validation.warnings.length > 0) {
+      console.warn(`[SHOPIFY WEBHOOK] ⚠️ Validation warnings before update:`, validation.warnings);
+    }
+
+    // Update deal fields
+    await callBitrix('/crm.deal.update.json', {
+      id: dealId,
+      fields: dealFields,
+    });
+    console.log(`[SHOPIFY WEBHOOK] ✅ Existing deal ${dealId} updated`);
+
+    // Verify updated deal
+    const verifiedDeal = await verifyDeal(dealId);
+    if (verifiedDeal) {
+      console.log(`[SHOPIFY WEBHOOK] ✅ Deal verified after update:`, {
+        ID: verifiedDeal.ID,
+        TITLE: verifiedDeal.TITLE,
+        OPPORTUNITY: verifiedDeal.OPPORTUNITY,
+        STAGE_ID: verifiedDeal.STAGE_ID
+      });
+    }
+
+    // Store successful update operation
+    try {
+      successAdapter.storeOperation({
+        operationType: 'UPDATE',
+        dealId: dealId,
+        shopifyOrderId: shopifyOrderId,
+        shopifyOrderName: order.name,
+        dealData: verifiedDeal || existingDeal,
+        verified: !!verifiedDeal,
+        productRowsCount: productRows.length
+      });
+    } catch (storeError) {
+      console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to store success operation (non-blocking):`, storeError);
+    }
+
+    // Update product rows
+    if (productRows.length > 0) {
+      try {
+        await callBitrix('/crm.deal.productrows.set.json', {
+          id: dealId,
+          rows: productRows,
+        });
+        console.log(`[SHOPIFY WEBHOOK] Product rows updated for deal ${dealId}: ${productRows.length} rows`);
+      } catch (productRowsError) {
+        console.error(`[SHOPIFY WEBHOOK] Product rows update error (non-blocking):`, productRowsError);
+      }
+    }
+
+    return dealId;
   }
+  
+  // ✅ No existing deal found after all checks - proceed with creation
+  console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxDuplicateChecks} checks, proceeding with creation`);
 
   // Map order to Bitrix deal
   const { dealFields, productRows } = mapShopifyOrderToBitrixDeal(order);
