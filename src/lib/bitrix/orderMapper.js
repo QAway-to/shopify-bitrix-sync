@@ -352,17 +352,22 @@ export function mapShopifyOrderToBitrixDeal(order) {
     // ===== COLOR AGGREGATION =====
     if (itemsCount === 1) {
       const firstItem = lineItems[0];
-      const color = parseColorFromTitle(firstItem.title, firstItem.properties || []);
-      if (color) {
-        dealFields.UF_CRM_1739793651654 = color;
-        console.log(`[ORDER MAPPER] ✅ Color (single) UF_CRM_1739793651654 = "${color}"`);
+      // ✅ FIX: Check if firstItem exists and has title property
+      if (firstItem && firstItem.title) {
+        const color = parseColorFromTitle(firstItem.title, firstItem.properties || []);
+        if (color) {
+          dealFields.UF_CRM_1739793651654 = color;
+          console.log(`[ORDER MAPPER] ✅ Color (single) UF_CRM_1739793651654 = "${color}"`);
+        }
       }
     } else {
       const colorParts = [];
       for (let i = 0; i < itemsCount; i++) {
         const item = lineItems[i];
+        // ✅ FIX: Check if item exists before accessing properties
+        if (!item) continue;
         const position = i + 1;
-        const color = parseColorFromTitle(item.title, item.properties || []);
+        const color = parseColorFromTitle(item.title || '', item.properties || []);
         const colorDisplay = color || '-';
         colorParts.push(`${position}: ${colorDisplay}`);
       }
@@ -374,19 +379,22 @@ export function mapShopifyOrderToBitrixDeal(order) {
 
     // ===== MODEL AND BRAND (first item as reference) =====
     const firstItem = lineItems[0];
+    
+    // ✅ FIX: Check if firstItem exists and has title property
+    if (firstItem && firstItem.title) {
+      const model = parseModelFromTitle(firstItem.title);
+      if (model) {
+        dealFields.UF_CRM_1739793668182 = model;
+      }
 
-    const model = parseModelFromTitle(firstItem.title);
-    if (model) {
-      dealFields.UF_CRM_1739793668182 = model;
-    }
-
-    if (firstItem.vendor) {
-      const vendorUpper = String(firstItem.vendor).toUpperCase().trim();
-      const brandId = brandMapping[vendorUpper];
-      if (brandId) {
-        dealFields.UF_CRM_1741642513658 = brandId; // Enum field - use ID
-      } else {
-        console.warn(`[ORDER MAPPER] Brand "${vendorUpper}" not found in brandMapping.json, skipping UF_CRM_1741642513658`);
+      if (firstItem.vendor) {
+        const vendorUpper = String(firstItem.vendor).toUpperCase().trim();
+        const brandId = brandMapping[vendorUpper];
+        if (brandId) {
+          dealFields.UF_CRM_1741642513658 = brandId; // Enum field - use ID
+        } else {
+          console.warn(`[ORDER MAPPER] Brand "${vendorUpper}" not found in brandMapping.json, skipping UF_CRM_1741642513658`);
+        }
       }
     }
 
@@ -492,7 +500,8 @@ export function mapShopifyOrderToBitrixDeal(order) {
       const size = variantTitle || sizeProperty?.value || null;
       
       // Build descriptive name with size/variant/vendor/color/model if available
-      const parts = [item.title || ''];
+      // ✅ FIX: Check if item exists and has title property
+      const parts = [(item && item.title) ? item.title : ''];
       
       // Add size if available (most important - should be visible)
       if (size) {
