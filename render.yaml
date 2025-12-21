@@ -4,13 +4,8 @@ services:
     env: node
     buildCommand: npm install && npm run build
     startCommand: npm start
+    plan: starter
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
-        fromService:
-          type: web
-          name: api-services-mvp
-          property: port
 
