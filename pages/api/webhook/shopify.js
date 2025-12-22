@@ -713,12 +713,13 @@ async function handleOrderUpdated(order) {
   const isCancelled = isCancelledByStatus || isCancelledByField || isCancelledByReason || isCancelledByEmpty;
 
   // ✅ SIMPLIFIED: Full refund - refunded → always LOSE (matching backup repository)
-  // BUT: if cancelled, it takes priority (cancelled > refunded)
+  // BUT: if cancelled (especially by cancelled_at), it takes priority (cancelled > refunded)
   const isFullRefund = !isCancelled && statusLower === 'refunded';
 
   // ✅ PARTIAL REFUND: partially_refunded + has active items → PREPARATION (our improvement)
-  // BUT: if cancelled, it takes priority (cancelled > partial refund)
-  const isPartialRefund = !isCancelled && statusLower === 'partially_refunded' && hasActiveItems;
+  // BUT: if cancelled (especially by cancelled_at), it takes priority (cancelled > partial refund)
+  // ✅ CRITICAL: If order is empty (0 amount, no active items), it's NOT a partial refund, it's a cancellation
+  const isPartialRefund = !isCancelled && statusLower === 'partially_refunded' && hasActiveItems && !isOrderEmpty;
 
   // ✅ Simplified: cancelled OR full refund → LOSE
   const isLost = isCancelled || isFullRefund;
