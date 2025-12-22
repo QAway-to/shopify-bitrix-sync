@@ -520,14 +520,32 @@ async function handleOrderCreated(order) {
   }
 
   // ✅ VALIDATION: Validate deal fields before sending
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Validating deal fields before creation...`);
   const validation = validateDealFields(dealFields);
   if (validation.warnings.length > 0) {
     console.warn(`[SHOPIFY WEBHOOK] ⚠️ Validation warnings:`, validation.warnings);
   }
   if (!validation.valid) {
-    console.error(`[SHOPIFY WEBHOOK] ❌ Validation errors:`, validation.errors);
-    throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
+    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ VALIDATION FAILED:`, {
+      errors: validation.errors,
+      warnings: validation.warnings,
+      dealFields: {
+        TITLE: dealFields.TITLE,
+        OPPORTUNITY: dealFields.OPPORTUNITY,
+        CATEGORY_ID: dealFields.CATEGORY_ID,
+        STAGE_ID: dealFields.STAGE_ID,
+        CURRENCY_ID: dealFields.CURRENCY_ID,
+        UF_CRM_1742556489: dealFields.UF_CRM_1742556489
+      },
+      shopifyOrderId: shopifyOrderId,
+      orderName: order.name
+    });
+    const validationError = new Error(`Validation failed: ${validation.errors.join(', ')}`);
+    validationError.errorType = 'VALIDATION';
+    validationError.errorDetails = validation.errors;
+    throw validationError;
   }
+  console.log(`[SHOPIFY WEBHOOK] ✅ Validation passed`);
 
   // Upsert contact (non-blocking)
   let contactId = null;
@@ -543,11 +561,35 @@ async function handleOrderCreated(order) {
 
   // ✅ STEP 2: Create deal with retry logic and duplicate handling (Optimistic Locking)
   console.log(`[SHOPIFY WEBHOOK] Creating new deal in Bitrix with fields:`, Object.keys(dealFields));
+  console.log(`[SHOPIFY WEBHOOK] Deal fields preview:`, {
+    TITLE: dealFields.TITLE,
+    OPPORTUNITY: dealFields.OPPORTUNITY,
+    CATEGORY_ID: dealFields.CATEGORY_ID,
+    STAGE_ID: dealFields.STAGE_ID,
+    CURRENCY_ID: dealFields.CURRENCY_ID,
+    UF_CRM_1742556489: dealFields.UF_CRM_1742556489
+  });
   
-  const createResult = await createDealWithRetry(dealFields, shopifyOrderId, 3);
+  let createResult;
+  try {
+    createResult = await createDealWithRetry(dealFields, shopifyOrderId, 3);
+  } catch (createError) {
+    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ CRITICAL: Failed to create deal for order ${shopifyOrderId}:`, createError);
+    console.error(`[SHOPIFY WEBHOOK] Create error details:`, {
+      message: createError.message,
+      errorType: createError.errorType,
+      errorDetails: createError.errorDetails,
+      stack: createError.stack,
+      shopifyOrderId: shopifyOrderId,
+      dealFields: Object.keys(dealFields)
+    });
+    throw createError; // Re-throw to be caught by outer handler
+  }
   
-  if (!createResult.success) {
-    throw new Error('Failed to create deal after retries');
+  if (!createResult || !createResult.success) {
+    const errorMsg = createResult?.error || 'Failed to create deal after retries';
+    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ CRITICAL: createResult indicates failure:`, createResult);
+    throw new Error(errorMsg);
   }
 
   const dealId = createResult.dealId;
@@ -918,32 +960,76 @@ export default async function handler(req, res) {
     }
 
     // ✅ PROCESS: Handle order events (create or update)
-    if (topic === 'orders/create') {
-      console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/create event...`);
-      await handleOrderCreated(order);
-    } else if (topic === 'orders/updated') {
-      console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/updated event...`);
-      await handleOrderUpdated(order);
-    } else if (topic === 'orders/cancelled' || topic === 'orders/cancel') {
-      // ✅ Handle cancellation as a special update event
-      console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/cancelled event...`);
-      console.log(`[SHOPIFY WEBHOOK] ⚠️ Cancellation webhook received - treating as update with cancelled status`);
-      await handleOrderUpdated(order);
-    } else {
-      // For other topics just log and return 200 (don't block)
-      console.log(`[SHOPIFY WEBHOOK] ⚠️ Unhandled topic: ${topic}, skipping Bitrix processing`);
-    }
+    let dealId = null;
+    try {
+      if (topic === 'orders/create') {
+        console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/create event...`);
+        dealId = await handleOrderCreated(order);
+        console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/create event. Deal ID: ${dealId || 'N/A'}`);
+      } else if (topic === 'orders/updated') {
+        console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/updated event...`);
+        dealId = await handleOrderUpdated(order);
+        console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/updated event. Deal ID: ${dealId || 'N/A'}`);
+      } else if (topic === 'orders/cancelled' || topic === 'orders/cancel') {
+        // ✅ Handle cancellation as a special update event
+        console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/cancelled event...`);
+        console.log(`[SHOPIFY WEBHOOK] ⚠️ Cancellation webhook received - treating as update with cancelled status`);
+        dealId = await handleOrderUpdated(order);
+        console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/cancelled event. Deal ID: ${dealId || 'N/A'}`);
+      } else {
+        // For other topics just log and return 200 (don't block)
+        console.log(`[SHOPIFY WEBHOOK] ⚠️ Unhandled topic: ${topic}, skipping Bitrix processing`);
+      }
 
-    res.status(200).end('OK');
+      res.status(200).end('OK');
+    } catch (handlerError) {
+      // ✅ CRITICAL: Log detailed error information
+      console.error(`[SHOPIFY WEBHOOK] ❌❌❌ CRITICAL ERROR in handler for topic "${topic}":`, handlerError);
+      console.error(`[SHOPIFY WEBHOOK] Error type: ${handlerError.errorType || 'UNKNOWN'}`);
+      console.error(`[SHOPIFY WEBHOOK] Error message: ${handlerError.message}`);
+      console.error(`[SHOPIFY WEBHOOK] Error stack:`, handlerError.stack);
+      console.error(`[SHOPIFY WEBHOOK] Order details:`, {
+        id: order?.id,
+        name: order?.name,
+        financial_status: order?.financial_status,
+        total_price: order?.total_price,
+        line_items_count: order?.line_items?.length || 0
+      });
+      console.error(`[SHOPIFY WEBHOOK] Error details:`, {
+        errorType: handlerError.errorType,
+        errorDetails: handlerError.errorDetails,
+        errorCode: handlerError.code,
+        shopifyOrderId: order?.id
+      });
+      
+      // Still return 200 to prevent Shopify from retrying (we'll handle errors internally)
+      // But log extensively for debugging
+      res.status(200).json({ 
+        success: false, 
+        error: handlerError.message,
+        errorType: handlerError.errorType || 'UNKNOWN',
+        orderId: order?.id,
+        topic: topic
+      });
+      return;
+    }
   } catch (e) {
-    console.error('[SHOPIFY WEBHOOK] ❌ Error:', e);
+    // Outer catch for unexpected errors
+    console.error('[SHOPIFY WEBHOOK] ❌❌❌ UNEXPECTED ERROR:', e);
     console.error('[SHOPIFY WEBHOOK] Error details:', {
       message: e.message,
       stack: e.stack,
       topic: topic,
-      orderId: order?.id
+      orderId: order?.id,
+      orderName: order?.name
     });
-    res.status(500).end('ERROR');
+    // Return 200 to prevent Shopify retries, but log error
+    res.status(200).json({ 
+      success: false, 
+      error: 'Unexpected error',
+      message: e.message,
+      topic: topic
+    });
   }
 }
 
