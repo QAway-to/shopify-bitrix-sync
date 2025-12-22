@@ -794,6 +794,8 @@ async function handleOrderUpdated(order) {
   // Check multiple ways cancelled_at might be set (null, undefined, empty string, etc.)
   const hasCancelledAt = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
   console.log(`[SHOPIFY WEBHOOK] 🔍 cancelled_at check result: hasCancelledAt=${hasCancelledAt}, cancelledAt="${cancelledAt}"`);
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Status checks: isCancelled=${isCancelled}, isFullRefund=${isFullRefund}, isPartialRefund=${isPartialRefund}`);
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Mapped STAGE_ID from orderMapper: "${mappedFields.STAGE_ID}"`);
   
   if (hasCancelledAt) {
     correctStageId = 'LOSE';
@@ -815,6 +817,8 @@ async function handleOrderUpdated(order) {
     correctPaymentStatus = '60'; // 10% prepayment (частичная оплата)
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to C2:PREPARATION for partial refund order ${shopifyOrderId}`);
   }
+  
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctStageId: "${correctStageId}"`);
 
   // 2. Prepare update fields - always update to ensure sync
   // ✅ Use mapped fields to ensure consistency with create logic, BUT override STAGE_ID with correct value
