@@ -505,7 +505,7 @@ async function handleOrderCreated(order) {
       }
 
       return dealId;
-  }
+    }
   
   // ✅ No existing deal found after all checks - proceed with creation
   console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxDuplicateChecks} checks, proceeding with creation`);
@@ -692,13 +692,14 @@ async function handleOrderUpdated(order) {
   // 1. financial_status === 'cancelled' || 'voided' (primary check)
   // 2. cancelled_at field is set (Shopify sets this when order is cancelled)
   // 3. cancel_reason field is set (Shopify sets this when order is cancelled)
-  // 4. If order is empty (totalPrice = 0, no active items) AND (refunded OR partially_refunded) → cancelled
-  //    (If all items are refunded/removed, it's a cancellation, not a partial refund)
+  // 4. If order is empty (totalPrice = 0, no active items) → cancelled (regardless of financial_status)
+  //    (Empty order = all items removed/refunded = cancellation)
   const isCancelledByStatus = statusLower === 'cancelled' || statusLower === 'voided';
   const isCancelledByField = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
   const isCancelledByReason = cancelReason !== null && cancelReason !== undefined && cancelReason !== '';
-  // ✅ CRITICAL: If order is empty (0 amount, no active items), it's cancelled regardless of financial_status
-  const isCancelledByEmpty = isOrderEmpty && (statusLower === 'refunded' || statusLower === 'partially_refunded');
+  // ✅ CRITICAL: If order is empty (0 amount, no active items), it's ALWAYS cancelled
+  // This covers cases where cancelled_at/cancel_reason might not be in webhook, but order is clearly cancelled
+  const isCancelledByEmpty = isOrderEmpty;
   
   const isCancelled = isCancelledByStatus || isCancelledByField || isCancelledByReason || isCancelledByEmpty;
 
@@ -994,11 +995,11 @@ export default async function handler(req, res) {
     // ✅ PROCESS: Handle order events (create or update)
     let dealId = null;
     try {
-      if (topic === 'orders/create') {
+    if (topic === 'orders/create') {
         console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/create event...`);
         dealId = await handleOrderCreated(order);
         console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/create event. Deal ID: ${dealId || 'N/A'}`);
-      } else if (topic === 'orders/updated') {
+    } else if (topic === 'orders/updated') {
         console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/updated event...`);
         dealId = await handleOrderUpdated(order);
         console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/updated event. Deal ID: ${dealId || 'N/A'}`);
@@ -1008,12 +1009,12 @@ export default async function handler(req, res) {
         console.log(`[SHOPIFY WEBHOOK] ⚠️ Cancellation webhook received - treating as update with cancelled status`);
         dealId = await handleOrderUpdated(order);
         console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/cancelled event. Deal ID: ${dealId || 'N/A'}`);
-      } else {
+    } else {
         // For other topics just log and return 200 (don't block)
         console.log(`[SHOPIFY WEBHOOK] ⚠️ Unhandled topic: ${topic}, skipping Bitrix processing`);
-      }
+    }
 
-      res.status(200).end('OK');
+    res.status(200).end('OK');
     } catch (handlerError) {
       // ✅ CRITICAL: Log detailed error information
       console.error(`[SHOPIFY WEBHOOK] ❌❌❌ CRITICAL ERROR in handler for topic "${topic}":`, handlerError);

@@ -194,13 +194,14 @@ export function mapShopifyOrderToBitrixDeal(order) {
   // 1. financial_status === 'cancelled' || 'voided' (primary check)
   // 2. cancelled_at field is set (Shopify sets this when order is cancelled)
   // 3. cancel_reason field is set (Shopify sets this when order is cancelled)
-  // 4. If order is empty (totalPrice = 0, no active items) AND (refunded OR partially_refunded) → cancelled
-  //    (If all items are refunded/removed, it's a cancellation, not a partial refund)
+  // 4. If order is empty (totalPrice = 0, no active items) → cancelled (regardless of financial_status)
+  //    (Empty order = all items removed/refunded = cancellation)
   const isCancelledByStatus = financialStatus === 'cancelled' || financialStatus === 'voided';
   const isCancelledByField = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
   const isCancelledByReason = cancelReason !== null && cancelReason !== undefined && cancelReason !== '';
-  // ✅ CRITICAL: If order is empty (0 amount, no active items), it's cancelled regardless of financial_status
-  const isCancelledByEmpty = isOrderEmpty && (financialStatus === 'refunded' || financialStatus === 'partially_refunded');
+  // ✅ CRITICAL: If order is empty (0 amount, no active items), it's ALWAYS cancelled
+  // This covers cases where cancelled_at/cancel_reason might not be in webhook, but order is clearly cancelled
+  const isCancelledByEmpty = isOrderEmpty;
   
   const isCancelled = isCancelledByStatus || isCancelledByField || isCancelledByReason || isCancelledByEmpty;
 
