@@ -820,6 +820,7 @@ async function handleOrderUpdated(order) {
   }
   
   console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctStageId: "${correctStageId}"`);
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctPaymentStatus: "${correctPaymentStatus}"`);
 
   // 2. Prepare update fields - always update to ensure sync
   // ✅ Use mapped fields to ensure consistency with create logic, BUT override STAGE_ID with correct value

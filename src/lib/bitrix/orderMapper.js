@@ -241,8 +241,16 @@ export function mapShopifyOrderToBitrixDeal(order) {
   }
   
   // Map financial status to payment status field
-  const paymentStatusEnumId = financialStatusToPaymentStatus(order.financial_status);
-  console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Payment status enum ID "${paymentStatusEnumId}"`);
+  // ✅ CRITICAL: For cancelled orders, ALWAYS set payment status to '58' (Unpaid)
+  // regardless of financial_status (cancelled orders should never show as paid)
+  let paymentStatusEnumId;
+  if (isCancelled) {
+    paymentStatusEnumId = '58'; // Unpaid - cancelled orders are never paid
+    console.log(`[ORDER MAPPER] ⚠️ Order is CANCELLED → FORCING Payment status to "58" (Unpaid), ignoring financial_status="${order.financial_status}"`);
+  } else {
+    paymentStatusEnumId = financialStatusToPaymentStatus(order.financial_status);
+    console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Payment status enum ID "${paymentStatusEnumId}"`);
+  }
   
   // Map source name to source ID
   const sourceId = sourceNameToSourceId(order.source_name);
