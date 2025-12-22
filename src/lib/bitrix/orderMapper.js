@@ -191,19 +191,21 @@ export function mapShopifyOrderToBitrixDeal(order) {
   const isOrderEmpty = totalPrice === 0 && !hasActiveItems;
 
   // ✅ CRITICAL: Cancellation detection - check multiple indicators
-  // 1. financial_status === 'cancelled' || 'voided' (primary check)
-  // 2. cancelled_at field is set (Shopify sets this when order is cancelled)
+  // Priority: cancelled_at (HIGHEST) > financial_status > cancel_reason > empty order
+  // 1. cancelled_at field is set (Shopify sets this when order is cancelled) - HIGHEST PRIORITY
+  // 2. financial_status === 'cancelled' || 'voided' (primary check)
   // 3. cancel_reason field is set (Shopify sets this when order is cancelled)
   // 4. If order is empty (totalPrice = 0, no active items) → cancelled (regardless of financial_status)
   //    (Empty order = all items removed/refunded = cancellation)
-  const isCancelledByStatus = financialStatus === 'cancelled' || financialStatus === 'voided';
   const isCancelledByField = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
+  const isCancelledByStatus = financialStatus === 'cancelled' || financialStatus === 'voided';
   const isCancelledByReason = cancelReason !== null && cancelReason !== undefined && cancelReason !== '';
   // ✅ CRITICAL: If order is empty (0 amount, no active items), it's ALWAYS cancelled
   // This covers cases where cancelled_at/cancel_reason might not be in webhook, but order is clearly cancelled
   const isCancelledByEmpty = isOrderEmpty;
   
-  const isCancelled = isCancelledByStatus || isCancelledByField || isCancelledByReason || isCancelledByEmpty;
+  // ✅ CRITICAL: cancelled_at has HIGHEST PRIORITY - if it's set, order is cancelled regardless of financial_status
+  const isCancelled = isCancelledByField || isCancelledByStatus || isCancelledByReason || isCancelledByEmpty;
 
   // ✅ SIMPLIFIED: Full refund - refunded → always LOSE (matching backup repository)
   // BUT: if cancelled, it takes priority (cancelled > refunded)
