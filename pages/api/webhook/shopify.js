@@ -629,48 +629,38 @@ async function handleOrderUpdated(order) {
   // This ensures OPPORTUNITY, payment status, stage, and all other fields are calculated correctly
   const { dealFields: mappedFields } = mapShopifyOrderToBitrixDeal(order);
   
-  // ✅ CRITICAL: Check for cancellation/deletion with ALL indicators
+  // ✅ Simplified logic (matching backup repository): Check cancellation and refunds
   const financialStatus = order?.financial_status || '';
   const statusLower = financialStatus?.toLowerCase() || '';
-  const cancelledAt = order?.cancelled_at;
-  const cancelReason = order?.cancel_reason;
 
-  // ✅ Check if order has active items
+  // ✅ Check if order has active items (current_quantity > 0) - only for partial refund detection
   const hasActiveItems = order?.line_items && order.line_items.some(item => {
     const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
     return currentQty > 0;
   });
 
-  // ✅ Check paid amount vs calculated total
-  const paidAmount = Number(order.current_total_price || order.total_price || 0);
-  const calculatedTotal = mappedFields.OPPORTUNITY || 0;
+  // ✅ SIMPLIFIED: Cancellation - only check financial_status (matching backup repository)
+  const isCancelled = statusLower === 'cancelled' || statusLower === 'voided';
 
-  // ✅ Multiple cancellation checks (cancelled_at can be empty string, null, or timestamp)
-  const isCancelledByField = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
-  const isCancelledByReason = cancelReason !== null && cancelReason !== undefined && cancelReason !== '';
-  const isCancelledByStatus = statusLower === 'cancelled' || statusLower === 'voided';
-  const isCancelledByAmount = paidAmount === 0 && calculatedTotal === 0 && !hasActiveItems;
+  // ✅ SIMPLIFIED: Full refund - refunded → always LOSE (matching backup repository)
+  // No check for active items or amounts - just financial_status
+  const isFullRefund = statusLower === 'refunded';
 
-  const isCancelled = isCancelledByField || isCancelledByReason || isCancelledByStatus || isCancelledByAmount;
+  // ✅ PARTIAL REFUND: partially_refunded + has active items → PREPARATION (our improvement)
+  const isPartialRefund = statusLower === 'partially_refunded' && hasActiveItems;
 
-  // ✅ Partial refund check
-  const isPartialRefund = (statusLower === 'refunded' || statusLower === 'partially_refunded') && hasActiveItems;
-  const isFullRefund = (statusLower === 'refunded' || statusLower === 'partially_refunded') && !hasActiveItems;
-
-  const isLost = (isFullRefund || isCancelled) && !isPartialRefund;
+  // ✅ Simplified: cancelled OR full refund → LOSE
+  const isLost = isCancelled || isFullRefund;
 
   // ✅ Log all indicators
   if (isCancelled || isFullRefund || isPartialRefund) {
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER STATUS DETECTED:`);
     console.log(`[SHOPIFY WEBHOOK]   - financial_status: "${financialStatus}"`);
-    console.log(`[SHOPIFY WEBHOOK]   - cancelled_at: ${cancelledAt || 'N/A'} (${isCancelledByField ? 'DETECTED' : 'NOT DETECTED'})`);
-    console.log(`[SHOPIFY WEBHOOK]   - cancel_reason: ${cancelReason || 'N/A'} (${isCancelledByReason ? 'DETECTED' : 'NOT DETECTED'})`);
     console.log(`[SHOPIFY WEBHOOK]   - hasActiveItems: ${hasActiveItems}`);
-    console.log(`[SHOPIFY WEBHOOK]   - paidAmount: ${paidAmount}, totalPrice: ${calculatedTotal}`);
-    console.log(`[SHOPIFY WEBHOOK]   - isPartialRefund: ${isPartialRefund} → PREPARATION`);
-    console.log(`[SHOPIFY WEBHOOK]   - isFullRefund: ${isFullRefund} → LOSE`);
-    console.log(`[SHOPIFY WEBHOOK]   - isCancelled: ${isCancelled} → LOSE`);
-    console.log(`[SHOPIFY WEBHOOK]   - isLost: ${isLost} → ${isPartialRefund ? 'PREPARATION (has active items)' : 'LOSE'}`);
+    console.log(`[SHOPIFY WEBHOOK]   - isCancelled: ${isCancelled} → LOSE (matching backup repository)`);
+    console.log(`[SHOPIFY WEBHOOK]   - isFullRefund: ${isFullRefund} → LOSE (matching backup repository)`);
+    console.log(`[SHOPIFY WEBHOOK]   - isPartialRefund: ${isPartialRefund} → PREPARATION (our improvement)`);
+    console.log(`[SHOPIFY WEBHOOK]   - Final stage: ${isCancelled ? 'LOSE (cancelled)' : isFullRefund ? 'LOSE (full refund)' : isPartialRefund ? 'PREPARATION (partial refund)' : 'OTHER'}`);
   }
 
   console.log(`[SHOPIFY WEBHOOK] 📊 Mapped fields from orderMapper:`);
@@ -683,15 +673,20 @@ async function handleOrderUpdated(order) {
   
   // ✅ CRITICAL: Verify cancellation/refund is mapped correctly
   // Note: orderMapper.js should already handle this, but we double-check here
-  if (isPartialRefund && mappedFields.STAGE_ID !== 'C2:PREPARATION') {
-    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: Partial refund order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "C2:PREPARATION"!`);
-    console.error(`[SHOPIFY WEBHOOK] Forcing STAGE_ID to C2:PREPARATION to fix the issue.`);
-    mappedFields.STAGE_ID = 'C2:PREPARATION';
-  } else if (isLost && mappedFields.STAGE_ID !== 'LOSE') {
-    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: ${isCancelled ? 'Cancelled' : 'Refunded'} order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "LOSE"!`);
+  // Priority: cancelled > full refund > partial refund
+  if (isCancelled && mappedFields.STAGE_ID !== 'LOSE') {
+    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: Cancelled order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "LOSE"!`);
+    console.error(`[SHOPIFY WEBHOOK] Forcing STAGE_ID to LOSE to fix the issue.`);
+    mappedFields.STAGE_ID = 'LOSE';
+  } else if (isFullRefund && mappedFields.STAGE_ID !== 'LOSE') {
+    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: Full refund order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "LOSE"!`);
     console.error(`[SHOPIFY WEBHOOK] Financial status mapping may be incorrect. Check financialStatusToStageId function.`);
     console.error(`[SHOPIFY WEBHOOK] Forcing STAGE_ID to LOSE to fix the issue.`);
     mappedFields.STAGE_ID = 'LOSE';
+  } else if (isPartialRefund && mappedFields.STAGE_ID !== 'C2:PREPARATION') {
+    console.error(`[SHOPIFY WEBHOOK] ❌❌❌ ERROR: Partial refund order but STAGE_ID is "${mappedFields.STAGE_ID}" instead of "C2:PREPARATION"!`);
+    console.error(`[SHOPIFY WEBHOOK] Forcing STAGE_ID to C2:PREPARATION to fix the issue.`);
+    mappedFields.STAGE_ID = 'C2:PREPARATION';
   }
   
   const currentAmount = Number(deal.OPPORTUNITY || 0);
@@ -734,14 +729,19 @@ async function handleOrderUpdated(order) {
   // Note: CATEGORY_ID is immutable after creation, so we don't update it
 
   // ✅ CRITICAL: Force update STAGE_ID based on refund/cancel status
-  if (isPartialRefund) {
+  // Priority: cancelled > full refund > partial refund (matching backup repository)
+  if (isCancelled) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to LOSE for cancelled order ${shopifyOrderId}`);
+    fields.STAGE_ID = 'LOSE';
+    fields.UF_CRM_1739183959976 = '58'; // Unpaid
+  } else if (isFullRefund) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to LOSE for full refund order ${shopifyOrderId}`);
+    fields.STAGE_ID = 'LOSE';
+    fields.UF_CRM_1739183959976 = '58'; // Unpaid
+  } else if (isPartialRefund) {
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to C2:PREPARATION for partial refund order ${shopifyOrderId}`);
     fields.STAGE_ID = 'C2:PREPARATION';
     fields.UF_CRM_1739183959976 = '60'; // 10% prepayment (частичная оплата)
-  } else if (isLost) {
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to LOSE for ${isCancelled ? 'cancelled' : 'refunded'} order ${shopifyOrderId}`);
-    fields.STAGE_ID = 'LOSE';
-    fields.UF_CRM_1739183959976 = '58'; // Unpaid
   }
   
   // ✅ ALWAYS update deal fields (even if values are the same, ensures sync and triggers update event)

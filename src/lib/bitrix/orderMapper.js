@@ -175,46 +175,39 @@ export function mapShopifyOrderToBitrixDeal(order) {
     ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() || null
     : null;
 
-  // ✅ CRITICAL: Check for refund/cancellation/deletion with multiple indicators
+  // ✅ Simplified logic (matching backup repository): Check cancellation and refunds
   const financialStatus = (order.financial_status || '').toLowerCase();
-  const cancelledAt = order.cancelled_at;
-  const cancelReason = order.cancel_reason;
 
-  // ✅ Check if order has active items (current_quantity > 0)
+  // ✅ Check if order has active items (current_quantity > 0) - only for partial refund detection
   const hasActiveItems = order.line_items && order.line_items.some(item => {
     const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
     return currentQty > 0;
   });
 
-  // ✅ Calculate paid amount vs total to detect partial payment
-  const paidAmount = Number(order.current_total_price || order.total_price || 0);
+  // ✅ SIMPLIFIED: Cancellation - only check financial_status (matching backup repository)
+  const isCancelled = financialStatus === 'cancelled' || financialStatus === 'voided';
 
-  // ✅ FIX 1: Detect partial refund - refunded BUT has active items → PREPARATION
-  const isPartialRefund = (financialStatus === 'refunded' || financialStatus === 'partially_refunded') && hasActiveItems;
-  const isFullRefund = (financialStatus === 'refunded' || financialStatus === 'partially_refunded') && !hasActiveItems;
+  // ✅ SIMPLIFIED: Full refund - refunded → always LOSE (matching backup repository)
+  // No check for active items or amounts - just financial_status
+  const isFullRefund = financialStatus === 'refunded';
 
-  // ✅ FIX 2: Detect cancelled order - check multiple indicators
-  // cancelled_at can be null, empty string, or timestamp - check all
-  const isCancelledByField = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
-  const isCancelledByReason = cancelReason !== null && cancelReason !== undefined && cancelReason !== '';
-  const isCancelledByStatus = financialStatus === 'cancelled' || financialStatus === 'voided';
+  // ✅ PARTIAL REFUND: partially_refunded + has active items → PREPARATION (our improvement)
+  const isPartialRefund = financialStatus === 'partially_refunded' && hasActiveItems;
 
-  // ✅ FIX 3: If paidAmount = 0 AND totalPrice = 0 AND no active items → likely cancelled
-  const isCancelledByAmount = paidAmount === 0 && totalPrice === 0 && !hasActiveItems;
+  // ✅ Simplified: cancelled OR full refund → LOSE
+  const isLost = isCancelled || isFullRefund;
 
-  const isCancelled = isCancelledByField || isCancelledByReason || isCancelledByStatus || isCancelledByAmount;
-
-  // ✅ ONE LINE: full refund OR cancelled → LOSE, BUT partial refund → PREPARATION
-  const isLost = (isFullRefund || isCancelled) && !isPartialRefund;
-
-  // ✅ CRITICAL: Force PREPARATION for partial refund, LOSE for full refund/cancelled
+  // ✅ CRITICAL: Force LOSE for cancelled/full refund, PREPARATION for partial refund
   let stageId;
-  if (isPartialRefund) {
-    stageId = 'C2:PREPARATION';
-    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ PARTIAL REFUND: financial_status="${order.financial_status}", hasActiveItems=${hasActiveItems}, paidAmount=${paidAmount}, totalPrice=${totalPrice} → FORCING Stage "C2:PREPARATION"`);
-  } else if (isLost) {
+  if (isCancelled) {
     stageId = 'LOSE';
-    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ ORDER LOST (refunded/cancelled/deleted): financial_status="${order.financial_status}", cancelled_at=${cancelledAt}, cancel_reason=${cancelReason}, paidAmount=${paidAmount}, totalPrice=${totalPrice} → FORCING Stage "LOSE"`);
+    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ ORDER CANCELLED: financial_status="${order.financial_status}" → FORCING Stage "LOSE"`);
+  } else if (isFullRefund) {
+    stageId = 'LOSE';
+    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ FULL REFUND: financial_status="${order.financial_status}" → FORCING Stage "LOSE"`);
+  } else if (isPartialRefund) {
+    stageId = 'C2:PREPARATION';
+    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ PARTIAL REFUND: financial_status="${order.financial_status}", hasActiveItems=${hasActiveItems} → FORCING Stage "C2:PREPARATION"`);
   } else {
     stageId = financialStatusToStageId(order.financial_status || '', categoryId);
     console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Stage "${stageId}" for category ${categoryId}`);
