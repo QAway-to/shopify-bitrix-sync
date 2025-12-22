@@ -267,8 +267,9 @@ export function mapShopifyOrderToBitrixDeal(order) {
   
   console.log(`[ORDER MAPPER] Delivery method determined: ID "${deliveryMethodId}"`);
 
-  // ✅ paidAmount already calculated above (line 190) for cancellation detection
-  // Reuse the same variable here
+  // ✅ Calculate paid amount (total - refunds)
+  // current_total_price reflects refunds, total_price is original
+  const paidAmount = Number(order.current_total_price || order.total_price || 0);
 
   // Deal fields - using REAL Bitrix UF_CRM_* fields only
   const dealFields = {
