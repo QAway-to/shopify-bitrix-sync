@@ -803,9 +803,15 @@ async function handleOrderUpdated(order) {
   
   // Note: CATEGORY_ID is immutable after creation, so we don't update it
 
+  // ✅ SIMPLE LOGIC: If cancelled_at is NOT empty -> it's CANCELLATION -> set status LOSE
+  if (cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '') {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED (cancelled_at is set) → FORCING STAGE_ID to LOSE for order ${shopifyOrderId}`);
+    fields.STAGE_ID = 'LOSE';
+    fields.UF_CRM_1739183959976 = '58'; // Unpaid
+  }
   // ✅ CRITICAL: Force update STAGE_ID based on refund/cancel status
   // Priority: cancelled > full refund > partial refund (matching backup repository)
-  if (isCancelled) {
+  else if (isCancelled) {
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to LOSE for cancelled order ${shopifyOrderId}`);
     fields.STAGE_ID = 'LOSE';
     fields.UF_CRM_1739183959976 = '58'; // Unpaid
