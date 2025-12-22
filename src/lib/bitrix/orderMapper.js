@@ -177,6 +177,8 @@ export function mapShopifyOrderToBitrixDeal(order) {
 
   // ✅ Simplified logic (matching backup repository): Check cancellation and refunds
   const financialStatus = (order.financial_status || '').toLowerCase();
+  const cancelledAt = order.cancelled_at;
+  const cancelReason = order.cancel_reason;
 
   // ✅ Check if order has active items (current_quantity > 0) - only for partial refund detection
   const hasActiveItems = order.line_items && order.line_items.some(item => {
@@ -184,15 +186,30 @@ export function mapShopifyOrderToBitrixDeal(order) {
     return currentQty > 0;
   });
 
-  // ✅ SIMPLIFIED: Cancellation - only check financial_status (matching backup repository)
-  const isCancelled = financialStatus === 'cancelled' || financialStatus === 'voided';
+  // ✅ Calculate total price to check if order is empty (cancelled)
+  // totalPrice is calculated above from active line_items
+  const isOrderEmpty = totalPrice === 0 && !hasActiveItems;
+
+  // ✅ CRITICAL: Cancellation detection - check multiple indicators
+  // 1. financial_status === 'cancelled' || 'voided' (primary check)
+  // 2. cancelled_at field is set (Shopify sets this when order is cancelled)
+  // 3. cancel_reason field is set (Shopify sets this when order is cancelled)
+  // 4. If order is empty (totalPrice = 0, no active items) AND refunded → likely cancelled
+  const isCancelledByStatus = financialStatus === 'cancelled' || financialStatus === 'voided';
+  const isCancelledByField = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
+  const isCancelledByReason = cancelReason !== null && cancelReason !== undefined && cancelReason !== '';
+  const isCancelledByEmpty = isOrderEmpty && financialStatus === 'refunded';
+  
+  const isCancelled = isCancelledByStatus || isCancelledByField || isCancelledByReason || isCancelledByEmpty;
 
   // ✅ SIMPLIFIED: Full refund - refunded → always LOSE (matching backup repository)
+  // BUT: if cancelled, it takes priority (cancelled > refunded)
   // No check for active items or amounts - just financial_status
-  const isFullRefund = financialStatus === 'refunded';
+  const isFullRefund = !isCancelled && financialStatus === 'refunded';
 
   // ✅ PARTIAL REFUND: partially_refunded + has active items → PREPARATION (our improvement)
-  const isPartialRefund = financialStatus === 'partially_refunded' && hasActiveItems;
+  // BUT: if cancelled, it takes priority (cancelled > partial refund)
+  const isPartialRefund = !isCancelled && financialStatus === 'partially_refunded' && hasActiveItems;
 
   // ✅ Simplified: cancelled OR full refund → LOSE
   const isLost = isCancelled || isFullRefund;
@@ -201,7 +218,12 @@ export function mapShopifyOrderToBitrixDeal(order) {
   let stageId;
   if (isCancelled) {
     stageId = 'LOSE';
-    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ ORDER CANCELLED: financial_status="${order.financial_status}" → FORCING Stage "LOSE"`);
+    const cancelReasons = [];
+    if (isCancelledByStatus) cancelReasons.push('financial_status');
+    if (isCancelledByField) cancelReasons.push('cancelled_at');
+    if (isCancelledByReason) cancelReasons.push('cancel_reason');
+    if (isCancelledByEmpty) cancelReasons.push('empty_order+refunded');
+    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ ORDER CANCELLED: financial_status="${order.financial_status}", cancelled_at=${cancelledAt || 'N/A'}, cancel_reason=${cancelReason || 'N/A'}, totalPrice=${totalPrice}, hasActiveItems=${hasActiveItems}, detected_by=[${cancelReasons.join(', ')}] → FORCING Stage "LOSE"`);
   } else if (isFullRefund) {
     stageId = 'LOSE';
     console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ FULL REFUND: financial_status="${order.financial_status}" → FORCING Stage "LOSE"`);
