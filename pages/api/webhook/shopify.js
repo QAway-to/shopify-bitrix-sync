@@ -857,12 +857,32 @@ async function handleOrderUpdated(order) {
     PaymentStatus: fields.UF_CRM_1739183959976,
     isCancelled: isCancelled
   });
+  console.log(`[SHOPIFY WEBHOOK] 🔍 About to send to Bitrix:`, {
+    dealId,
+    STAGE_ID: fields.STAGE_ID,
+    PaymentStatus: fields.UF_CRM_1739183959976,
+    OPPORTUNITY: fields.OPPORTUNITY
+  });
   
-    await callBitrix('/crm.deal.update.json', {
+  try {
+    const updateResponse = await callBitrix('/crm.deal.update.json', {
       id: dealId,
       fields,
     });
-  console.log(`[SHOPIFY WEBHOOK] ✅ Deal ${dealId} updated with fields:`, Object.keys(fields));
+    
+    console.log(`[SHOPIFY WEBHOOK] ✅ Bitrix API response:`, JSON.stringify(updateResponse, null, 2));
+    
+    // ✅ CRITICAL: Check if Bitrix returned an error
+    if (updateResponse && updateResponse.error) {
+      console.error(`[SHOPIFY WEBHOOK] ❌ Bitrix API ERROR:`, updateResponse.error);
+      console.error(`[SHOPIFY WEBHOOK] ❌ Error details:`, updateResponse.error_description || updateResponse.error_description);
+    } else {
+      console.log(`[SHOPIFY WEBHOOK] ✅ Deal ${dealId} updated successfully`);
+    }
+  } catch (error) {
+    console.error(`[SHOPIFY WEBHOOK] ❌ Error updating deal ${dealId}:`, error);
+    throw error;
+  }
 
   // Verify updated deal
   const verifiedDeal = await verifyDeal(dealId);
