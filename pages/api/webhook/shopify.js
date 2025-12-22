@@ -676,6 +676,15 @@ async function handleOrderUpdated(order) {
   const statusLower = financialStatus?.toLowerCase() || '';
   const cancelledAt = order?.cancelled_at;
   const cancelReason = order?.cancel_reason;
+  
+  // ✅ CRITICAL: Log cancelled_at value for debugging
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Cancellation check for order ${shopifyOrderId}:`);
+  console.log(`  - cancelled_at: ${cancelledAt} (type: ${typeof cancelledAt})`);
+  console.log(`  - cancelled_at !== null: ${cancelledAt !== null}`);
+  console.log(`  - cancelled_at !== undefined: ${cancelledAt !== undefined}`);
+  console.log(`  - cancelled_at !== '': ${cancelledAt !== ''}`);
+  console.log(`  - financial_status: ${financialStatus}`);
+  console.log(`  - cancel_reason: ${cancelReason || 'N/A'}`);
 
   // ✅ Check if order has active items (current_quantity > 0) - only for partial refund detection
   const hasActiveItems = order?.line_items && order.line_items.some(item => {
@@ -782,7 +791,11 @@ async function handleOrderUpdated(order) {
   let correctPaymentStatus = mappedFields.UF_CRM_1739183959976;
   
   // ✅ HIGHEST PRIORITY: If cancelled_at is NOT empty -> it's CANCELLATION -> set status LOSE
-  if (cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '') {
+  // Check multiple ways cancelled_at might be set (null, undefined, empty string, etc.)
+  const hasCancelledAt = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
+  console.log(`[SHOPIFY WEBHOOK] 🔍 cancelled_at check result: hasCancelledAt=${hasCancelledAt}, cancelledAt="${cancelledAt}"`);
+  
+  if (hasCancelledAt) {
     correctStageId = 'LOSE';
     correctPaymentStatus = '58'; // Unpaid
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED (cancelled_at is set) → FORCING STAGE_ID to LOSE for order ${shopifyOrderId}`);
