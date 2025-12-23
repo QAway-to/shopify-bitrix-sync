@@ -1,5 +1,15 @@
 {
-  "_comment": "Products A-F category mapping - SKU to Bitrix Product ID",
-  "_updated": "2025-12-23"
+  "_comment": "Category A-F mapping - SKU (XML_ID) to Bitrix Product ID",
+  "_updated": "2025-12-24",
+  "_source": "Generated from Shopify products (socks only for now)",
+  "_count": 6,
+  "_note": "Product IDs will be automatically populated after clicking 'Create products A-F' button in UI",
+  "_socks_list": [
+    "ALB0001",
+    "ALB0002",
+    "ALB0003",
+    "ALB0004",
+    "ALB0005",
+    "ALB0006"
+  ]
 }
-
