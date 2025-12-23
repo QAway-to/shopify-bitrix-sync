@@ -34,6 +34,9 @@ export default function ShopifyPage() {
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load
   // ✅ Track if this is initial fetch to show loading state
   const [isInitialFetch, setIsInitialFetch] = useState(true);
+  // Sync certificates state
+  const [isSyncingCertificates, setIsSyncingCertificates] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
 
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);
@@ -819,6 +822,128 @@ export default function ShopifyPage() {
 
         {/* Webhook Configuration */}
         <WebhookInfo onBitrixUrlChange={setBitrixWebhookUrl} />
+
+        {/* Sync Certificates Section */}
+        <div style={{
+          marginTop: '30px',
+          padding: '20px',
+          background: 'rgba(15, 23, 42, 0.6)',
+          borderRadius: '12px',
+          border: '1px solid rgba(59, 130, 246, 0.2)'
+        }}>
+          <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.3rem' }}>
+            Синхронизация товаров
+          </h2>
+          
+          <div style={{ marginBottom: '16px' }}>
+            <button
+              onClick={handleSyncCertificates}
+              disabled={isSyncingCertificates}
+              style={{
+                background: isSyncingCertificates ? '#6b7280' : '#059669',
+                border: 'none',
+                padding: '10px 20px',
+                borderRadius: '6px',
+                color: 'white',
+                cursor: isSyncingCertificates ? 'not-allowed' : 'pointer',
+                fontSize: '1rem',
+                fontWeight: 500,
+                minWidth: '200px',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}
+            >
+              {isSyncingCertificates ? '⏳ Синхронизация...' : '🔄 Синхронизировать'}
+            </button>
+          </div>
+
+          <div style={{ marginTop: '16px' }}>
+            <div style={{ 
+              color: '#94a3b8', 
+              fontSize: '0.9rem', 
+              marginBottom: '12px',
+              fontWeight: 500
+            }}>
+              Категории товаров для синхронизации:
+            </div>
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
+              <div style={{
+                padding: '12px',
+                background: 'rgba(59, 130, 246, 0.1)',
+                borderRadius: '6px',
+                border: '1px solid rgba(59, 130, 246, 0.3)'
+              }}>
+                <div style={{ color: '#f1f5f9', fontWeight: 500 }}>Сертификаты</div>
+                <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '4px' }}>
+                  E-Certificate, Gift certificate FBFC, Printed Gift Certificate
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {syncResult && (
+            <div style={{
+              marginTop: '20px',
+              padding: '16px',
+              borderRadius: '8px',
+              background: syncResult.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              border: `1px solid ${syncResult.success ? '#059669' : '#ef4444'}`,
+              color: syncResult.success ? '#059669' : '#ef4444'
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: '8px' }}>
+                {syncResult.success ? '✅ Синхронизация завершена' : '❌ Ошибка синхронизации'}
+              </div>
+              {syncResult.summary && (
+                <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
+                  Всего вариантов: {syncResult.summary.total} | 
+                  Создано документов: {syncResult.summary.created} | 
+                  Обновлено: {syncResult.summary.updated} | 
+                  Ошибок: {syncResult.summary.errors}
+                </div>
+              )}
+              {syncResult.certificates && Object.keys(syncResult.certificates).length > 0 && (
+                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${syncResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали по сертификатам:</div>
+                  {Object.entries(syncResult.certificates).map(([handle, data]) => (
+                    <div key={handle} style={{
+                      fontSize: '0.8rem',
+                      marginBottom: '8px',
+                      padding: '8px',
+                      background: 'rgba(0, 0, 0, 0.2)',
+                      borderRadius: '4px'
+                    }}>
+                      <div style={{ fontWeight: 500, marginBottom: '4px' }}>{handle}</div>
+                      {data.variants && data.variants.length > 0 && (
+                        <div style={{ marginLeft: '12px', opacity: 0.9 }}>
+                          {data.variants.map((variant, idx) => (
+                            <div key={idx} style={{ marginBottom: '4px' }}>
+                              {variant.success ? (
+                                <span>✅ {variant.sku}: {variant.quantity} шт. (Product ID: {variant.productId})</span>
+                              ) : (
+                                <span>❌ {variant.sku}: {variant.error}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {data.errors && data.errors.length > 0 && (
+                        <div style={{ marginLeft: '12px', color: '#ef4444', marginTop: '4px' }}>
+                          {data.errors.map((err, idx) => (
+                            <div key={idx}>❌ {err.sku || err.variant_title}: {err.error}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Events Lists - Three fixed-width columns: Shopify → Bitrix, Bitrix → Shopify, Success Operations */}
         <div style={{
