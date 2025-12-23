@@ -142,21 +142,11 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
       // ✅ No existing deal found after all checks - safe to create
       console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxPreCreateChecks} pre-create checks, proceeding with creation`);
       
-      // Try to create deal WITH product rows (like document creation: create → add products → conduct)
-      // ✅ CRITICAL: Pass productRows in the same request to ensure products are linked to catalog
-      const dealAddPayload = {
+      // ✅ Create deal first (Bitrix API doesn't support rows parameter in crm.deal.add.json)
+      // Then add product rows separately via crm.deal.productrows.set.json (like the working script)
+      const dealAddResp = await callBitrix('/crm.deal.add.json', {
         fields: dealFields,
-      };
-      
-      // Add product rows if available (pass them during creation, not after)
-      if (productRows && productRows.length > 0) {
-        dealAddPayload.rows = productRows;
-        console.log(`[SHOPIFY WEBHOOK] ✅ Creating deal WITH ${productRows.length} product rows (linked to catalog)`);
-      } else {
-        console.log(`[SHOPIFY WEBHOOK] ⚠️ Creating deal WITHOUT product rows (no active items)`);
-      }
-      
-      const dealAddResp = await callBitrix('/crm.deal.add.json', dealAddPayload);
+      });
 
       // Success case
       if (dealAddResp.result) {
@@ -613,11 +603,11 @@ async function handleOrderCreated(order) {
     console.log(`[SHOPIFY WEBHOOK] ✅ Deal created successfully: ${dealId} (attempt ${createResult.attempt})`);
   }
 
-  // ✅ Product rows are already set during deal creation (passed in crm.deal.add.json with rows parameter)
-  // No need to call crm.deal.productrows.set.json separately - products are linked to catalog immediately
+  // ✅ Product rows are already set during deal creation (in createDealWithRetry function)
+  // They are added via crm.deal.productrows.set.json right after deal creation
   if (productRows.length > 0) {
-    console.log(`[SHOPIFY WEBHOOK] ✅ Product rows (${productRows.length}) were already set during deal creation via crm.deal.add.json`);
-    console.log(`[SHOPIFY WEBHOOK]   Products should be properly linked to catalog (not just text data)`);
+    console.log(`[SHOPIFY WEBHOOK] ✅ Product rows (${productRows.length}) were already set during deal creation`);
+    console.log(`[SHOPIFY WEBHOOK]   Products should be properly linked to catalog via PRODUCT_ID (not just text data)`);
   } else {
     console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to set (deal created without products)`);
   }
