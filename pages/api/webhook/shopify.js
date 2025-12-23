@@ -190,6 +190,20 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
           // Use the oldest deal to maintain consistency
           const verifiedDeal = await verifyDeal(firstDealId);
           
+          // Add product rows to the oldest deal
+          if (productRows && productRows.length > 0) {
+            try {
+              console.log(`[SHOPIFY WEBHOOK] 🔗 Adding ${productRows.length} product rows to duplicate deal ${firstDealId}`);
+              await callBitrix('/crm.deal.productrows.set.json', {
+                id: firstDealId,
+                rows: productRows,
+              });
+              console.log(`[SHOPIFY WEBHOOK] ✅ Product rows set for duplicate deal ${firstDealId}`);
+            } catch (err) {
+              console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to set product rows for duplicate deal:`, err);
+            }
+          }
+          
           return { 
             success: true, 
             dealId: firstDealId,
@@ -197,6 +211,39 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
             attempt,
             verifiedDeal
           };
+        }
+        
+        // ✅ CRITICAL: Add product rows AFTER deal creation (like the working script)
+        // Bitrix API requires separate call to crm.deal.productrows.set.json
+        if (productRows && productRows.length > 0) {
+          try {
+            console.log(`[SHOPIFY WEBHOOK] 🔗 Adding ${productRows.length} product rows to deal ${dealId} via crm.deal.productrows.set.json`);
+            console.log(`[SHOPIFY WEBHOOK]   First product row:`, JSON.stringify(productRows[0], null, 2));
+            
+            const productRowsResp = await callBitrix('/crm.deal.productrows.set.json', {
+              id: dealId,
+              rows: productRows,
+            });
+            
+            if (productRowsResp.result === true || productRowsResp.result) {
+              console.log(`[SHOPIFY WEBHOOK] ✅ Product rows successfully set for deal ${dealId}`);
+              // Log which products were linked
+              productRows.forEach((row, idx) => {
+                if (row.PRODUCT_ID) {
+                  console.log(`[SHOPIFY WEBHOOK]   Row ${idx + 1}: PRODUCT_ID=${row.PRODUCT_ID} (linked to catalog)`);
+                } else if (row.PRODUCT_NAME) {
+                  console.log(`[SHOPIFY WEBHOOK]   Row ${idx + 1}: PRODUCT_NAME="${row.PRODUCT_NAME}" (custom row, NOT linked)`);
+                }
+              });
+            } else {
+              console.error(`[SHOPIFY WEBHOOK] ⚠️ Product rows set returned unexpected result:`, productRowsResp);
+            }
+          } catch (productRowsError) {
+            console.error(`[SHOPIFY WEBHOOK] ❌ Failed to set product rows for deal ${dealId}:`, productRowsError);
+            // Don't throw - deal is already created, we can retry product rows later
+          }
+        } else {
+          console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to set (deal created without products)`);
         }
         
         // Verify deal exists and get details
