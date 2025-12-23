@@ -95,9 +95,9 @@ export default function ShopifyPage() {
   }, []);
 
 
-  const handlePreviewEvent = (event) => {
+  const handlePreviewEvent = async (event) => {
     try {
-      const bitrixData = shopifyAdapter.transformToBitrix(event);
+      const bitrixData = await shopifyAdapter.transformToBitrix(event);
       setPreviewEvent(event);
       setPreviewData({
         shopifyData: event,

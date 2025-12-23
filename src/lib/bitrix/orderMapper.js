@@ -100,7 +100,7 @@ function parseColorFromTitle(title, properties = []) {
  * @param {Object} order - Shopify order object
  * @returns {Object} { dealFields, productRows }
  */
-export function mapShopifyOrderToBitrixDeal(order) {
+export async function mapShopifyOrderToBitrixDeal(order) {
   // Aggregates - Log price calculation for refund detection
   console.log(`[ORDER MAPPER] ===== PRICE CALCULATION =====`);
   console.log(`[ORDER MAPPER] order.current_total_price: ${order.current_total_price}`);

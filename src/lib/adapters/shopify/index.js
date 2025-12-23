@@ -283,7 +283,7 @@ export class ShopifyAdapter {
    * @param {Object} shopifyOrder - Shopify webhook order data (from storeEvent, may have orderId property)
    * @returns {Object} Bitrix24 deal format
    */
-  transformToBitrix(shopifyOrder) {
+  async transformToBitrix(shopifyOrder) {
     if (!shopifyOrder || typeof shopifyOrder !== 'object') {
       throw new Error('Invalid Shopify order data');
     }
@@ -303,7 +303,7 @@ export class ShopifyAdapter {
     
     // Use the unified mapper function (same as webhook handlers)
     // This ensures consistency: CATEGORY_ID, STAGE_ID, UF_SHOPIFY_ORDER_ID are all set correctly
-    const { dealFields } = mapShopifyOrderToBitrixDeal(orderForMapper);
+    const { dealFields } = await mapShopifyOrderToBitrixDeal(orderForMapper);
     
     // ✅ ENSURE: UF_CRM_1742556489 (Shopify number) uses stable order.id (not eventId)
     dealFields.UF_CRM_1742556489 = String(stableOrderId);

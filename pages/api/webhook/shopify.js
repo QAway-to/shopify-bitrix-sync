@@ -438,7 +438,7 @@ async function handleOrderCreated(order) {
       console.log(`[SHOPIFY WEBHOOK] Skipping creation to prevent duplicate. Updating existing deal instead.`);
       
       // Update existing deal instead of creating duplicate
-      const { dealFields, productRows } = mapShopifyOrderToBitrixDeal(order);
+      const { dealFields, productRows } = await mapShopifyOrderToBitrixDeal(order);
       
       // Upsert contact (non-blocking)
       let contactId = null;
@@ -505,13 +505,13 @@ async function handleOrderCreated(order) {
       }
 
       return dealId;
-    }
+  }
   
   // ✅ No existing deal found after all checks - proceed with creation
   console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxDuplicateChecks} checks, proceeding with creation`);
 
   // Map order to Bitrix deal
-  const { dealFields, productRows } = mapShopifyOrderToBitrixDeal(order);
+  const { dealFields, productRows } = await mapShopifyOrderToBitrixDeal(order);
   
   console.log(`[SHOPIFY WEBHOOK] Mapped dealFields:`, JSON.stringify(dealFields, null, 2));
   console.log(`[SHOPIFY WEBHOOK] Mapped productRows count:`, productRows.length);
@@ -669,7 +669,7 @@ async function handleOrderUpdated(order) {
 
   // ✅ Use mapShopifyOrderToBitrixDeal to get all fields consistently (same as create)
   // This ensures OPPORTUNITY, payment status, stage, and all other fields are calculated correctly
-  const { dealFields: mappedFields } = mapShopifyOrderToBitrixDeal(order);
+  const { dealFields: mappedFields } = await mapShopifyOrderToBitrixDeal(order);
   
   // ✅ Simplified logic (matching backup repository): Check cancellation and refunds
   const financialStatus = order?.financial_status || '';
@@ -876,7 +876,7 @@ async function handleOrderUpdated(order) {
     if (updateResponse && updateResponse.error) {
       console.error(`[SHOPIFY WEBHOOK] ❌ Bitrix API ERROR:`, updateResponse.error);
       console.error(`[SHOPIFY WEBHOOK] ❌ Error details:`, updateResponse.error_description || updateResponse.error_description);
-    } else {
+  } else {
       console.log(`[SHOPIFY WEBHOOK] ✅ Deal ${dealId} updated successfully`);
     }
   } catch (error) {
@@ -898,7 +898,7 @@ async function handleOrderUpdated(order) {
   // 4. ✅ ALWAYS update product rows (including shipping) to reflect any changes
   let productRows = [];
   try {
-    const mapped = mapShopifyOrderToBitrixDeal(order);
+    const mapped = await mapShopifyOrderToBitrixDeal(order);
     productRows = mapped.productRows || [];
     
     console.log(`[SHOPIFY WEBHOOK] 📦 Product rows mapping result:`);

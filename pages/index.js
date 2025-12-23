@@ -97,7 +97,7 @@ export default function ShopifyPage() {
           const updatedEvent = fetchedEvents.find(e => (e.id || e.eventId) === (previewEvent.id || previewEvent.eventId));
           if (updatedEvent) {
             try {
-              const bitrixData = shopifyAdapter.transformToBitrix(updatedEvent);
+              const bitrixData = await shopifyAdapter.transformToBitrix(updatedEvent);
               setPreviewEvent(updatedEvent);
               setPreviewData({
                 shopifyData: updatedEvent,
@@ -282,7 +282,7 @@ export default function ShopifyPage() {
 
   const handlePreviewEvent = (event) => {
     try {
-      const bitrixData = shopifyAdapter.transformToBitrix(event);
+      const bitrixData = await shopifyAdapter.transformToBitrix(event);
       setPreviewEvent(event);
       setPreviewData({
         shopifyData: event,

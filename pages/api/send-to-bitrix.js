@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     let transformError = null;
     
     try {
-      bitrixData = shopifyAdapter.transformToBitrix(event);
+      bitrixData = await shopifyAdapter.transformToBitrix(event);
     } catch (transformErr) {
       transformError = {
         eventId: event.id,

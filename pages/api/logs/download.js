@@ -83,7 +83,7 @@ export default async function handler(req, res) {
           
           // ✅ Add Bitrix mapping details (product rows calculation)
           try {
-            const { dealFields, productRows } = mapShopifyOrderToBitrixDeal(event);
+            const { dealFields, productRows } = await mapShopifyOrderToBitrixDeal(event);
             logs.push(`  Bitrix Mapping Details:`);
             logs.push(`    Total Product Rows: ${productRows.length}`);
             logs.push(`    Deal OPPORTUNITY: ${dealFields.OPPORTUNITY || 'N/A'} ${dealFields.CURRENCY_ID || currency}`);
