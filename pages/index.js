@@ -970,17 +970,20 @@ export default function ShopifyPage() {
             </div>
           </div>
 
-          {syncResult && (
+          {(syncResult || createResult) && (
             <div style={{
               marginTop: '20px',
               padding: '16px',
               borderRadius: '8px',
-              background: syncResult.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-              border: `1px solid ${syncResult.success ? '#059669' : '#ef4444'}`,
-              color: syncResult.success ? '#059669' : '#ef4444'
+              background: (syncResult || createResult)?.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              border: `1px solid ${(syncResult || createResult)?.success ? '#059669' : '#ef4444'}`,
+              color: (syncResult || createResult)?.success ? '#059669' : '#ef4444'
             }}>
               <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-                {syncResult.success ? '✅ Синхронизация завершена' : '❌ Ошибка синхронизации'}
+                {syncResult 
+                  ? (syncResult.success ? '✅ Синхронизация завершена' : '❌ Ошибка синхронизации')
+                  : (createResult.success ? '✅ Создание завершено' : '❌ Ошибка создания')
+                }
               </div>
               {((syncResult || createResult)?.summary) && (
                 <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
