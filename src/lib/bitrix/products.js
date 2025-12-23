@@ -76,6 +76,36 @@ export async function findProductBySku(sku) {
 }
 
 /**
+ * Get current stock quantity for a product in Bitrix
+ * @param {number} productId - Product ID
+ * @param {number} storeId - Store ID (default: 2)
+ * @returns {Promise<number>} Current stock quantity
+ */
+export async function getCurrentStock(productId, storeId = 2) {
+  try {
+    const response = await callBitrix('catalog.storeproduct.list', {
+      filter: {
+        productId: productId,
+        storeId: storeId
+      },
+      select: ['amount']
+    });
+
+    if (response.result?.storeProducts && response.result.storeProducts.length > 0) {
+      const amount = parseFloat(response.result.storeProducts[0].amount || 0);
+      console.log(`[BITRIX PRODUCTS] Current stock for Product ID ${productId}: ${amount}`);
+      return amount;
+    }
+
+    console.log(`[BITRIX PRODUCTS] No stock found for Product ID ${productId}, returning 0`);
+    return 0;
+  } catch (error) {
+    console.error(`[BITRIX PRODUCTS] Error getting current stock:`, error);
+    return 0;
+  }
+}
+
+/**
  * Create incoming document (Store Adjustment) in Bitrix
  * @param {Object} documentData - Document data
  * @param {string} documentData.title - Document title
@@ -222,17 +252,34 @@ export async function syncCertificateVariant(variantData, handle, handleToProduc
       updateSkuMapping(sku, productId);
     }
 
-    // 3. Create incoming document if quantity > 0
+    // 3. Sync inventory: compare Shopify quantity with Bitrix stock
     let documentId = null;
-    if (inventory_quantity > 0) {
+    const shopifyQty = inventory_quantity || 0;
+    
+    // Get current stock from Bitrix
+    const currentStock = await getCurrentStock(productId);
+    const difference = shopifyQty - currentStock;
+
+    if (difference > 0) {
+      // Need to add (incoming document)
+      console.log(`[BITRIX PRODUCTS] 📈 Adding ${difference} items (Shopify: ${shopifyQty}, Bitrix: ${currentStock})`);
       documentId = await createIncomingDocument({
-        title: `Синхронизация сертификата ${sku} из Shopify`,
+        title: `Синхронизация сертификата ${sku} из Shopify (добавление)`,
         productId: productId,
-        amount: inventory_quantity,
+        amount: difference,
         price: 0 // Certificates have 0 purchase price
       });
+    } else if (difference < 0) {
+      // Need to deduct (outgoing document)
+      const deductAmount = Math.abs(difference);
+      console.log(`[BITRIX PRODUCTS] 📉 Deducting ${deductAmount} items (Shopify: ${shopifyQty}, Bitrix: ${currentStock})`);
+      documentId = await createOutgoingDocument({
+        title: `Синхронизация сертификата ${sku} из Shopify (списание)`,
+        productId: productId,
+        amount: deductAmount
+      });
     } else {
-      console.log(`[BITRIX PRODUCTS] ⏭️ Skipping document creation for ${sku} - quantity is 0`);
+      console.log(`[BITRIX PRODUCTS] ✅ Quantities match (Shopify: ${shopifyQty}, Bitrix: ${currentStock}) - no sync needed`);
     }
 
     return {
@@ -240,8 +287,11 @@ export async function syncCertificateVariant(variantData, handle, handleToProduc
       sku: sku,
       productId: productId,
       productName: productName,
-      quantity: inventory_quantity,
-      documentId: documentId
+      quantity: shopifyQty,
+      currentStock: currentStock,
+      difference: difference,
+      documentId: documentId,
+      documentType: difference > 0 ? 'incoming' : (difference < 0 ? 'outgoing' : null)
     };
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] ❌ Error syncing variant ${sku}:`, error);
