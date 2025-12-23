@@ -1018,15 +1018,15 @@ async function handleOrderUpdated(order) {
     }
   }
 
-  // ✅ Store successful update operation (always, even if values didn't change - we still synced)
+  // ✅ Store successful update operation (dealId is number, not string)
   try {
     successAdapter.storeOperation({
       operationType: 'UPDATE',
-      dealId: dealId,
+      dealId: dealId, // ✅ Number, not string
       shopifyOrderId: shopifyOrderId,
       shopifyOrderName: order.name,
       dealData: verifiedDeal || {
-        ID: dealId,
+        ID: String(dealId), // Bitrix returns ID as string in API, but we use number for API calls
         OPPORTUNITY: newAmount,
         STAGE_ID: deal.STAGE_ID
       },
