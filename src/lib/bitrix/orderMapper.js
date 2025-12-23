@@ -524,6 +524,36 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       // Priority: SKU mapping → Title mapping → Legacy mappings
       let mappingMethod = 'none';
       
+      // CERTIFICATE GUARD: If it's a certificate (handle/title contains "certificate"), map directly by handle
+      const isCertificate = (item.handle && item.handle.toLowerCase().includes('certificate')) ||
+        (item.product_handle && item.product_handle.toLowerCase().includes('certificate')) ||
+        ((item.title || '').toLowerCase().includes('certificate'));
+
+      if (!productId && isCertificate) {
+        const handleLower = (item.handle || item.product_handle || '').toLowerCase();
+        let certHandleKey = null;
+        if (handleLower.includes('gift-certificate-fbfc')) certHandleKey = 'gift-certificate-fbfc';
+        else if (handleLower.includes('printed-gift-certificate')) certHandleKey = 'printed-gift-certificate';
+        else if (handleLower.includes('e-certificate') || handleLower.includes('certificate')) certHandleKey = 'e-certificate';
+
+        if (!certHandleKey) {
+          // fallback: detect by title
+          const titleLower = (item.title || '').toLowerCase();
+          if (titleLower.includes('fbfc')) certHandleKey = 'gift-certificate-fbfc';
+          else if (titleLower.includes('printed')) certHandleKey = 'printed-gift-certificate';
+          else if (titleLower.includes('certificate')) certHandleKey = 'e-certificate';
+        }
+
+        const certProductId = certHandleKey ? handleMapping[certHandleKey] : null;
+        if (certProductId) {
+          productId = certProductId;
+          mappingMethod = `certificate-handle (${certHandleKey})`;
+          console.log(`[ORDER MAPPER] ✅ Certificate mapping: handle/title -> Product ID ${productId} (${mappingMethod})`);
+        } else {
+          console.warn(`[ORDER MAPPER] ⚠️ Certificate detected but handle not mapped. handle="${item.handle}", title="${item.title}"`);
+        }
+      }
+
       // 1. Try SKU-based mapping first (if SKU exists)
       if (item.sku) {
         console.log(`[ORDER MAPPER] 🔍 Step 1: Searching for Product ID by SKU: "${item.sku}"`);
