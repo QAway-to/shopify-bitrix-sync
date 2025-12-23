@@ -88,7 +88,7 @@ function validateDealFields(dealFields) {
  * @param {number} maxRetries - Maximum number of retry attempts (default: 3)
  * @returns {Promise<Object>} { success: boolean, dealId: string, wasDuplicate: boolean, errorType?: string }
  */
-async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3) {
+async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, productRows = []) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[SHOPIFY WEBHOOK] Creating deal attempt ${attempt}/${maxRetries} for order ${shopifyOrderId}`);
@@ -142,10 +142,21 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3) {
       // ✅ No existing deal found after all checks - safe to create
       console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxPreCreateChecks} pre-create checks, proceeding with creation`);
       
-      // Try to create deal
-      const dealAddResp = await callBitrix('/crm.deal.add.json', {
+      // Try to create deal WITH product rows (like document creation: create → add products → conduct)
+      // ✅ CRITICAL: Pass productRows in the same request to ensure products are linked to catalog
+      const dealAddPayload = {
         fields: dealFields,
-      });
+      };
+      
+      // Add product rows if available (pass them during creation, not after)
+      if (productRows && productRows.length > 0) {
+        dealAddPayload.rows = productRows;
+        console.log(`[SHOPIFY WEBHOOK] ✅ Creating deal WITH ${productRows.length} product rows (linked to catalog)`);
+      } else {
+        console.log(`[SHOPIFY WEBHOOK] ⚠️ Creating deal WITHOUT product rows (no active items)`);
+      }
+      
+      const dealAddResp = await callBitrix('/crm.deal.add.json', dealAddPayload);
 
       // Success case
       if (dealAddResp.result) {
@@ -572,7 +583,8 @@ async function handleOrderCreated(order) {
   
   let createResult;
   try {
-    createResult = await createDealWithRetry(dealFields, shopifyOrderId, 3);
+    // ✅ Pass productRows to createDealWithRetry so they're included in crm.deal.add.json
+    createResult = await createDealWithRetry(dealFields, shopifyOrderId, 3, productRows);
   } catch (createError) {
     console.error(`[SHOPIFY WEBHOOK] ❌❌❌ CRITICAL: Failed to create deal for order ${shopifyOrderId}:`, createError);
     console.error(`[SHOPIFY WEBHOOK] Create error details:`, {
