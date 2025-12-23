@@ -1,4 +1,5 @@
 import { shopifyAdapter } from '../../src/lib/adapters/shopify';
+import { mapShopifyOrderToBitrixDeal } from '../../src/lib/bitrix/orderMapper.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -41,20 +42,56 @@ export default async function handler(req, res) {
   const results = [];
   const errors = [];
 
+  // Helper: call Bitrix with provided webhook base
+  const callBitrix = async (method, payload) => {
+    const baseUrl = bitrixWebhookUrl.endsWith('/') ? bitrixWebhookUrl : `${bitrixWebhookUrl}/`;
+    const apiUrl = method.startsWith('/') ? `${baseUrl}${method.substring(1)}` : `${baseUrl}${method}`;
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const contentType = response.headers.get('content-type');
+    const data = contentType && contentType.includes('application/json')
+      ? await response.json()
+      : { raw: await response.text() };
+    return { ok: response.ok, status: response.status, data };
+  };
+
   for (let i = 0; i < selectedEvents.length; i++) {
     const event = selectedEvents[i];
     
-    // Transform Shopify order to Bitrix24 format
-    let bitrixData;
+    // Transform Shopify order to Bitrix deal fields + product rows (with PRODUCT_ID)
+    let dealFields;
+    let productRows = [];
     let transformError = null;
-    
+
     try {
-      bitrixData = await shopifyAdapter.transformToBitrix(event);
+      // Use full mapper to get fields AND productRows (with PRODUCT_ID enforced elsewhere)
+      const { dealFields: mappedFields, productRows: mappedRows } = await mapShopifyOrderToBitrixDeal({
+        ...event,
+        id: event.orderId || event.id, // ensure stable id
+        eventId: event.eventId || event.id
+      });
+
+      dealFields = mappedFields;
+
+      // Enforce PRODUCT_ID-only rows, skip rows without PRODUCT_ID
+      productRows = (mappedRows || []).filter(r => r.PRODUCT_ID);
+
+      if (!productRows.length) {
+        throw new Error('No product rows with PRODUCT_ID found; cannot send to Bitrix');
+      }
+
+      // Ensure Shopify order ID field is stable
+      if (event.orderId || event.id) {
+        dealFields.UF_CRM_1742556489 = String(event.orderId || event.id);
+      }
     } catch (transformErr) {
       transformError = {
         eventId: event.id,
         success: false,
-        error: 'Transformation error',
+        error: 'Transformation error (fields/product rows)',
         details: transformErr.message,
         type: 'TransformationError'
       };
@@ -62,83 +99,63 @@ export default async function handler(req, res) {
       continue;
     }
     
-    // Create AbortController for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
-
     try {
-      // Ensure URL ends with / and add method
-      const baseUrl = bitrixWebhookUrl.endsWith('/') ? bitrixWebhookUrl : `${bitrixWebhookUrl}/`;
-      const apiUrl = `${baseUrl}crm.deal.add.json`;
-      
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(bitrixData),
-        signal: controller.signal
+      // 0. Try to find existing deal by UF_CRM_1742556489
+      const findResp = await callBitrix('crm.deal.list.json', {
+        filter: { 'UF_CRM_1742556489': dealFields.UF_CRM_1742556489 },
+        select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID']
       });
 
-      clearTimeout(timeoutId);
+      let dealId = null;
+      let isCreate = false;
 
-      let result;
-      const contentType = response.headers.get('content-type');
-      
-      if (contentType && contentType.includes('application/json')) {
-        result = await response.json();
-      } else {
-        const text = await response.text();
-        result = { raw: text };
+      if (findResp.ok && findResp.data.result && findResp.data.result.length > 0) {
+        dealId = findResp.data.result[0].ID;
       }
 
-      if (response.ok) {
-        results.push({
-          eventId: event.id,
-          success: true,
-          status: response.status,
-          response: result,
-          message: 'Successfully sent to Bitrix',
-          shopifyData: event, // Original Shopify data for preview
-          bitrixData: bitrixData // Transformed Bitrix data for preview
-        });
+      if (!dealId) {
+        // 1. Create deal
+        const addResp = await callBitrix('crm.deal.add.json', { fields: dealFields });
+        if (!addResp.ok || !addResp.data.result) {
+          throw new Error(`crm.deal.add failed: ${JSON.stringify(addResp.data)}`);
+        }
+        dealId = addResp.data.result;
+        isCreate = true;
       } else {
-        errors.push({
-          eventId: event.id,
-          success: false,
-          status: response.status,
-          statusText: response.statusText,
-          response: result,
-          error: `HTTP ${response.status}: ${response.statusText}`,
-          shopifyData: event, // Original Shopify data for preview
-          bitrixData: bitrixData // Transformed Bitrix data for preview
-        });
+        // 1b. Update deal fields
+        const updResp = await callBitrix('crm.deal.update.json', { id: dealId, fields: dealFields });
+        if (!updResp.ok) {
+          throw new Error(`crm.deal.update failed: ${JSON.stringify(updResp.data)}`);
+        }
       }
+
+      // 2. Set product rows (always replace)
+      const rowsResp = await callBitrix('crm.deal.productrows.set.json', {
+        id: dealId,
+        rows: productRows
+      });
+      if (!rowsResp.ok || rowsResp.data.result !== true) {
+        throw new Error(`crm.deal.productrows.set failed: ${JSON.stringify(rowsResp.data)}`);
+      }
+
+      results.push({
+        eventId: event.id,
+        success: true,
+        status: 200,
+        response: { addOrUpdate: isCreate ? 'created' : 'updated', dealId, rowsSet: productRows.length },
+        message: `Successfully ${isCreate ? 'created' : 'updated'} and set products`,
+        shopifyData: event,
+        bitrixData: { fields: dealFields, productRows }
+      });
     } catch (fetchError) {
-      clearTimeout(timeoutId);
-      
-      let errorMessage = 'Unknown error';
-      let errorDetails = null;
-
-      if (fetchError.name === 'AbortError' || fetchError.name === 'TimeoutError') {
-        errorMessage = 'Request timeout';
-        errorDetails = 'The request to Bitrix took too long (exceeded 30 seconds)';
-      } else if (fetchError.code === 'ENOTFOUND' || fetchError.code === 'ECONNREFUSED') {
-        errorMessage = 'Connection error';
-        errorDetails = `Cannot connect to Bitrix server: ${fetchError.message}`;
-      } else if (fetchError.message) {
-        errorMessage = fetchError.message;
-        errorDetails = fetchError.message;
-      }
-
       errors.push({
         eventId: event.id,
         success: false,
-        error: errorMessage,
-        details: errorDetails,
-        type: fetchError.name || 'NetworkError',
-        shopifyData: event, // Original Shopify data for preview
-        bitrixData: bitrixData // Transformed Bitrix data for preview
+        error: fetchError.message || 'Unknown error',
+        details: fetchError.stack,
+        type: fetchError.name || 'Error',
+        shopifyData: event,
+        bitrixData: { fields: dealFields, productRows }
       });
     }
   }
