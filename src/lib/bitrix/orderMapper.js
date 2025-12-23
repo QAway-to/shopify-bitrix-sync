@@ -693,6 +693,20 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   
   // ✅ LOG: Log total product rows before shipping
   console.log(`[ORDER MAPPER] 📊 Total product rows (before shipping): ${productRows.length}`);
+  
+  // ✅ CRITICAL: Log summary of product rows (PRODUCT_ID vs PRODUCT_NAME)
+  const rowsWithProductId = productRows.filter(r => r.PRODUCT_ID && r.PRODUCT_ID !== 0).length;
+  const rowsWithProductName = productRows.filter(r => r.PRODUCT_NAME && !r.PRODUCT_ID).length;
+  console.log(`[ORDER MAPPER] 📋 Product rows summary: ${rowsWithProductId} with PRODUCT_ID (linked), ${rowsWithProductName} with PRODUCT_NAME only (custom)`);
+  
+  // Log each row for debugging
+  productRows.forEach((row, idx) => {
+    if (row.PRODUCT_ID) {
+      console.log(`[ORDER MAPPER]   Row ${idx + 1}: PRODUCT_ID=${row.PRODUCT_ID}, PRICE=${row.PRICE}, QTY=${row.QUANTITY} ✅ LINKED TO CATALOG`);
+    } else if (row.PRODUCT_NAME) {
+      console.log(`[ORDER MAPPER]   Row ${idx + 1}: PRODUCT_NAME="${row.PRODUCT_NAME}", PRICE=${row.PRICE}, QTY=${row.QUANTITY} ⚠️ NOT LINKED (custom row)`);
+    }
+  });
 
   // Shipping as separate row - ONLY from shipping_lines, NEVER from line_items
   // Extract shipping price STRICTLY from shipping_lines to avoid confusion with regular products
