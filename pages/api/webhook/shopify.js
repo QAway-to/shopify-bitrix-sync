@@ -955,47 +955,67 @@ async function handleOrderUpdated(order) {
   }
 
   // 4. ✅ ALWAYS update product rows (including shipping) to reflect any changes
-  let productRows = [];
-  try {
-    const mapped = await mapShopifyOrderToBitrixDeal(order);
-    productRows = mapped.productRows || [];
-    
-    console.log(`[SHOPIFY WEBHOOK] 📦 Product rows mapping result:`);
-    console.log(`  - Total product rows: ${productRows.length}`);
-    console.log(`  - Line items in order: ${order.line_items?.length || 0}`);
-    if (order.line_items && order.line_items.length > 0) {
-      const totalQuantity = order.line_items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
-      const totalCurrentQuantity = order.line_items.reduce((sum, item) => sum + (Number(item.current_quantity ?? item.quantity) || 0), 0);
-      console.log(`  - Total quantity (original): ${totalQuantity}`);
-      console.log(`  - Total quantity (current, after refunds): ${totalCurrentQuantity}`);
-      if (totalQuantity !== totalCurrentQuantity) {
-        console.log(`  - ⚠️ WARNING: Some items were refunded/removed (${totalQuantity - totalCurrentQuantity} items removed)`);
-      }
+  // ✅ Use productRows from mapShopifyOrderToBitrixDeal (already mapped above, no need to remap)
+  const productRows = mappedProductRows || [];
+  
+  console.log(`[SHOPIFY WEBHOOK] 📦 Updating product rows for deal ${dealId}:`);
+  console.log(`  - Total product rows: ${productRows.length}`);
+  console.log(`  - Line items in order: ${order.line_items?.length || 0}`);
+  if (order.line_items && order.line_items.length > 0) {
+    const totalQuantity = order.line_items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+    const totalCurrentQuantity = order.line_items.reduce((sum, item) => sum + (Number(item.current_quantity ?? item.quantity) || 0), 0);
+    console.log(`  - Total quantity (original): ${totalQuantity}`);
+    console.log(`  - Total quantity (current, after refunds): ${totalCurrentQuantity}`);
+    if (totalQuantity !== totalCurrentQuantity) {
+      console.log(`  - ⚠️ WARNING: Some items were refunded/removed (${totalQuantity - totalCurrentQuantity} items removed)`);
     }
-    
-    if (productRows.length > 0) {
-      console.log(`[SHOPIFY WEBHOOK] ✅ Updating product rows for deal ${dealId}: ${productRows.length} rows`);
-      await callBitrix('/crm.deal.productrows.set.json', {
-        id: dealId,
+  }
+  
+  // ✅ Update product rows with detailed logging (same format as CREATE)
+  if (productRows.length > 0) {
+    try {
+      console.log(`[SHOPIFY WEBHOOK] 🔗 Updating ${productRows.length} product rows for deal ${dealId} via crm.deal.productrows.set.json`);
+      console.log(`[SHOPIFY WEBHOOK]   First product row:`, JSON.stringify(productRows[0], null, 2));
+      
+      const productRowsResp = await callBitrix('/crm.deal.productrows.set.json', {
+        id: dealId, // ✅ dealId is now a number, not a string
         rows: productRows,
       });
-      console.log(`[SHOPIFY WEBHOOK] ✅ Product rows updated for deal ${dealId}: ${productRows.length} rows`);
+      
+      if (productRowsResp.result === true || productRowsResp.result) {
+        console.log(`[SHOPIFY WEBHOOK] ✅ Product rows successfully updated for deal ${dealId}`);
+        // Log which products were linked
+        productRows.forEach((row, idx) => {
+          if (row.PRODUCT_ID) {
+            console.log(`[SHOPIFY WEBHOOK]   Row ${idx + 1}: PRODUCT_ID=${row.PRODUCT_ID} (linked to catalog) ✅`);
+          } else if (row.PRODUCT_NAME) {
+            console.log(`[SHOPIFY WEBHOOK]   Row ${idx + 1}: PRODUCT_NAME="${row.PRODUCT_NAME}" (custom row, NOT linked) ⚠️`);
+          }
+        });
+      } else {
+        console.error(`[SHOPIFY WEBHOOK] ⚠️ Product rows update returned unexpected result:`, productRowsResp);
+      }
+    } catch (productRowsError) {
+      console.error(`[SHOPIFY WEBHOOK] ❌ Failed to update product rows for deal ${dealId}:`, productRowsError);
+      console.error(`[SHOPIFY WEBHOOK] Error details:`, {
+        message: productRowsError.message,
+        dealId: dealId,
+        dealIdType: typeof dealId,
+        productRowsCount: productRows.length
+      });
+    }
     } else {
-      // If no product rows (e.g., all items removed/refunded), clear rows to keep Bitrix in sync
-      console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to update (all items may be refunded/removed). Clearing product rows in Bitrix.`);
+    // If no product rows (e.g., all items removed/refunded), clear rows to keep Bitrix in sync
+    console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to update (all items may be refunded/removed). Clearing product rows in Bitrix.`);
+    try {
       await callBitrix('/crm.deal.productrows.set.json', {
-        id: dealId,
+        id: dealId, // ✅ dealId is now a number, not a string
         rows: [],
       });
       console.log(`[SHOPIFY WEBHOOK] ✅ Product rows cleared for deal ${dealId} (no active items)`);
+    } catch (clearError) {
+      console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to clear product rows:`, clearError);
     }
-  } catch (productRowsError) {
-    console.error(`[SHOPIFY WEBHOOK] ❌ Product rows update error (non-blocking):`, productRowsError);
-    console.error(`[SHOPIFY WEBHOOK] Error details:`, {
-      message: productRowsError.message,
-      stack: productRowsError.stack
-    });
-    // Do not throw to keep the webhook handler resilient
   }
 
   // ✅ Store successful update operation (always, even if values didn't change - we still synced)
