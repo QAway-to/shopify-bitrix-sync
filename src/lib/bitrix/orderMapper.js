@@ -672,15 +672,24 @@ export async function mapShopifyOrderToBitrixDeal(order) {
         
         // ✅ CRITICAL: If PRODUCT_ID is found via mapping, use ONLY PRODUCT_ID (no PRODUCT_NAME)
         // This ensures products are linked to catalog, not just text data
+        // Format matches working script: PRODUCT_ID, PRICE, QUANTITY, TAX_INCLUDED, MEASURE_CODE
         if (productId && productId !== 0) {
-          row.PRODUCT_ID = productId;
+          row.PRODUCT_ID = Number(productId); // Ensure it's a number, not string
           // Don't set PRODUCT_NAME when PRODUCT_ID is set - Bitrix will use product name from catalog
-          console.log(`[ORDER MAPPER] ✅ Row ${i + 1}/${quantity}: Using PRODUCT_ID=${productId} (mapped via ${mappingMethod}) for SKU: "${item.sku || 'N/A'}"`);
-          console.log(`[ORDER MAPPER]   ⚠️ IMPORTANT: PRODUCT_NAME is NOT set - Bitrix will use product name from catalog (ID: ${productId})`);
+          console.log(`[ORDER MAPPER] ✅ Row ${i + 1}/${quantity}: Using PRODUCT_ID=${row.PRODUCT_ID} (mapped via ${mappingMethod}) for SKU: "${item.sku || 'N/A'}"`);
+          console.log(`[ORDER MAPPER]   ⚠️ IMPORTANT: PRODUCT_NAME is NOT set - Bitrix will use product name from catalog (ID: ${row.PRODUCT_ID})`);
+          console.log(`[ORDER MAPPER]   📦 Row payload:`, JSON.stringify({
+            PRODUCT_ID: row.PRODUCT_ID,
+            PRICE: row.PRICE,
+            QUANTITY: row.QUANTITY,
+            TAX_INCLUDED: row.TAX_INCLUDED,
+            MEASURE_CODE: row.MEASURE_CODE || 1
+          }, null, 2));
         } else {
           // Only use PRODUCT_NAME if no mapping found (fallback to custom row)
           row.PRODUCT_NAME = productName || item.title || item.sku || 'Shopify item';
           console.warn(`[ORDER MAPPER] ⚠️ Row ${i + 1}/${quantity}: SKU "${item.sku || 'N/A'}" NOT MAPPED - using PRODUCT_NAME="${row.PRODUCT_NAME}" (custom row, NOT linked to catalog)`);
+          console.warn(`[ORDER MAPPER]   ❌ This will create a text-only product row, NOT linked to catalog!`);
         }
         
         productRows.push(row);
