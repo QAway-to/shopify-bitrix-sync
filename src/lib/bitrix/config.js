@@ -3,9 +3,11 @@
 
 export const BITRIX_CONFIG = {
   // Category IDs (Funnel IDs) for deals
-  CATEGORY_STOCK: 2, // Stock (in the shop)
+  CATEGORY_SHOP_STOCK: 0, // Stock (in the shop, POS)
+  CATEGORY_SHOP_PREORDER: 4, // Pre-order (in the shop, POS)
+  CATEGORY_STOCK: 2, // Stock (site)
   CATEGORY_PREORDER: 8, // Pre-order (site)
-  CATEGORY_ID: 2, // Default category (Stock) - kept for backward compatibility
+  CATEGORY_ID: 2, // Default category (Stock site) - kept for backward compatibility
 
   // Default stage IDs (matching Bitrix24 stages)
   STAGES: {

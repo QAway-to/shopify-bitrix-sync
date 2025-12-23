@@ -184,8 +184,17 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     preorderTags.some(preorderTag => tag.toLowerCase() === preorderTag.toLowerCase())
   );
   
-  const categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
-  console.log(`[ORDER MAPPER] Category determined: ${categoryId} (${hasPreorderTag ? 'Pre-order' : 'Stock'}) based on tags:`, orderTags);
+  // Determine category (funnel) by source and preorder tag
+  // POS → Stock (in the shop, 0) or Pre-order (in the shop, 4)
+  // Site → Stock (site, 2) or Pre-order (site, 8)
+  let categoryId;
+  const isPos = order.source_name === 'pos';
+  if (isPos) {
+    categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_SHOP_PREORDER : BITRIX_CONFIG.CATEGORY_SHOP_STOCK;
+  } else {
+    categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
+  }
+  console.log(`[ORDER MAPPER] Category determined: ${categoryId} (${isPos ? 'POS' : 'Site'} | ${hasPreorderTag ? 'Pre-order' : 'Stock'}) based on tags:`, orderTags);
 
   // Customer name
   const customerName = order.customer
