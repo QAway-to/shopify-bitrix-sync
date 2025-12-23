@@ -5,7 +5,7 @@ import EventsList from '../src/components/shopify/EventsList';
 import BitrixEventsList from '../src/components/bitrix/EventsList';
 import SuccessOperationsList from '../src/components/success/SuccessOperationsList';
 import DataPreview from '../src/components/shopify/DataPreview';
-import { shopifyAdapter } from '../src/lib/adapters/shopify';
+// Removed shopifyAdapter import - now using API endpoint for transformation
 
 export default function ShopifyPage() {
   const [events, setEvents] = useState([]);
@@ -282,11 +282,25 @@ export default function ShopifyPage() {
 
   const handlePreviewEvent = async (event) => {
     try {
-      const bitrixData = await shopifyAdapter.transformToBitrix(event);
+      // Use API endpoint for server-side transformation (avoids client-side bundle issues)
+      const response = await fetch('/api/transform-to-bitrix', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ shopifyOrder: event })
+      });
+
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to transform order');
+      }
+
       setPreviewEvent(event);
       setPreviewData({
         shopifyData: event,
-        bitrixData: bitrixData
+        bitrixData: result.bitrixData
       });
     } catch (error) {
       alert(`Ошибка при трансформации: ${error.message}`);

@@ -3,25 +3,70 @@
  * Handles category-based SKU to Product ID mapping with hybrid approach (cache + Bitrix API)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import { callBitrix } from './client.js';
 
-// Get current directory in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Check if we're on the server
+const isServer = typeof window === 'undefined';
 
-// Mappings directory relative to this file
-const MAPPINGS_DIR = join(__dirname, 'mappings');
+// Server-only imports (will be tree-shaken on client)
+let readFileSync, writeFileSync, existsSync, mkdirSync, join, dirname, fileURLToPath;
+let __dirname, MAPPINGS_DIR;
 
-// Ensure mappings directory exists
-try {
-  if (!existsSync(MAPPINGS_DIR)) {
-    mkdirSync(MAPPINGS_DIR, { recursive: true });
+// Initialize server-only modules (only on server)
+// Use lazy initialization to avoid client-side execution
+let serverModulesInitialized = false;
+
+function initServerModules() {
+  if (serverModulesInitialized || !isServer) {
+    return;
   }
-} catch (error) {
-  console.warn(`[MAPPING UTILS] Could not create mappings directory: ${error.message}`);
+  
+  try {
+    // Dynamic import for server-only modules
+    // This will be evaluated at runtime on server only
+    const fs = eval('require')('fs');
+    const path = eval('require')('path');
+    const url = eval('require')('url');
+    
+    readFileSync = fs.readFileSync;
+    writeFileSync = fs.writeFileSync;
+    existsSync = fs.existsSync;
+    mkdirSync = fs.mkdirSync;
+    join = path.join;
+    dirname = path.dirname;
+    fileURLToPath = url.fileURLToPath;
+    
+    // Get current directory in ES modules
+    const __filename = fileURLToPath(import.meta.url);
+    __dirname = dirname(__filename);
+    
+    // Mappings directory - use .data for persistent storage on Render (same as other data)
+    MAPPINGS_DIR = join(process.cwd(), '.data', 'mappings');
+    
+    serverModulesInitialized = true;
+  } catch (error) {
+    // If initialization fails, set to null
+    console.warn('[MAPPING UTILS] Could not initialize server modules:', error.message);
+    MAPPINGS_DIR = null;
+  }
+}
+
+// Initialize on first use (server only)
+if (isServer) {
+  initServerModules();
+} else {
+  MAPPINGS_DIR = null;
+}
+
+// Ensure mappings directory exists (server only)
+if (isServer && MAPPINGS_DIR && existsSync && mkdirSync) {
+  try {
+    if (!existsSync(MAPPINGS_DIR)) {
+      mkdirSync(MAPPINGS_DIR, { recursive: true });
+    }
+  } catch (error) {
+    console.warn(`[MAPPING UTILS] Could not create mappings directory: ${error.message}`);
+  }
 }
 
 /**
@@ -63,6 +108,11 @@ export function getCategoryByHandle(handleOrSku) {
  * @returns {Object} Mapping object (SKU -> Product ID)
  */
 export function loadCategoryMapping(category) {
+  // Client-side: return empty mapping
+  if (!isServer || !MAPPINGS_DIR) {
+    return {};
+  }
+  
   const filePath = join(MAPPINGS_DIR, `${category}.json`);
   
   if (!existsSync(filePath)) {
@@ -111,6 +161,17 @@ export function loadAllMappings() {
  * @param {Object} mapping - Mapping object to save
  */
 export function saveCategoryMapping(category, mapping) {
+  // Initialize server modules if needed
+  if (isServer && !serverModulesInitialized) {
+    initServerModules();
+  }
+  
+  // Client-side: no-op
+  if (!isServer || !MAPPINGS_DIR) {
+    console.warn(`[MAPPING UTILS] Cannot save mapping on client side`);
+    return;
+  }
+  
   const filePath = join(MAPPINGS_DIR, `${category}.json`);
   
   // Add metadata
