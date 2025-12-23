@@ -520,24 +520,43 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       
       let productId = null;
       
-      // ✅ NEW: Try category-based mapping first (includes certificates and other categories)
+      // ✅ CRITICAL: Always find PRODUCT_ID (never use PRODUCT_NAME fallback)
+      // Priority: SKU mapping → Title mapping → Legacy mappings
       let mappingMethod = 'none';
+      
+      // 1. Try SKU-based mapping first (if SKU exists)
       if (item.sku) {
-        console.log(`[ORDER MAPPER] 🔍 Searching for Product ID by SKU: "${item.sku}"`);
+        console.log(`[ORDER MAPPER] 🔍 Step 1: Searching for Product ID by SKU: "${item.sku}"`);
         // This uses hybrid approach: cache first, then Bitrix API if not found
         productId = await findProductIdBySku(item.sku);
         
         if (productId) {
           mappingMethod = 'category-based (hybrid)';
-          console.log(`[ORDER MAPPER] ✅ Category-based mapping found: SKU "${item.sku}" -> Product ID: ${productId} (method: ${mappingMethod})`);
+          console.log(`[ORDER MAPPER] ✅ Found by SKU: "${item.sku}" -> Product ID: ${productId} (method: ${mappingMethod})`);
         } else {
-          console.log(`[ORDER MAPPER] ⚠️ Category-based mapping NOT found for SKU: "${item.sku}"`);
+          console.log(`[ORDER MAPPER] ⚠️ SKU mapping NOT found for: "${item.sku}"`);
+        }
+      } else {
+        console.log(`[ORDER MAPPER] ⚠️ SKU is missing for item: "${item.title || 'N/A'}"`);
+      }
+      
+      // 2. If SKU mapping failed or SKU is missing, try title-based mapping
+      if (!productId && item.title) {
+        console.log(`[ORDER MAPPER] 🔍 Step 2: Searching for Product ID by title: "${item.title}"`);
+        const { findProductIdByTitle } = await import('./products.js');
+        productId = await findProductIdByTitle(item.title);
+        
+        if (productId) {
+          mappingMethod = 'title-based (Bitrix API)';
+          console.log(`[ORDER MAPPER] ✅ Found by title: "${item.title}" -> Product ID: ${productId} (method: ${mappingMethod})`);
+        } else {
+          console.log(`[ORDER MAPPER] ⚠️ Title mapping NOT found for: "${item.title}"`);
         }
       }
       
-      // Fallback to legacy mappings if category-based didn't find it
+      // 3. Fallback to legacy mappings if SKU/title mapping didn't find it
       if (!productId) {
-        console.log(`[ORDER MAPPER] 🔍 Trying legacy mappings for SKU: "${item.sku || 'N/A'}"`);
+        console.log(`[ORDER MAPPER] 🔍 Step 3: Trying legacy mappings for SKU: "${item.sku || 'N/A'}"`);
         // Try semantic SKU mapping (legacy)
         const productIdFromSemantic = item.sku ? skuMappingSemantic[item.sku] : null;
         // Old mapping (legacy)
@@ -557,9 +576,11 @@ export async function mapShopifyOrderToBitrixDeal(order) {
           else if (productIdFromOldMapping) mappingMethod = 'old SKU mapping';
           else if (productIdFromHandle) mappingMethod = 'handle mapping';
           else if (productIdFromConfig) mappingMethod = 'config SKU mapping';
-          console.log(`[ORDER MAPPER] ✅ Legacy mapping used: SKU "${item.sku}" -> Product ID: ${productId} (method: ${mappingMethod})`);
+          console.log(`[ORDER MAPPER] ✅ Found by legacy mapping: SKU "${item.sku || 'N/A'}" -> Product ID: ${productId} (method: ${mappingMethod})`);
         } else {
-          console.log(`[ORDER MAPPER] ❌ NO MAPPING FOUND for SKU: "${item.sku || 'N/A'}" - will use PRODUCT_NAME as fallback`);
+          console.error(`[ORDER MAPPER] ❌❌❌ CRITICAL: NO PRODUCT_ID FOUND for item: "${item.title || 'N/A'}" (SKU: "${item.sku || 'N/A'}")`);
+          console.error(`[ORDER MAPPER]   Tried: SKU mapping, Title mapping, Legacy mappings - ALL FAILED`);
+          console.error(`[ORDER MAPPER]   ⚠️ This item will NOT be added to deal (no PRODUCT_ID available)`);
         }
       }
       
@@ -670,26 +691,29 @@ export async function mapShopifyOrderToBitrixDeal(order) {
           TAX_RATE: taxRate,
         };
         
-        // ✅ CRITICAL: If PRODUCT_ID is found via mapping, use ONLY PRODUCT_ID (no PRODUCT_NAME)
-        // This ensures products are linked to catalog, not just text data
-        // Format matches working script: PRODUCT_ID, PRICE, QUANTITY, TAX_INCLUDED, MEASURE_CODE
+        // ✅ CRITICAL: ALWAYS use PRODUCT_ID (never PRODUCT_NAME)
+        // Bitrix requires PRODUCT_ID (XML_ID/SKU) to link product to catalog
+        // If productId is not found, skip this row (don't create custom row)
         if (productId && productId !== 0) {
           row.PRODUCT_ID = Number(productId); // Ensure it's a number, not string
-          // Don't set PRODUCT_NAME when PRODUCT_ID is set - Bitrix will use product name from catalog
-          console.log(`[ORDER MAPPER] ✅ Row ${i + 1}/${quantity}: Using PRODUCT_ID=${row.PRODUCT_ID} (mapped via ${mappingMethod}) for SKU: "${item.sku || 'N/A'}"`);
-          console.log(`[ORDER MAPPER]   ⚠️ IMPORTANT: PRODUCT_NAME is NOT set - Bitrix will use product name from catalog (ID: ${row.PRODUCT_ID})`);
+          row.MEASURE_CODE = 1; // Pieces (как в рабочем скрипте)
+          // Don't set PRODUCT_NAME - Bitrix will use product name from catalog
+          console.log(`[ORDER MAPPER] ✅ Row ${i + 1}/${quantity}: Using PRODUCT_ID=${row.PRODUCT_ID} (mapped via ${mappingMethod})`);
+          console.log(`[ORDER MAPPER]   - Item: "${item.title || 'N/A'}" (SKU: "${item.sku || 'N/A'}")`);
+          console.log(`[ORDER MAPPER]   - PRODUCT_NAME is NOT set - Bitrix will use product name from catalog`);
           console.log(`[ORDER MAPPER]   📦 Row payload:`, JSON.stringify({
             PRODUCT_ID: row.PRODUCT_ID,
             PRICE: row.PRICE,
             QUANTITY: row.QUANTITY,
             TAX_INCLUDED: row.TAX_INCLUDED,
-            MEASURE_CODE: row.MEASURE_CODE || 1
+            MEASURE_CODE: row.MEASURE_CODE
           }, null, 2));
         } else {
-          // Only use PRODUCT_NAME if no mapping found (fallback to custom row)
-          row.PRODUCT_NAME = productName || item.title || item.sku || 'Shopify item';
-          console.warn(`[ORDER MAPPER] ⚠️ Row ${i + 1}/${quantity}: SKU "${item.sku || 'N/A'}" NOT MAPPED - using PRODUCT_NAME="${row.PRODUCT_NAME}" (custom row, NOT linked to catalog)`);
-          console.warn(`[ORDER MAPPER]   ❌ This will create a text-only product row, NOT linked to catalog!`);
+          // ❌ CRITICAL: Skip this row if PRODUCT_ID is not found
+          // Never create custom row with PRODUCT_NAME - always require PRODUCT_ID
+          console.error(`[ORDER MAPPER] ❌❌❌ SKIPPING row ${i + 1}/${quantity}: No PRODUCT_ID found for item "${item.title || 'N/A'}"`);
+          console.error(`[ORDER MAPPER]   This item will NOT be added to deal (requires PRODUCT_ID from Bitrix catalog)`);
+          continue; // Skip this row
         }
         
         productRows.push(row);

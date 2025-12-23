@@ -76,6 +76,101 @@ export async function findProductBySku(sku) {
 }
 
 /**
+ * Find product in Bitrix by title/name (when SKU is not available)
+ * @param {string} title - Product title/name from Shopify
+ * @returns {Promise<number|null>} Product ID if exists, null otherwise
+ */
+export async function findProductIdByTitle(title) {
+  if (!title || typeof title !== 'string') {
+    return null;
+  }
+
+  try {
+    console.log(`[BITRIX PRODUCTS] 🔍 Searching in Bitrix API for product by title: "${title}"`);
+    
+    // Extract base product name (remove size/variant info)
+    // Example: "E-Certificate | Size: €30 | Brand: FBFC" -> "E-Certificate"
+    const baseTitle = title.split('|')[0].trim();
+    const cleanTitle = baseTitle.split('-')[0].trim(); // Remove variant info like "E-Certificate - 30"
+    
+    // Try exact match first (full title)
+    let response = await callBitrix('crm.product.list', {
+      filter: { NAME: title },
+      select: ['ID', 'NAME', 'CODE', 'XML_ID']
+    });
+
+    if (response.result && response.result.length > 0) {
+      const productId = parseInt(response.result[0].ID);
+      console.log(`[BITRIX PRODUCTS] ✅ Found by exact title match: "${title}" -> Product ID: ${productId}`);
+      return productId;
+    }
+
+    // Try base title (without size/variant info)
+    if (baseTitle !== title) {
+      response = await callBitrix('crm.product.list', {
+        filter: { NAME: baseTitle },
+        select: ['ID', 'NAME', 'CODE', 'XML_ID']
+      });
+
+      if (response.result && response.result.length > 0) {
+        const productId = parseInt(response.result[0].ID);
+        console.log(`[BITRIX PRODUCTS] ✅ Found by base title match: "${baseTitle}" -> Product ID: ${productId}`);
+        return productId;
+      }
+    }
+
+    // Try clean title (first word, e.g., "E-Certificate")
+    if (cleanTitle !== baseTitle && cleanTitle !== title) {
+      response = await callBitrix('crm.product.list', {
+        filter: { NAME: cleanTitle },
+        select: ['ID', 'NAME', 'CODE', 'XML_ID']
+      });
+
+      if (response.result && response.result.length > 0) {
+        const productId = parseInt(response.result[0].ID);
+        console.log(`[BITRIX PRODUCTS] ✅ Found by clean title match: "${cleanTitle}" -> Product ID: ${productId}`);
+        return productId;
+      }
+    }
+
+    // Try partial match using Bitrix search (get all products and filter)
+    // Bitrix API doesn't support LIKE directly, so we fetch and filter client-side
+    response = await callBitrix('crm.product.list', {
+      select: ['ID', 'NAME', 'CODE', 'XML_ID'],
+      order: { NAME: 'ASC' }
+    });
+
+    if (response.result && response.result.length > 0) {
+      // Find best match (title contains product name or vice versa)
+      const titleLower = title.toLowerCase();
+      const baseTitleLower = baseTitle.toLowerCase();
+      const cleanTitleLower = cleanTitle.toLowerCase();
+      
+      const bestMatch = response.result.find(p => {
+        const pName = p.NAME.toLowerCase();
+        return pName === titleLower || 
+               pName === baseTitleLower || 
+               pName === cleanTitleLower ||
+               pName.includes(cleanTitleLower) ||
+               cleanTitleLower.includes(pName);
+      });
+      
+      if (bestMatch) {
+        const productId = parseInt(bestMatch.ID);
+        console.log(`[BITRIX PRODUCTS] ✅ Found by partial match: "${title}" -> Product ID: ${productId} (matched: "${bestMatch.NAME}")`);
+        return productId;
+      }
+    }
+
+    console.warn(`[BITRIX PRODUCTS] ⚠️ Product not found by title: "${title}" (tried: exact, base, clean, partial)`);
+    return null;
+  } catch (error) {
+    console.error(`[BITRIX PRODUCTS] ❌ Error searching Bitrix API for title "${title}":`, error);
+    return null;
+  }
+}
+
+/**
  * Get current stock quantity for a product in Bitrix
  * @param {number} productId - Product ID
  * @param {number} storeId - Store ID (default: 2)
