@@ -15,6 +15,21 @@ import skuMappingSemantic from './skuMappingSemantic.json' assert { type: 'json'
 import { findProductIdBySku, loadAllMappings } from './mappingUtils.js';
 import { resolveResponsibleId } from './responsible.js';
 
+// Known certificate variant_id -> Bitrix PRODUCT_ID mapping (fallback when SKU is missing)
+// Based on provided Shopify variants for E-Certificate
+const CERT_VARIANT_TO_PRODUCT_ID = {
+  50398439440648: 4268,  // €30
+  50420389413128: 4270,  // €50
+  50420389445896: 4272,  // €70
+  50420389478664: 4274,  // €100
+  50420389511432: 4276,  // €120
+  50420389544200: 4278,  // €150
+  50420389576968: 4280,  // €200
+  50420389609736: 4282,  // €300
+  50420389642504: 4284,  // €500
+  50420389675272: 4286   // €1000
+};
+
 /**
  * Parse model name from product title
  * Example: "Wellie Paint KL tractor blue Barefoot Kids Rubber Boots" → "Wellie Paint KL"
@@ -511,7 +526,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       // CRITICAL: line_items are ALWAYS products, NEVER shipping
       // Even if a product has the same ID as shipping, it's still a product from line_items
       
-      // ===== STRICT MAPPING: ONLY SKU/XML_ID =====
+      // ===== STRICT MAPPING: SKU/XML_ID first, fallback to variant_id for certificates =====
       let productId = null;
       let mappingMethod = 'none';
 
@@ -525,12 +540,25 @@ export async function mapShopifyOrderToBitrixDeal(order) {
           console.error(`[ORDER MAPPER] ❌ SKU/XML_ID NOT FOUND in Bitrix: "${item.sku}"`);
         }
       } else {
-        console.error(`[ORDER MAPPER] ❌ SKU is missing for item: "${item.title || 'N/A'}" -> cannot map (SKU/XML_ID required)`);
+        console.warn(`[ORDER MAPPER] ⚠️ SKU is missing for item: "${item.title || 'N/A'}"`);
       }
 
-      // No other fallbacks per requirement (only SKU/XML_ID). If not found, skip row.
+      // Fallback: variant_id for known certificates (no SKU in Shopify)
+      if (!productId && item.variant_id) {
+        const variantId = Number(item.variant_id);
+        const certProductId = CERT_VARIANT_TO_PRODUCT_ID[variantId];
+        if (certProductId) {
+          productId = certProductId;
+          mappingMethod = 'variant_id_certificate';
+          console.log(`[ORDER MAPPER] ✅ Found by variant_id (certificate): ${variantId} -> Product ID: ${productId}`);
+        } else {
+          console.error(`[ORDER MAPPER] ❌ variant_id NOT FOUND in certificate map: ${variantId}`);
+        }
+      }
+
+      // No other fallbacks per requirement. If not found, skip row.
       if (!productId) {
-        console.error(`[ORDER MAPPER] ❌❌❌ CRITICAL: NO PRODUCT_ID FOUND (SKU/XML_ID required). Item: "${item.title || 'N/A'}" (SKU: "${item.sku || 'N/A'}")`);
+        console.error(`[ORDER MAPPER] ❌❌❌ CRITICAL: NO PRODUCT_ID FOUND (SKU/XML_ID or variant_id required). Item: "${item.title || 'N/A'}" (SKU: "${item.sku || 'N/A'}", variant_id: ${item.variant_id || 'N/A'})`);
         console.error(`[ORDER MAPPER]   ⚠️ This item will NOT be added to deal (no PRODUCT_ID available)`);
       }
       
