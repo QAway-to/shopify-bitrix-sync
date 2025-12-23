@@ -38,8 +38,7 @@ export default async function handler(req, res) {
       certificates: {},
       summary: {
         total: 0,
-        created: 0,
-        updated: 0,
+        updated: 0, // Only show updated quantities (no "created" - that's for "Create" button)
         errors: 0
       }
     };
@@ -79,11 +78,12 @@ export default async function handler(req, res) {
           results.summary.total++;
 
           if (syncResult.success) {
+            // Only count as "updated" if quantity was actually synced (documentId means quantity changed)
+            // If documentId is null, quantities already matched - don't count as updated
             if (syncResult.documentId) {
-              results.summary.created++;
-            } else {
               results.summary.updated++;
             }
+            // If no documentId, quantities matched - don't count (silent success)
           } else {
             results.summary.errors++;
             handleResults.errors.push({

@@ -658,14 +658,16 @@ export async function mapShopifyOrderToBitrixDeal(order) {
           TAX_RATE: taxRate,
         };
         
-        // Always set PRODUCT_NAME with size and properties for visibility in Bitrix24
-        row.PRODUCT_NAME = productName || item.title || item.sku || 'Shopify item';
-        
-        // Set PRODUCT_ID if mapped (for linking to catalog)
+        // ✅ CRITICAL: If PRODUCT_ID is found via mapping, use ONLY PRODUCT_ID (no PRODUCT_NAME)
+        // This ensures products are linked to catalog, not just text data
         if (productId && productId !== 0) {
           row.PRODUCT_ID = productId;
+          // Don't set PRODUCT_NAME when PRODUCT_ID is set - Bitrix will use product name from catalog
+          console.log(`[ORDER MAPPER] ✅ Using Product ID ${productId} from mapping for SKU: ${item.sku || 'N/A'}`);
         } else {
-          console.warn(`[ORDER MAPPER] SKU ${item.sku || 'N/A'} not mapped, sending as custom row with name: ${productName}`);
+          // Only use PRODUCT_NAME if no mapping found (fallback to custom row)
+          row.PRODUCT_NAME = productName || item.title || item.sku || 'Shopify item';
+          console.warn(`[ORDER MAPPER] ⚠️ SKU ${item.sku || 'N/A'} not mapped, sending as custom row with name: ${productName}`);
         }
         
         productRows.push(row);

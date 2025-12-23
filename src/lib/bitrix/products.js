@@ -202,6 +202,106 @@ export async function createIncomingDocument(documentData) {
 }
 
 /**
+ * Create outgoing document (Deduct) in Bitrix
+ * @param {Object} documentData - Document data
+ * @param {string} documentData.title - Document title
+ * @param {number} documentData.productId - Product ID
+ * @param {number} documentData.amount - Quantity to deduct (positive number)
+ * @param {number} documentData.storeId - Store ID (default: 2)
+ * @returns {Promise<number>} Created document ID
+ */
+export async function createOutgoingDocument(documentData) {
+  const {
+    title,
+    productId,
+    amount,
+    storeId = 2
+  } = documentData;
+
+  if (!title || !productId || amount <= 0) {
+    throw new Error('Document title, product ID, and positive amount are required');
+  }
+
+  const docNumber = `DED-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  try {
+    // 1. Check current stock
+    const currentStock = await getCurrentStock(productId, storeId);
+    if (currentStock < amount) {
+      throw new Error(`Insufficient stock: current=${currentStock}, requested=${amount}`);
+    }
+
+    // 2. Create document (type 'D' = Deduct)
+    const docResponse = await callBitrix('catalog.document.add', {
+      fields: {
+        docType: 'D', // Deduct (Списание)
+        title: title,
+        docNumber: docNumber,
+        currency: 'EUR',
+        status: 'N', // Draft
+        responsibleId: 52
+      }
+    });
+
+    let docId;
+    if (docResponse.result?.document?.id) {
+      docId = docResponse.result.document.id;
+    } else if (docResponse.result) {
+      docId = docResponse.result;
+    } else {
+      throw new Error('Failed to create document: no ID returned');
+    }
+
+    console.log(`[BITRIX PRODUCTS] ✅ Deduct document created: ${docNumber} (ID: ${docId})`);
+
+    // Wait a bit for document to be ready
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // 3. Add product to document
+    const elementPayload = {
+      fields: {
+        docId: docId,
+        DOC_ID: docId,
+        elementId: productId,
+        ELEMENT_ID: productId,
+        amount: amount, // Positive number
+        AMOUNT: amount,
+        purchasingPrice: 0, // Not important for deduct
+        PURCHASING_PRICE: 0,
+        storeFrom: storeId, // From where we deduct
+        STORE_FROM: storeId,
+        storeTo: '', // Empty (goes to nowhere)
+        STORE_TO: ''
+      }
+    };
+
+    const elementResponse = await callBitrix('catalog.document.element.add', elementPayload);
+
+    if (!elementResponse.result) {
+      throw new Error(`Failed to add product to document: ${JSON.stringify(elementResponse)}`);
+    }
+
+    console.log(`[BITRIX PRODUCTS] ✅ Product added to deduct document: Product ID ${productId}, Amount: ${amount}`);
+
+    // Wait a bit before conducting
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // 4. Conduct document
+    const conductResponse = await callBitrix('catalog.document.conduct', { id: docId });
+
+    if (conductResponse.result === true) {
+      console.log(`[BITRIX PRODUCTS] ✅ Deduct document conducted: ${docNumber}`);
+      return docId;
+    } else {
+      throw new Error(`Failed to conduct document: ${JSON.stringify(conductResponse)}`);
+    }
+  } catch (error) {
+    console.error(`[BITRIX PRODUCTS] ❌ Error creating outgoing document:`, error);
+    throw error;
+  }
+}
+
+/**
  * Sync certificate from Shopify to Bitrix
  * Creates product if not exists (only if createNew=true), then syncs inventory
  * @param {Object} variantData - Variant data from Shopify
