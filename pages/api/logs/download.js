@@ -53,7 +53,8 @@ export default async function handler(req, res) {
           return dateB - dateA;
         });
 
-        sortedEvents.forEach((event, index) => {
+        for (let index = 0; index < sortedEvents.length; index++) {
+          const event = sortedEvents[index];
           const eventId = event.id || event.eventId || `event-${index}`;
           const orderId = event.orderId || event.id || 'N/A';
           const receivedAt = event.received_at || event.created_at || 'N/A';
