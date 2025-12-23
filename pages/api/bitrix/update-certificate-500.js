@@ -1,5 +1,5 @@
-import { getCertificatesData } from '../../../../src/lib/shopify/inventory.js';
-import { updateBitrixProductFields } from '../../../../src/lib/bitrix/products.js';
+import { getCertificatesData } from '../../../src/lib/shopify/inventory.js';
+import { updateBitrixProductFields } from '../../../src/lib/bitrix/products.js';
 
 // Hardcoded target product in Bitrix for E-Certificate 500$
 const TARGET_PRODUCT_ID = 4284;
