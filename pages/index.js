@@ -502,6 +502,36 @@ export default function ShopifyPage() {
     }
   };
 
+  const handleSyncCertificates = async () => {
+    setIsSyncingCertificates(true);
+    setSyncResult(null);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/sync/certificates', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSyncResult(data);
+        console.log('[SYNC] Certificates synced successfully:', data);
+      } else {
+        setError(data.error || 'Failed to sync certificates');
+        setSyncResult(data);
+      }
+    } catch (err) {
+      console.error('[SYNC] Error syncing certificates:', err);
+      setError(err.message || 'Failed to sync certificates');
+    } finally {
+      setIsSyncingCertificates(false);
+    }
+  };
+
   return (
     <>
       <Head>
