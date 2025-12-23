@@ -119,7 +119,7 @@ export default async function handler(req, res) {
           }
           
           logs.push('');
-        });
+        }
       } else {
         logs.push('No events found.');
         logs.push('');
