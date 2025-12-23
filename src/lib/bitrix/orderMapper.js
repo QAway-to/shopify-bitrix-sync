@@ -11,6 +11,8 @@ import brandMapping from './brandMapping.json' assert { type: 'json' };
 // import skuMappingEnhanced from './skuMappingEnhanced.json' assert { type: 'json' };
 // ✅ SEMANTIC MAPPING: Используем семантический маппинг с 100% совпадениями
 import skuMappingSemantic from './skuMappingSemantic.json' assert { type: 'json' };
+// ✅ NEW: Category-based mapping with hybrid search (cache + Bitrix API)
+import { findProductIdBySku, loadAllMappings } from './mappingUtils.js';
 import { resolveResponsibleId } from './responsible.js';
 
 /**
@@ -509,32 +511,43 @@ export function mapShopifyOrderToBitrixDeal(order) {
       // CRITICAL: line_items are ALWAYS products, NEVER shipping
       // Even if a product has the same ID as shipping, it's still a product from line_items
       
-      // ===== SEMANTIC MAPPING LOGIC (используется семантический маппинг с 100% совпадениями) =====
-      // Семантический маппинг использует:
-      // - Взвешенное сопоставление (Brand 40%, Model 30%, Color 20%, Type 10%)
-      // - Семантический анализ цветов (синонимы: lion=beige, jeans=blue, и т.д.)
-      // - Расширенный словарь цветов (50+ цветов)
-      // - Динамические пороги сопоставления
-      // - Jaccard similarity + Sequence similarity для семантического анализа
-      // Try semantic SKU mapping first (with semantic analysis and weighted matching)
-      const productIdFromSemantic = item.sku ? skuMappingSemantic[item.sku] : null;
-      // ENHANCED MAPPING (закомментировано - используется семантический)
-      // const productIdFromEnhanced = item.sku ? skuMappingEnhanced[item.sku] : null; // Fallback to enhanced
-      const productIdFromOldMapping = item.sku ? skuMapping[item.sku] : null; // Fallback to old mapping
-      const productIdFromConfig = item.sku ? BITRIX_CONFIG.SKU_TO_PRODUCT_ID[item.sku] : null;
-
-      // Try handle-based mapping (with a small normalization removing "barefoot-")
-      const rawHandle = item.handle || item.product_handle || null;
-      const normHandle = rawHandle ? rawHandle.toLowerCase().replace('barefoot-', '') : null;
-      const productIdFromHandle = normHandle ? (handleMapping[normHandle] || handleMapping[rawHandle]) : null;
-
-      // Use semantic mapping with fallback chain
-      let productId = productIdFromSemantic || productIdFromOldMapping || productIdFromHandle || productIdFromConfig || null;
+      // ===== HYBRID MAPPING LOGIC (Category-based cache + Bitrix API) =====
+      // Priority order:
+      // 1. Category-based mapping (certificates.json, category-a-f.json, etc.) - fastest
+      // 2. Semantic mapping (skuMappingSemantic.json) - legacy support
+      // 3. Old mappings (skuMapping.json, handleMapping.json) - legacy support
+      // 4. Bitrix API lookup (dynamic) - fallback
       
-      // Log if semantic mapping was used
-      if (productIdFromSemantic) {
-        if (!productIdFromOldMapping) {
-          console.log(`[ORDER MAPPER] ✅ Semantic mapping used for SKU: ${item.sku} -> Product ID: ${productIdFromSemantic}`);
+      let productId = null;
+      
+      // ✅ NEW: Try category-based mapping first (includes certificates and other categories)
+      if (item.sku) {
+        // This uses hybrid approach: cache first, then Bitrix API if not found
+        productId = await findProductIdBySku(item.sku);
+        
+        if (productId) {
+          console.log(`[ORDER MAPPER] ✅ Category-based mapping found: SKU ${item.sku} -> Product ID: ${productId}`);
+        }
+      }
+      
+      // Fallback to legacy mappings if category-based didn't find it
+      if (!productId) {
+        // Try semantic SKU mapping (legacy)
+        const productIdFromSemantic = item.sku ? skuMappingSemantic[item.sku] : null;
+        // Old mapping (legacy)
+        const productIdFromOldMapping = item.sku ? skuMapping[item.sku] : null;
+        const productIdFromConfig = item.sku ? BITRIX_CONFIG.SKU_TO_PRODUCT_ID[item.sku] : null;
+
+        // Try handle-based mapping (legacy)
+        const rawHandle = item.handle || item.product_handle || null;
+        const normHandle = rawHandle ? rawHandle.toLowerCase().replace('barefoot-', '') : null;
+        const productIdFromHandle = normHandle ? (handleMapping[normHandle] || handleMapping[rawHandle]) : null;
+
+        // Use legacy mapping chain
+        productId = productIdFromSemantic || productIdFromOldMapping || productIdFromHandle || productIdFromConfig || null;
+        
+        if (productId) {
+          console.log(`[ORDER MAPPER] ✅ Legacy mapping used for SKU: ${item.sku} -> Product ID: ${productId}`);
         }
       }
       

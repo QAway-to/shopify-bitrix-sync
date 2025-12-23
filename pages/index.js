@@ -37,6 +37,9 @@ export default function ShopifyPage() {
   // Sync certificates state
   const [isSyncingCertificates, setIsSyncingCertificates] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
+  // Create certificates state
+  const [isCreatingCertificates, setIsCreatingCertificates] = useState(false);
+  const [createResult, setCreateResult] = useState(null);
 
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);
@@ -502,6 +505,7 @@ export default function ShopifyPage() {
     }
   };
 
+  // Sync certificates (update quantities only)
   const handleSyncCertificates = async () => {
     setIsSyncingCertificates(true);
     setSyncResult(null);
@@ -529,6 +533,36 @@ export default function ShopifyPage() {
       setError(err.message || 'Failed to sync certificates');
     } finally {
       setIsSyncingCertificates(false);
+    }
+  };
+
+  const handleCreateCertificates = async () => {
+    setIsCreatingCertificates(true);
+    setCreateResult(null);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/sync/certificates?action=create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setCreateResult(data);
+        console.log('[CREATE] Certificates created successfully:', data);
+      } else {
+        setError(data.error || 'Failed to create certificates');
+        setCreateResult(data);
+      }
+    } catch (err) {
+      console.error('[CREATE] Error creating certificates:', err);
+      setError(err.message || 'Failed to create certificates');
+    } finally {
+      setIsCreatingCertificates(false);
     }
   };
 
@@ -865,7 +899,7 @@ export default function ShopifyPage() {
             Синхронизация товаров
           </h2>
           
-          <div style={{ marginBottom: '16px' }}>
+          <div style={{ marginBottom: '16px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <button
               onClick={handleSyncCertificates}
               disabled={isSyncingCertificates}
@@ -882,8 +916,29 @@ export default function ShopifyPage() {
                 whiteSpace: 'nowrap',
                 flexShrink: 0
               }}
+              title="Обновить количество существующих товаров (автоматически раз в час)"
             >
               {isSyncingCertificates ? '⏳ Синхронизация...' : '🔄 Синхронизировать'}
+            </button>
+            <button
+              onClick={handleCreateCertificates}
+              disabled={isCreatingCertificates}
+              style={{
+                background: isCreatingCertificates ? '#6b7280' : '#3b82f6',
+                border: 'none',
+                padding: '10px 20px',
+                borderRadius: '6px',
+                color: 'white',
+                cursor: isCreatingCertificates ? 'not-allowed' : 'pointer',
+                fontSize: '1rem',
+                fontWeight: 500,
+                minWidth: '200px',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}
+              title="Создать новые товары и ордера прихода"
+            >
+              {isCreatingCertificates ? '⏳ Создание...' : '➕ Создание'}
             </button>
           </div>
 
@@ -927,18 +982,18 @@ export default function ShopifyPage() {
               <div style={{ fontWeight: 600, marginBottom: '8px' }}>
                 {syncResult.success ? '✅ Синхронизация завершена' : '❌ Ошибка синхронизации'}
               </div>
-              {syncResult.summary && (
+              {((syncResult || createResult)?.summary) && (
                 <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                  Всего вариантов: {syncResult.summary.total} | 
-                  Создано документов: {syncResult.summary.created} | 
-                  Обновлено: {syncResult.summary.updated} | 
-                  Ошибок: {syncResult.summary.errors}
+                  Всего вариантов: {(syncResult || createResult).summary.total} | 
+                  Создано документов: {(syncResult || createResult).summary.created} | 
+                  Обновлено: {(syncResult || createResult).summary.updated} | 
+                  Ошибок: {(syncResult || createResult).summary.errors}
                 </div>
               )}
-              {syncResult.certificates && Object.keys(syncResult.certificates).length > 0 && (
-                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${syncResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
+              {((syncResult || createResult)?.certificates) && Object.keys((syncResult || createResult).certificates).length > 0 && (
+                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${(syncResult || createResult)?.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
                   <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали по сертификатам:</div>
-                  {Object.entries(syncResult.certificates).map(([handle, data]) => (
+                  {Object.entries((syncResult || createResult).certificates).map(([handle, data]) => (
                     <div key={handle} style={{
                       fontSize: '0.8rem',
                       marginBottom: '8px',

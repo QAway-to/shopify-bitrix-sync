@@ -1,4 +1,7 @@
-// API endpoint for syncing certificates from Shopify to Bitrix
+// Server-side cron endpoint for automatic certificate synchronization
+// Should be called every hour via external cron service (e.g., cron-job.org, EasyCron)
+// Or via Render/Vercel cron configuration
+
 import { getCertificatesData } from '../../../src/lib/shopify/inventory.js';
 import { syncCertificateVariant } from '../../../src/lib/bitrix/products.js';
 
@@ -10,26 +13,26 @@ const CERTIFICATE_HANDLES = {
 };
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ error: 'Method Not Allowed' });
+  // Verify cron secret (optional but recommended)
+  const cronSecret = req.headers['x-cron-secret'] || req.query.secret;
+  const expectedSecret = process.env.CRON_SECRET;
+  
+  if (expectedSecret && cronSecret !== expectedSecret) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
-
-  // Check action: 'create' for creating new products, default is 'sync' (update quantities)
-  const action = req.query.action || 'sync';
-  const isCreateAction = action === 'create';
 
   const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   console.log(JSON.stringify({
-    event: 'SYNC_CERTIFICATES_START',
+    event: 'CRON_SYNC_CERTIFICATES_START',
     requestId,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    source: 'cron'
   }));
 
   try {
     // 1. Get certificates data from Shopify
-    console.log(`[SYNC CERTIFICATES] Fetching certificates data from Shopify...`);
+    console.log(`[CRON SYNC] Fetching certificates data from Shopify...`);
     const certificatesData = await getCertificatesData();
 
     const results = {
@@ -44,10 +47,10 @@ export default async function handler(req, res) {
       }
     };
 
-    // 2. Sync each certificate
+    // 2. Sync each certificate (only update quantities, don't create new products)
     for (const [handle, variants] of Object.entries(certificatesData)) {
       if (!variants || variants.length === 0) {
-        console.warn(`[SYNC CERTIFICATES] No variants found for handle: ${handle}`);
+        console.warn(`[CRON SYNC] No variants found for handle: ${handle}`);
         results.certificates[handle] = {
           success: false,
           error: 'No variants found',
@@ -56,7 +59,7 @@ export default async function handler(req, res) {
         continue;
       }
 
-      console.log(`[SYNC CERTIFICATES] Syncing ${variants.length} variants for handle: ${handle}`);
+      console.log(`[CRON SYNC] Syncing ${variants.length} variants for handle: ${handle}`);
 
       const handleResults = {
         handle: handle,
@@ -65,14 +68,15 @@ export default async function handler(req, res) {
         errors: []
       };
 
-      // Sync each variant
+      // Sync each variant (only update quantities)
       for (const variant of variants) {
         try {
+          // For cron sync, we only update quantities (create incoming documents)
+          // Products should already exist from manual "Create" action
           const syncResult = await syncCertificateVariant(
             variant,
             handle,
-            CERTIFICATE_HANDLES,
-            isCreateAction // createNew: true for "create", false for "sync"
+            CERTIFICATE_HANDLES
           );
 
           handleResults.variants.push(syncResult);
@@ -95,7 +99,7 @@ export default async function handler(req, res) {
           // Rate limiting between variants
           await new Promise(resolve => setTimeout(resolve, 500));
         } catch (error) {
-          console.error(`[SYNC CERTIFICATES] Error syncing variant:`, error);
+          console.error(`[CRON SYNC] Error syncing variant:`, error);
           results.summary.errors++;
           handleResults.errors.push({
             variant_title: variant.variant_title,
@@ -112,7 +116,7 @@ export default async function handler(req, res) {
     }
 
     console.log(JSON.stringify({
-      event: 'SYNC_CERTIFICATES_SUCCESS',
+      event: 'CRON_SYNC_CERTIFICATES_SUCCESS',
       requestId,
       summary: results.summary,
       timestamp: new Date().toISOString()
@@ -121,7 +125,7 @@ export default async function handler(req, res) {
     return res.status(200).json(results);
   } catch (error) {
     console.error(JSON.stringify({
-      event: 'SYNC_CERTIFICATES_ERROR',
+      event: 'CRON_SYNC_CERTIFICATES_ERROR',
       requestId,
       error: error.message,
       stack: error.stack,

@@ -4,6 +4,7 @@
  */
 
 import { callBitrix } from './client.js';
+import { updateSkuMapping } from './mappingUtils.js';
 
 /**
  * Create product in Bitrix catalog
@@ -193,16 +194,32 @@ export async function syncCertificateVariant(variantData, handle, handleToProduc
     // 1. Check if product exists
     let productId = await findProductBySku(sku);
 
-    // 2. Create product if not exists
+    // 2. Create product if not exists (only if createNew=true)
     if (!productId) {
-      console.log(`[BITRIX PRODUCTS] Creating product: ${productName} (SKU: ${sku})`);
-      productId = await createBitrixProduct({
-        name: productName,
-        price: parseFloat(price) || 0,
-        sku: sku
-      });
+      if (createNew) {
+        console.log(`[BITRIX PRODUCTS] Creating product: ${productName} (SKU: ${sku})`);
+        productId = await createBitrixProduct({
+          name: productName,
+          price: parseFloat(price) || 0,
+          sku: sku
+        });
+        
+        // ✅ CRITICAL: Update mapping cache after creating product
+        updateSkuMapping(sku, productId);
+        console.log(`[BITRIX PRODUCTS] ✅ Updated mapping cache: ${sku} -> ${productId}`);
+      } else {
+        console.warn(`[BITRIX PRODUCTS] ⚠️ Product not found: ${productName} (SKU: ${sku}), but createNew=false. Skipping.`);
+        return {
+          success: false,
+          sku: sku,
+          error: 'Product not found and createNew=false'
+        };
+      }
     } else {
       console.log(`[BITRIX PRODUCTS] Product exists: ${productName} (SKU: ${sku}, ID: ${productId})`);
+      
+      // ✅ Ensure mapping is in cache (might have been found via API)
+      updateSkuMapping(sku, productId);
     }
 
     // 3. Create incoming document if quantity > 0
