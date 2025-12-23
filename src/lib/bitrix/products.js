@@ -203,13 +203,14 @@ export async function createIncomingDocument(documentData) {
 
 /**
  * Sync certificate from Shopify to Bitrix
- * Creates product if not exists, then creates incoming document
+ * Creates product if not exists (only if createNew=true), then syncs inventory
  * @param {Object} variantData - Variant data from Shopify
  * @param {string} handle - Product handle (for mapping)
  * @param {Object} handleToProductId - Mapping handle -> base Product ID (for fallback, not used currently)
+ * @param {boolean} createNew - If true, create product if not exists. If false, only update quantities.
  * @returns {Promise<Object>} Sync result
  */
-export async function syncCertificateVariant(variantData, handle, handleToProductId = {}) {
+export async function syncCertificateVariant(variantData, handle, handleToProductId = {}, createNew = true) {
   const { variant_title, price, inventory_quantity } = variantData;
 
   // Generate SKU: {handle}-{variant_title} (e.g., "e-certificate-30")
