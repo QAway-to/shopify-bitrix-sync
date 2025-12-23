@@ -40,6 +40,9 @@ export default function ShopifyPage() {
   // Create certificates state
   const [isCreatingCertificates, setIsCreatingCertificates] = useState(false);
   const [createResult, setCreateResult] = useState(null);
+  // Update certificate product state (manual update button)
+  const [isUpdatingCert500, setIsUpdatingCert500] = useState(false);
+  const [updateCertResult, setUpdateCertResult] = useState(null);
 
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);
@@ -553,6 +556,26 @@ export default function ShopifyPage() {
     }
   };
 
+  // Update a specific certificate product in Bitrix (E-Certificate 500$, ID=4284)
+  const handleUpdateCertificate500 = async () => {
+    setIsUpdatingCert500(true);
+    setUpdateCertResult(null);
+    try {
+      const response = await fetch('/api/bitrix/update-certificate-500', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      const data = await response.json();
+      setUpdateCertResult(data);
+    } catch (err) {
+      setUpdateCertResult({ success: false, error: err.message });
+    } finally {
+      setIsUpdatingCert500(false);
+    }
+  };
+
   return (
     <>
       <Head>
@@ -909,6 +932,26 @@ export default function ShopifyPage() {
             >
               {isCreatingCertificates ? '⏳ Создание...' : '➕ Создание'}
             </button>
+            <button
+              onClick={handleUpdateCertificate500}
+              disabled={isUpdatingCert500}
+              style={{
+                padding: '10px 12px',
+                background: isUpdatingCert500 ? '#475569' : '#14b8a6',
+                borderRadius: '6px',
+                border: '1px solid rgba(20, 184, 166, 0.6)',
+                color: 'white',
+                cursor: isUpdatingCert500 ? 'not-allowed' : 'pointer',
+                fontSize: '1rem',
+                fontWeight: 500,
+                minWidth: '200px',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}
+              title="Обновить поля продукта E-Certificate 500$ (ID 4284) в Bitrix"
+            >
+              {isUpdatingCert500 ? '⏳ Обновление...' : '✏️ Обновить E-Cert 500$'}
+            </button>
           </div>
 
           <div style={{ marginTop: '16px' }}>
@@ -996,6 +1039,29 @@ export default function ShopifyPage() {
                       )}
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {updateCertResult && (
+            <div style={{
+              marginTop: '12px',
+              padding: '12px',
+              borderRadius: '8px',
+              background: updateCertResult.success ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+              border: `1px solid ${updateCertResult.success ? '#10b981' : '#ef4444'}`,
+              color: updateCertResult.success ? '#10b981' : '#ef4444',
+              fontSize: '0.95rem'
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: '6px' }}>
+                {updateCertResult.success ? '✅ Обновление сертификата 500$' : '❌ Ошибка обновления сертификата 500$'}
+              </div>
+              {updateCertResult.error && <div>{updateCertResult.error}</div>}
+              {updateCertResult.message && <div>{updateCertResult.message}</div>}
+              {updateCertResult.fields && (
+                <div style={{ marginTop: '6px', opacity: 0.9 }}>
+                  SKU: {updateCertResult.fields.XML_ID} | Цена: {updateCertResult.fields.PRICE} {updateCertResult.fields.CURRENCY_ID}
                 </div>
               )}
             </div>

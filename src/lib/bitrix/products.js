@@ -76,6 +76,39 @@ export async function findProductBySku(sku) {
 }
 
 /**
+ * Update existing Bitrix product fields by ID
+ * @param {number} productId - Bitrix Product ID
+ * @param {Object} fields - Fields to update
+ * @returns {Promise<boolean>} true if updated
+ */
+export async function updateBitrixProductFields(productId, fields) {
+  if (!productId || typeof productId !== 'number') {
+    throw new Error('productId (number) is required');
+  }
+  if (!fields || typeof fields !== 'object') {
+    throw new Error('fields object is required');
+  }
+
+  try {
+    const response = await callBitrix('crm.product.update', {
+      id: productId,
+      fields
+    });
+
+    if (response.result === true) {
+      console.log(`[BITRIX PRODUCTS] ✅ Product ${productId} updated`, fields);
+      return true;
+    }
+
+    console.error(`[BITRIX PRODUCTS] ⚠️ Unexpected response updating product ${productId}:`, response);
+    return false;
+  } catch (error) {
+    console.error(`[BITRIX PRODUCTS] ❌ Error updating product ${productId}:`, error);
+    throw error;
+  }
+}
+
+/**
  * Find product in Bitrix by title/name (when SKU is not available)
  * @param {string} title - Product title/name from Shopify
  * @returns {Promise<number|null>} Product ID if exists, null otherwise
