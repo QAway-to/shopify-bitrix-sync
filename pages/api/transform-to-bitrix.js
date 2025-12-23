@@ -2,7 +2,7 @@
  * API endpoint for transforming Shopify order to Bitrix deal
  * Server-side only - avoids client-side bundle issues
  */
-import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
+import { shopifyAdapter } from '../../src/lib/adapters/shopify';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
