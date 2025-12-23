@@ -212,6 +212,21 @@ export function updateSkuMapping(sku, productId) {
 }
 
 /**
+ * Update mapping for a given SKU without logging (used in bulk refresh)
+ * @param {string} sku
+ * @param {number} productId
+ */
+export function updateSkuMappingSilent(sku, productId) {
+  const category = getCategoryByHandle(sku);
+  if (!category) {
+    return;
+  }
+  const mapping = loadCategoryMapping(category);
+  mapping[sku] = productId;
+  saveCategoryMapping(category, mapping);
+}
+
+/**
  * Find Product ID by SKU using hybrid approach (cache + Bitrix API)
  * @param {string} sku - SKU to find
  * @returns {Promise<number|null>} Product ID or null if not found

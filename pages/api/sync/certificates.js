@@ -1,6 +1,6 @@
 // API endpoint for syncing certificates from Shopify to Bitrix
 import { getCertificatesData } from '../../../src/lib/shopify/inventory.js';
-import { syncCertificateVariant } from '../../../src/lib/bitrix/products.js';
+import { syncCertificateVariant, refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
 
 // Handle mapping for certificates (from handleMapping.json)
 const CERTIFICATE_HANDLES = {
@@ -117,6 +117,18 @@ export default async function handler(req, res) {
       summary: results.summary,
       timestamp: new Date().toISOString()
     }));
+
+    // If this was a create action, refresh mappings from Bitrix catalog after creation
+    if (isCreateAction) {
+      try {
+        const mappingRefresh = await refreshBitrixMappingsFromCatalog();
+        results.mappingRefresh = mappingRefresh;
+        console.log(`[SYNC CERTIFICATES] ✅ Mapping refreshed after create:`, mappingRefresh);
+      } catch (mapErr) {
+        console.error(`[SYNC CERTIFICATES] ⚠️ Failed to refresh mappings after create:`, mapErr);
+        results.mappingRefresh = { success: false, error: mapErr.message };
+      }
+    }
 
     return res.status(200).json(results);
   } catch (error) {

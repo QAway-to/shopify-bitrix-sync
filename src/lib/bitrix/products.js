@@ -4,7 +4,7 @@
  */
 
 import { callBitrix } from './client.js';
-import { updateSkuMapping } from './mappingUtils.js';
+import { updateSkuMapping, updateSkuMappingSilent, getCategoryByHandle } from './mappingUtils.js';
 
 /**
  * Create product in Bitrix catalog
@@ -201,6 +201,58 @@ export async function findProductIdByTitle(title) {
     console.error(`[BITRIX PRODUCTS] ❌ Error searching Bitrix API for title "${title}":`, error);
     return null;
   }
+}
+
+/**
+ * Fetch all products from Bitrix (ID, NAME, XML_ID)
+ * @returns {Promise<Array>} products
+ */
+export async function fetchAllBitrixProducts() {
+  const all = [];
+  let start = 0;
+  const pageSize = 50;
+  try {
+    while (true) {
+      const resp = await callBitrix('crm.product.list', {
+        select: ['ID', 'NAME', 'XML_ID'],
+        start,
+      });
+
+      if (resp?.result) {
+        all.push(...resp.result);
+      }
+
+      if (resp?.next !== undefined && resp.next !== null) {
+        start = resp.next;
+      } else {
+        break;
+      }
+    }
+  } catch (error) {
+    console.error('[BITRIX PRODUCTS] ❌ Error fetching products list:', error);
+    throw error;
+  }
+  console.log(`[BITRIX PRODUCTS] ✅ Fetched ${all.length} products from Bitrix catalog`);
+  return all;
+}
+
+/**
+ * Refresh local mapping files from Bitrix catalog (XML_ID -> ID)
+ * Writes to category-based mappings via updateSkuMappingSilent
+ * @returns {Promise<{updated:number, total:number}>}
+ */
+export async function refreshBitrixMappingsFromCatalog() {
+  const products = await fetchAllBitrixProducts();
+  let updated = 0;
+  for (const p of products) {
+    const sku = p.XML_ID || p.CODE || null;
+    const id = p.ID ? parseInt(p.ID) : null;
+    if (!sku || !id) continue;
+    updateSkuMappingSilent(sku, id);
+    updated += 1;
+  }
+  console.log(`[BITRIX PRODUCTS] ✅ Refreshed mappings from catalog: ${updated}/${products.length} with XML_ID`);
+  return { updated, total: products.length };
 }
 
 /**
