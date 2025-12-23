@@ -613,18 +613,13 @@ async function handleOrderCreated(order) {
     console.log(`[SHOPIFY WEBHOOK] ✅ Deal created successfully: ${dealId} (attempt ${createResult.attempt})`);
   }
 
-  // 2. Set product rows
+  // ✅ Product rows are already set during deal creation (passed in crm.deal.add.json with rows parameter)
+  // No need to call crm.deal.productrows.set.json separately - products are linked to catalog immediately
   if (productRows.length > 0) {
-    try {
-      await callBitrix('/crm.deal.productrows.set.json', {
-        id: dealId,
-        rows: productRows,
-      });
-      console.log(`[SHOPIFY WEBHOOK] Product rows set for deal ${dealId}: ${productRows.length} rows`);
-    } catch (productRowsError) {
-      console.error(`[SHOPIFY WEBHOOK] Product rows error (non-blocking):`, productRowsError);
-      // Don't throw - deal is already created
-    }
+    console.log(`[SHOPIFY WEBHOOK] ✅ Product rows (${productRows.length}) were already set during deal creation via crm.deal.add.json`);
+    console.log(`[SHOPIFY WEBHOOK]   Products should be properly linked to catalog (not just text data)`);
+  } else {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to set (deal created without products)`);
   }
 
   // ✅ Store successful operation
