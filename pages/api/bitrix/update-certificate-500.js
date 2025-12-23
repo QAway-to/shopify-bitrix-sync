@@ -45,7 +45,10 @@ export default async function handler(req, res) {
       XML_ID: sku,
       ACTIVE: 'Y',
       VAT_INCLUDED: 'N',
-      MEASURE: 1
+      MEASURE: 1,
+      // Custom properties for certificates (example from provided script)
+      PROPERTY_104: 'Gift Cards',
+      PROPERTY_102: 'FBFC'
     };
 
     // 4. Update product in Bitrix
