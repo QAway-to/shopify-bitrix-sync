@@ -511,107 +511,27 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       // CRITICAL: line_items are ALWAYS products, NEVER shipping
       // Even if a product has the same ID as shipping, it's still a product from line_items
       
-      // ===== HYBRID MAPPING LOGIC (Category-based cache + Bitrix API) =====
-      // Priority order:
-      // 1. Category-based mapping (certificates.json, category-a-f.json, etc.) - fastest
-      // 2. Semantic mapping (skuMappingSemantic.json) - legacy support
-      // 3. Old mappings (skuMapping.json, handleMapping.json) - legacy support
-      // 4. Bitrix API lookup (dynamic) - fallback
-      
+      // ===== STRICT MAPPING: ONLY SKU/XML_ID =====
       let productId = null;
-      
-      // ✅ CRITICAL: Always find PRODUCT_ID (never use PRODUCT_NAME fallback)
-      // Priority: SKU mapping → Title mapping → Legacy mappings
       let mappingMethod = 'none';
-      
-      // CERTIFICATE GUARD: If it's a certificate (handle/title contains "certificate"), map directly by handle
-      const isCertificate = (item.handle && item.handle.toLowerCase().includes('certificate')) ||
-        (item.product_handle && item.product_handle.toLowerCase().includes('certificate')) ||
-        ((item.title || '').toLowerCase().includes('certificate'));
 
-      if (!productId && isCertificate) {
-        const handleLower = (item.handle || item.product_handle || '').toLowerCase();
-        let certHandleKey = null;
-        if (handleLower.includes('gift-certificate-fbfc')) certHandleKey = 'gift-certificate-fbfc';
-        else if (handleLower.includes('printed-gift-certificate')) certHandleKey = 'printed-gift-certificate';
-        else if (handleLower.includes('e-certificate') || handleLower.includes('certificate')) certHandleKey = 'e-certificate';
-
-        if (!certHandleKey) {
-          // fallback: detect by title
-          const titleLower = (item.title || '').toLowerCase();
-          if (titleLower.includes('fbfc')) certHandleKey = 'gift-certificate-fbfc';
-          else if (titleLower.includes('printed')) certHandleKey = 'printed-gift-certificate';
-          else if (titleLower.includes('certificate')) certHandleKey = 'e-certificate';
-        }
-
-        const certProductId = certHandleKey ? handleMapping[certHandleKey] : null;
-        if (certProductId) {
-          productId = certProductId;
-          mappingMethod = `certificate-handle (${certHandleKey})`;
-          console.log(`[ORDER MAPPER] ✅ Certificate mapping: handle/title -> Product ID ${productId} (${mappingMethod})`);
-        } else {
-          console.warn(`[ORDER MAPPER] ⚠️ Certificate detected but handle not mapped. handle="${item.handle}", title="${item.title}"`);
-        }
-      }
-
-      // 1. Try SKU-based mapping first (if SKU exists)
       if (item.sku) {
-        console.log(`[ORDER MAPPER] 🔍 Step 1: Searching for Product ID by SKU: "${item.sku}"`);
-        // This uses hybrid approach: cache first, then Bitrix API if not found
+        console.log(`[ORDER MAPPER] 🔍 Searching for Product ID by SKU/XML_ID: "${item.sku}"`);
         productId = await findProductIdBySku(item.sku);
-        
         if (productId) {
-          mappingMethod = 'category-based (hybrid)';
-          console.log(`[ORDER MAPPER] ✅ Found by SKU: "${item.sku}" -> Product ID: ${productId} (method: ${mappingMethod})`);
+          mappingMethod = 'sku/xml_id';
+          console.log(`[ORDER MAPPER] ✅ Found by SKU/XML_ID: "${item.sku}" -> Product ID: ${productId}`);
         } else {
-          console.log(`[ORDER MAPPER] ⚠️ SKU mapping NOT found for: "${item.sku}"`);
+          console.error(`[ORDER MAPPER] ❌ SKU/XML_ID NOT FOUND in Bitrix: "${item.sku}"`);
         }
       } else {
-        console.log(`[ORDER MAPPER] ⚠️ SKU is missing for item: "${item.title || 'N/A'}"`);
+        console.error(`[ORDER MAPPER] ❌ SKU is missing for item: "${item.title || 'N/A'}" -> cannot map (SKU/XML_ID required)`);
       }
-      
-      // 2. If SKU mapping failed or SKU is missing, try title-based mapping
-      if (!productId && item.title) {
-        console.log(`[ORDER MAPPER] 🔍 Step 2: Searching for Product ID by title: "${item.title}"`);
-        const { findProductIdByTitle } = await import('./products.js');
-        productId = await findProductIdByTitle(item.title);
-        
-        if (productId) {
-          mappingMethod = 'title-based (Bitrix API)';
-          console.log(`[ORDER MAPPER] ✅ Found by title: "${item.title}" -> Product ID: ${productId} (method: ${mappingMethod})`);
-        } else {
-          console.log(`[ORDER MAPPER] ⚠️ Title mapping NOT found for: "${item.title}"`);
-        }
-      }
-      
-      // 3. Fallback to legacy mappings if SKU/title mapping didn't find it
+
+      // No other fallbacks per requirement (only SKU/XML_ID). If not found, skip row.
       if (!productId) {
-        console.log(`[ORDER MAPPER] 🔍 Step 3: Trying legacy mappings for SKU: "${item.sku || 'N/A'}"`);
-        // Try semantic SKU mapping (legacy)
-        const productIdFromSemantic = item.sku ? skuMappingSemantic[item.sku] : null;
-        // Old mapping (legacy)
-        const productIdFromOldMapping = item.sku ? skuMapping[item.sku] : null;
-        const productIdFromConfig = item.sku ? BITRIX_CONFIG.SKU_TO_PRODUCT_ID[item.sku] : null;
-
-        // Try handle-based mapping (legacy)
-        const rawHandle = item.handle || item.product_handle || null;
-        const normHandle = rawHandle ? rawHandle.toLowerCase().replace('barefoot-', '') : null;
-        const productIdFromHandle = normHandle ? (handleMapping[normHandle] || handleMapping[rawHandle]) : null;
-
-        // Use legacy mapping chain
-        productId = productIdFromSemantic || productIdFromOldMapping || productIdFromHandle || productIdFromConfig || null;
-        
-        if (productId) {
-          if (productIdFromSemantic) mappingMethod = 'semantic SKU mapping';
-          else if (productIdFromOldMapping) mappingMethod = 'old SKU mapping';
-          else if (productIdFromHandle) mappingMethod = 'handle mapping';
-          else if (productIdFromConfig) mappingMethod = 'config SKU mapping';
-          console.log(`[ORDER MAPPER] ✅ Found by legacy mapping: SKU "${item.sku || 'N/A'}" -> Product ID: ${productId} (method: ${mappingMethod})`);
-        } else {
-          console.error(`[ORDER MAPPER] ❌❌❌ CRITICAL: NO PRODUCT_ID FOUND for item: "${item.title || 'N/A'}" (SKU: "${item.sku || 'N/A'}")`);
-          console.error(`[ORDER MAPPER]   Tried: SKU mapping, Title mapping, Legacy mappings - ALL FAILED`);
-          console.error(`[ORDER MAPPER]   ⚠️ This item will NOT be added to deal (no PRODUCT_ID available)`);
-        }
+        console.error(`[ORDER MAPPER] ❌❌❌ CRITICAL: NO PRODUCT_ID FOUND (SKU/XML_ID required). Item: "${item.title || 'N/A'}" (SKU: "${item.sku || 'N/A'}")`);
+        console.error(`[ORDER MAPPER]   ⚠️ This item will NOT be added to deal (no PRODUCT_ID available)`);
       }
       
       // Safety check: if product ID matches shipping ID, log warning but keep it as product
