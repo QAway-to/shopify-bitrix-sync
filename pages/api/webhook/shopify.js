@@ -708,12 +708,27 @@ async function handleOrderUpdated(order) {
     return await handleOrderCreated(order);
   }
 
-  const dealId = deal.ID;
-  console.log(`[SHOPIFY WEBHOOK] Found deal ${dealId} for order ${shopifyOrderId}`);
+  // ✅ CRITICAL: Convert dealId to number (Bitrix API returns string, but we need number for API calls)
+  const dealId = Number(deal.ID);
+  console.log(`[SHOPIFY WEBHOOK] Found deal ${dealId} (converted to number) for order ${shopifyOrderId}`);
 
-  // ✅ Use mapShopifyOrderToBitrixDeal to get all fields consistently (same as create)
-  // This ensures OPPORTUNITY, payment status, stage, and all other fields are calculated correctly
-  const { dealFields: mappedFields } = await mapShopifyOrderToBitrixDeal(order);
+  // ✅ Use mapShopifyOrderToBitrixDeal to get ALL fields AND productRows consistently (same as create)
+  // This ensures OPPORTUNITY, payment status, stage, productRows with PRODUCT_ID are all calculated correctly
+  const { dealFields: mappedFields, productRows: mappedProductRows } = await mapShopifyOrderToBitrixDeal(order);
+  
+  // ✅ Log product rows mapping for UPDATE (same as CREATE)
+  console.log(`[SHOPIFY WEBHOOK] 📦 Product rows from orderMapper for UPDATE:`);
+  console.log(`  - Total product rows: ${mappedProductRows.length}`);
+  if (mappedProductRows.length > 0) {
+    console.log(`  - First product row:`, JSON.stringify(mappedProductRows[0], null, 2));
+    mappedProductRows.forEach((row, idx) => {
+      if (row.PRODUCT_ID) {
+        console.log(`  - Row ${idx + 1}: PRODUCT_ID=${row.PRODUCT_ID} (linked to catalog) ✅`);
+      } else if (row.PRODUCT_NAME) {
+        console.log(`  - Row ${idx + 1}: PRODUCT_NAME="${row.PRODUCT_NAME}" (custom row, NOT linked) ⚠️`);
+      }
+    });
+  }
   
   // ✅ Simplified logic (matching backup repository): Check cancellation and refunds
   const financialStatus = order?.financial_status || '';
