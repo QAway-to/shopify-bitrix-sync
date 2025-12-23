@@ -584,3 +584,142 @@ export async function syncCertificateVariant(variantData, handle, handleToProduc
   }
 }
 
+/**
+ * Sync a regular product variant from Shopify to Bitrix
+ * @param {Object} productData - Product data from Shopify
+ * @param {string} productData.product_title - Product title
+ * @param {string} productData.sku - SKU
+ * @param {string} productData.price - Price
+ * @param {number} productData.qty - Quantity (inventory)
+ * @param {string} productData.variant_id - Variant ID (for fallback mapping)
+ * @param {string} productData.brand - Optional brand
+ * @param {string} productData.category - Optional category
+ * @param {boolean} createNew - Whether to create product if it doesn't exist
+ * @returns {Promise<Object>} Sync result
+ */
+export async function syncProductVariant(productData, createNew = true) {
+  const { product_title, sku, price, qty } = productData;
+
+  if (!sku || !sku.trim()) {
+    return {
+      success: false,
+      sku: sku || 'N/A',
+      error: 'SKU is required'
+    };
+  }
+
+  const skuClean = sku.trim();
+  const productName = product_title || 'Unknown Product';
+
+  try {
+    // 1. Check if product exists
+    let productId = await findProductBySku(skuClean);
+
+    // 2. Create product if not exists (only if createNew=true)
+    if (!productId) {
+      if (createNew) {
+        console.log(`[BITRIX PRODUCTS] Creating product: ${productName} (SKU: ${skuClean})`);
+        
+        // Prepare product fields
+        const productFields = {
+          name: productName,
+          price: parseFloat(price) || 0,
+          sku: skuClean
+        };
+
+        productId = await createBitrixProduct(productFields);
+        
+        // Update product with additional properties if available
+        if (productData.brand || productData.category) {
+          const updateFields = {};
+          if (productData.brand) {
+            updateFields.PROPERTY_102 = productData.brand; // Brand
+          }
+          if (productData.category) {
+            updateFields.PROPERTY_104 = productData.category; // Category
+          }
+          
+          if (Object.keys(updateFields).length > 0) {
+            try {
+              await updateBitrixProductFields(productId, updateFields);
+              console.log(`[BITRIX PRODUCTS] ✅ Updated product properties for ${skuClean}`);
+            } catch (updateError) {
+              console.warn(`[BITRIX PRODUCTS] ⚠️ Failed to update product properties:`, updateError);
+            }
+          }
+        }
+        
+        // ✅ CRITICAL: Update mapping cache after creating product
+        updateSkuMapping(skuClean, productId);
+        console.log(`[BITRIX PRODUCTS] ✅ Updated mapping cache: ${skuClean} -> ${productId}`);
+      } else {
+        console.warn(`[BITRIX PRODUCTS] ⚠️ Product not found: ${productName} (SKU: ${skuClean}), but createNew=false. Skipping.`);
+        return {
+          success: false,
+          sku: skuClean,
+          error: 'Product not found and createNew=false'
+        };
+      }
+    } else {
+      console.log(`[BITRIX PRODUCTS] Product exists: ${productName} (SKU: ${skuClean}, ID: ${productId})`);
+      
+      // ✅ Ensure mapping is in cache (might have been found via API)
+      updateSkuMapping(skuClean, productId);
+    }
+
+    // 3. Sync inventory: create incoming document only if qty > 0
+    let documentId = null;
+    let documentType = null;
+    const shopifyQty = qty || 0;
+    
+    if (shopifyQty > 0) {
+      // Get current stock from Bitrix
+      const currentStock = await getCurrentStock(productId);
+      const difference = shopifyQty - currentStock;
+
+      if (difference > 0) {
+        // Need to add (incoming document)
+        console.log(`[BITRIX PRODUCTS] 📈 Adding ${difference} items (Shopify: ${shopifyQty}, Bitrix: ${currentStock})`);
+        documentId = await createIncomingDocument({
+          title: `Синхронизация товара ${skuClean} из Shopify (добавление)`,
+          productId: productId,
+          amount: difference,
+          price: 0 // Purchase price (can be updated later)
+        });
+        documentType = 'incoming';
+      } else if (difference < 0) {
+        // Need to deduct (outgoing document)
+        const deductAmount = Math.abs(difference);
+        console.log(`[BITRIX PRODUCTS] 📉 Deducting ${deductAmount} items (Shopify: ${shopifyQty}, Bitrix: ${currentStock})`);
+        documentId = await createOutgoingDocument({
+          title: `Синхронизация товара ${skuClean} из Shopify (списание)`,
+          productId: productId,
+          amount: deductAmount
+        });
+        documentType = 'outgoing';
+      } else {
+        console.log(`[BITRIX PRODUCTS] ✅ Quantities match (Shopify: ${shopifyQty}, Bitrix: ${currentStock}) - no sync needed`);
+      }
+    } else {
+      console.log(`[BITRIX PRODUCTS] ⏭️ Skipping inventory sync for ${skuClean} (qty = 0)`);
+    }
+
+    return {
+      success: true,
+      sku: skuClean,
+      productId: productId,
+      productName: productName,
+      quantity: shopifyQty,
+      documentId: documentId,
+      documentType: documentType
+    };
+  } catch (error) {
+    console.error(`[BITRIX PRODUCTS] ❌ Error syncing product ${skuClean}:`, error);
+    return {
+      success: false,
+      sku: skuClean,
+      error: error.message
+    };
+  }
+}
+

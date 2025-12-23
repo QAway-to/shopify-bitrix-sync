@@ -43,6 +43,9 @@ export default function ShopifyPage() {
   // Update certificate product state (manual update button)
   const [isUpdatingCert500, setIsUpdatingCert500] = useState(false);
   const [updateCertResult, setUpdateCertResult] = useState(null);
+  // Category A-F state
+  const [isCreatingCategoryAF, setIsCreatingCategoryAF] = useState(false);
+  const [createCategoryAFResult, setCreateCategoryAFResult] = useState(null);
 
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);
@@ -576,6 +579,37 @@ export default function ShopifyPage() {
     }
   };
 
+  // Create products for category A-F
+  const handleCreateCategoryAF = async () => {
+    setIsCreatingCategoryAF(true);
+    setCreateCategoryAFResult(null);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/sync/category-a-f?action=create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setCreateCategoryAFResult(data);
+        console.log('[CREATE CATEGORY A-F] Products created successfully:', data);
+      } else {
+        setError(data.error || 'Failed to create category A-F products');
+        setCreateCategoryAFResult(data);
+      }
+    } catch (err) {
+      console.error('[CREATE CATEGORY A-F] Error creating products:', err);
+      setError(err.message || 'Failed to create category A-F products');
+    } finally {
+      setIsCreatingCategoryAF(false);
+    }
+  };
+
   return (
     <>
       <Head>
@@ -979,30 +1013,71 @@ export default function ShopifyPage() {
                   E-Certificate, Gift certificate FBFC, Printed Gift Certificate
                 </div>
               </div>
+              <div style={{
+                padding: '12px',
+                background: 'rgba(16, 185, 129, 0.1)',
+                borderRadius: '6px',
+                border: '1px solid rgba(16, 185, 129, 0.3)'
+              }}>
+                <div style={{ color: '#f1f5f9', fontWeight: 500 }}>Категория A-F</div>
+                <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '4px' }}>
+                  Товары со SKU, начинающимися с A, B, C, D, E, F
+                </div>
+                <button
+                  onClick={handleCreateCategoryAF}
+                  disabled={isCreatingCategoryAF}
+                  style={{
+                    marginTop: '8px',
+                    background: isCreatingCategoryAF ? '#6b7280' : '#10b981',
+                    border: 'none',
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    color: 'white',
+                    cursor: isCreatingCategoryAF ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem',
+                    fontWeight: 500,
+                    width: '100%'
+                  }}
+                  title="Создать товары категории A-F из Shopify"
+                >
+                  {isCreatingCategoryAF ? '⏳ Создание...' : '➕ Создать товары A-F'}
+                </button>
+              </div>
             </div>
           </div>
 
-          {(syncResult || createResult) && (
+          {(syncResult || createResult || createCategoryAFResult) && (
             <div style={{
               marginTop: '20px',
               padding: '16px',
               borderRadius: '8px',
-              background: (syncResult || createResult)?.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-              border: `1px solid ${(syncResult || createResult)?.success ? '#059669' : '#ef4444'}`,
-              color: (syncResult || createResult)?.success ? '#059669' : '#ef4444'
+              background: (syncResult || createResult || createCategoryAFResult)?.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              border: `1px solid ${(syncResult || createResult || createCategoryAFResult)?.success ? '#059669' : '#ef4444'}`,
+              color: (syncResult || createResult || createCategoryAFResult)?.success ? '#059669' : '#ef4444'
             }}>
               <div style={{ fontWeight: 600, marginBottom: '8px' }}>
                 {syncResult 
                   ? (syncResult.success ? '✅ Синхронизация завершена' : '❌ Ошибка синхронизации')
-                  : (createResult.success ? '✅ Создание завершено' : '❌ Ошибка создания')
+                  : createResult
+                  ? (createResult.success ? '✅ Создание завершено' : '❌ Ошибка создания')
+                  : (createCategoryAFResult.success ? '✅ Создание категории A-F завершено' : '❌ Ошибка создания категории A-F')
                 }
               </div>
-              {((syncResult || createResult)?.summary) && (
+              {((syncResult || createResult)?.summary && (
                 <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
                   Всего вариантов: {(syncResult || createResult).summary.total} | 
                   Создано документов: {(syncResult || createResult).summary.created} | 
                   Обновлено: {(syncResult || createResult).summary.updated} | 
                   Ошибок: {(syncResult || createResult).summary.errors}
+                </div>
+              ))}
+              {createCategoryAFResult?.summary && (
+                <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
+                  Всего товаров: {createCategoryAFResult.summary.total} | 
+                  Создано: {createCategoryAFResult.summary.created} | 
+                  Обновлено: {createCategoryAFResult.summary.updated} | 
+                  Пропущено (qty=0): {createCategoryAFResult.summary.skipped} | 
+                  Ошибок: {createCategoryAFResult.summary.errors}
                 </div>
               )}
               {((syncResult || createResult)?.certificates) && Object.keys((syncResult || createResult).certificates).length > 0 && (
