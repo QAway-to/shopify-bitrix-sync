@@ -16,8 +16,9 @@ import { findProductIdBySku, loadAllMappings } from './mappingUtils.js';
 import { resolveResponsibleId } from './responsible.js';
 
 // Known certificate variant_id -> Bitrix PRODUCT_ID mapping (fallback when SKU is missing)
-// Based on provided Shopify variants for E-Certificate
+// Based on provided Shopify variants for all certificates
 const CERT_VARIANT_TO_PRODUCT_ID = {
+  // E-Certificate (10 variants)
   50398439440648: 4268,  // €30
   50420389413128: 4270,  // €50
   50420389445896: 4272,  // €70
@@ -27,7 +28,31 @@ const CERT_VARIANT_TO_PRODUCT_ID = {
   50420389576968: 4280,  // €200
   50420389609736: 4282,  // €300
   50420389642504: 4284,  // €500
-  50420389675272: 4286   // €1000
+  50420389675272: 4286,  // €1000
+  
+  // Gift certificate FBFC (10 variants)
+  50426892157192: 4288,  // €30
+  50041533726984: 4290,  // €50
+  50426892189960: 4292,  // €70
+  50041533759752: 4294,  // €100
+  50426892222728: 4296,  // €120
+  50041533792520: 4298,  // €150
+  50426892255496: 4300,  // €200
+  50041533825288: 4302,  // €300
+  50041533858056: 4304,  // €500
+  50041533890824: 4306,  // €1000
+  
+  // Printed Gift Certificate (10 variants)
+  50420393705736: 4308,  // €30
+  50420393738504: 4310,  // €50
+  50420393771272: 4312,  // €70
+  50420393804040: 4314,  // €100
+  50420393836808: 4316,  // €120
+  50420393869576: 4318,  // €150
+  50420393902344: 4320,  // €200
+  50420393935112: 4322,  // €300
+  50420393967880: 4324,  // €500
+  50420394000648: 4326   // €1000
 };
 
 /**
