@@ -992,6 +992,13 @@ async function handleOrderUpdated(order) {
             console.log(`[SHOPIFY WEBHOOK]   Row ${idx + 1}: PRODUCT_NAME="${row.PRODUCT_NAME}" (custom row, NOT linked) ⚠️`);
           }
         });
+        // Verify rows after set
+        try {
+          const rowsVerify = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
+          console.log(`[SHOPIFY WEBHOOK] ✅ Product rows verification for deal ${dealId}:`, rowsVerify?.result || rowsVerify);
+        } catch (verifyErr) {
+          console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify product rows for deal ${dealId}:`, verifyErr);
+        }
       } else {
         console.error(`[SHOPIFY WEBHOOK] ⚠️ Product rows update returned unexpected result:`, productRowsResp);
       }
@@ -1013,6 +1020,12 @@ async function handleOrderUpdated(order) {
         rows: [],
       });
       console.log(`[SHOPIFY WEBHOOK] ✅ Product rows cleared for deal ${dealId} (no active items)`);
+    try {
+      const rowsVerify = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
+      console.log(`[SHOPIFY WEBHOOK] ✅ Product rows verification after clear for deal ${dealId}:`, rowsVerify?.result || rowsVerify);
+    } catch (verifyErr) {
+      console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify product rows after clear for deal ${dealId}:`, verifyErr);
+    }
     } catch (clearError) {
       console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to clear product rows:`, clearError);
     }
