@@ -4,6 +4,7 @@
  */
 import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
 import { successAdapter } from '../../../src/lib/adapters/success/index.js';
+import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
 import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
 
 export default async function handler(req, res) {
@@ -97,22 +98,25 @@ export default async function handler(req, res) {
             
             logs.push(`    Active Line Items: ${activeLineItems.length} (from ${event.line_items?.length || 0} total)`);
             
-            // Show product rows breakdown
+            // Show product rows breakdown with mapping details
             if (productRows.length > 0) {
               logs.push(`    Product Rows Breakdown:`);
-              const productRowsBySku = {};
-              productRows.forEach(row => {
-                const productName = row.PRODUCT_NAME || 'Unknown';
-                const sku = productName.match(/SKU:\s*(\w+)/)?.[1] || 'N/A';
-                if (!productRowsBySku[sku]) {
-                  productRowsBySku[sku] = { count: 0, price: row.PRICE || 0, name: productName };
+              productRows.forEach((row, index) => {
+                const hasProductId = row.PRODUCT_ID && row.PRODUCT_ID !== 0;
+                const productName = row.PRODUCT_NAME || 'N/A';
+                const productId = row.PRODUCT_ID || 'N/A';
+                
+                if (hasProductId) {
+                  logs.push(`      ${index + 1}. PRODUCT_ID=${productId} (linked to catalog) - Price: ${row.PRICE} ${currency}, Qty: ${row.QUANTITY}`);
+                } else {
+                  logs.push(`      ${index + 1}. PRODUCT_NAME="${productName}" (NOT linked - custom row) - Price: ${row.PRICE} ${currency}, Qty: ${row.QUANTITY}`);
                 }
-                productRowsBySku[sku].count++;
               });
               
-              Object.entries(productRowsBySku).forEach(([sku, data]) => {
-                logs.push(`      - ${data.name}: ${data.count} row(s) × ${data.price} ${currency} = ${(data.count * data.price).toFixed(2)} ${currency}`);
-              });
+              // Summary
+              const linkedRows = productRows.filter(r => r.PRODUCT_ID && r.PRODUCT_ID !== 0).length;
+              const customRows = productRows.length - linkedRows;
+              logs.push(`    Summary: ${linkedRows} row(s) linked to catalog (PRODUCT_ID), ${customRows} custom row(s) (PRODUCT_NAME)`);
             }
           } catch (mappingError) {
             logs.push(`  Bitrix Mapping Error: ${mappingError.message}`);
@@ -348,6 +352,71 @@ export default async function handler(req, res) {
     logs.push('  - Verification results (deals verified after creation/update)');
     logs.push('  - Errors and failures (operations with high retry counts, unverified deals, etc.)');
     logs.push('');
+    // ========================================================================
+    // BITRIX → SHOPIFY OPERATIONS
+    // ========================================================================
+    logs.push('');
+    logs.push('='.repeat(80));
+    logs.push('BITRIX → SHOPIFY WEBHOOK OPERATIONS');
+    logs.push('='.repeat(80));
+    logs.push('');
+
+    try {
+      const bitrixEvents = bitrixAdapter.getAllEvents();
+      
+      if (bitrixEvents && bitrixEvents.length > 0) {
+        logs.push(`Total Bitrix events: ${bitrixEvents.length}`);
+        logs.push('');
+        
+        // Sort by received_at (most recent first)
+        const sortedBitrixEvents = [...bitrixEvents].sort((a, b) => {
+          const dateA = new Date(a.received_at || a.created_at || 0);
+          const dateB = new Date(b.received_at || b.created_at || 0);
+          return dateB - dateA;
+        });
+
+        for (let index = 0; index < sortedBitrixEvents.length; index++) {
+          const event = sortedBitrixEvents[index];
+          const eventId = event.id || event.eventId || `event-${index}`;
+          const dealId = event.dealId || 'N/A';
+          const receivedAt = event.received_at || event.created_at || 'N/A';
+          const topic = event.topic || event.event || 'N/A';
+
+          logs.push(`Bitrix Event #${index + 1}: ${eventId}`);
+          logs.push(`  Deal ID: ${dealId}`);
+          logs.push(`  Topic: ${topic}`);
+          logs.push(`  Received At: ${receivedAt}`);
+          
+          if (event.rawDealData) {
+            logs.push(`  Deal Title: ${event.rawDealData.TITLE || 'N/A'}`);
+            logs.push(`  Deal Stage: ${event.rawDealData.STAGE_ID || 'N/A'}`);
+            logs.push(`  Deal Amount: ${event.rawDealData.OPPORTUNITY || 'N/A'} ${event.rawDealData.CURRENCY_ID || 'EUR'}`);
+          }
+          
+          logs.push('');
+        }
+      } else {
+        logs.push('No Bitrix events found.');
+        logs.push('');
+      }
+    } catch (error) {
+      logs.push(`Error collecting Bitrix events: ${error.message}`);
+      logs.push('');
+    }
+
+    logs.push('='.repeat(80));
+    logs.push('NOTE');
+    logs.push('='.repeat(80));
+    logs.push('');
+    logs.push('This log file includes:');
+    logs.push('  - Shopify → Bitrix webhook operations');
+    logs.push('  - Bitrix → Shopify webhook operations');
+    logs.push('  - Successful operations (created/updated deals with verification status)');
+    logs.push('  - Retry attempts (operations that required multiple attempts)');
+    logs.push('  - Verification results (deals verified after creation/update)');
+    logs.push('  - Errors and failures (operations with high retry counts, unverified deals, etc.)');
+    logs.push('  - Product mapping details (PRODUCT_ID vs PRODUCT_NAME)');
+    logs.push('');
     logs.push('Note: Detailed error logs (console.log output) are available in server-side logs.');
     logs.push('For production environments, check:');
     logs.push('  - Server console output (stdout/stderr)');
@@ -362,7 +431,7 @@ export default async function handler(req, res) {
 
     // Set headers for file download
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="shopify-bitrix-logs-${Date.now()}.txt"`);
+    res.setHeader('Content-Disposition', `attachment; filename="integration-logs-${Date.now()}.txt"`);
     
     res.status(200).send(logText);
   } catch (error) {

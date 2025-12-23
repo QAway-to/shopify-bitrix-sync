@@ -355,33 +355,6 @@ export default function ShopifyPage() {
     }
   };
 
-  const handleDownloadBitrixLogs = async () => {
-    try {
-      // Download Bitrix logs from API endpoint
-      const response = await fetch('/api/logs/download-bitrix');
-      
-      if (!response.ok) {
-        throw new Error('Failed to download Bitrix logs');
-      }
-
-      // Get the text content
-      const logText = await response.text();
-
-      // Create a blob and download
-      const blob = new Blob([logText], { type: 'text/plain;charset=utf-8' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `bitrix-shopify-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Error downloading Bitrix logs:', error);
-      alert(`Ошибка при скачивании логов Bitrix: ${error.message}`);
-    }
-  };
 
   const handleSendToShopify = async () => {
     if (selectedBitrixEvents.length === 0) {
@@ -672,9 +645,9 @@ export default function ShopifyPage() {
                 whiteSpace: 'nowrap',
                 flexShrink: 0
               }}
-              title="Download Shopify logs as .txt file"
+              title="Download integration logs (Shopify→Bitrix and Bitrix→Shopify) as .txt file"
             >
-              📥 Скачать логи (Shopify)
+              📥 Скачать логи
             </button>
             {bitrixEvents.length > 0 && (
               <>
@@ -734,24 +707,6 @@ export default function ShopifyPage() {
               }}
             >
               {isSendingToShopify ? 'Отправка...' : `📤 Отправить в Shopify (${selectedBitrixEvents.length})`}
-            </button>
-            <button
-              onClick={handleDownloadBitrixLogs}
-              className="btn"
-              style={{
-                background: '#7c3aed',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '6px',
-                color: 'white',
-                cursor: 'pointer',
-                minWidth: '220px',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
-              title="Download Bitrix logs as .txt file"
-            >
-              📥 Скачать логи (Bitrix)
             </button>
             <button
               onClick={() => {

@@ -521,17 +521,23 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       let productId = null;
       
       // ✅ NEW: Try category-based mapping first (includes certificates and other categories)
+      let mappingMethod = 'none';
       if (item.sku) {
+        console.log(`[ORDER MAPPER] 🔍 Searching for Product ID by SKU: "${item.sku}"`);
         // This uses hybrid approach: cache first, then Bitrix API if not found
         productId = await findProductIdBySku(item.sku);
         
         if (productId) {
-          console.log(`[ORDER MAPPER] ✅ Category-based mapping found: SKU ${item.sku} -> Product ID: ${productId}`);
+          mappingMethod = 'category-based (hybrid)';
+          console.log(`[ORDER MAPPER] ✅ Category-based mapping found: SKU "${item.sku}" -> Product ID: ${productId} (method: ${mappingMethod})`);
+        } else {
+          console.log(`[ORDER MAPPER] ⚠️ Category-based mapping NOT found for SKU: "${item.sku}"`);
         }
       }
       
       // Fallback to legacy mappings if category-based didn't find it
       if (!productId) {
+        console.log(`[ORDER MAPPER] 🔍 Trying legacy mappings for SKU: "${item.sku || 'N/A'}"`);
         // Try semantic SKU mapping (legacy)
         const productIdFromSemantic = item.sku ? skuMappingSemantic[item.sku] : null;
         // Old mapping (legacy)
@@ -547,7 +553,13 @@ export async function mapShopifyOrderToBitrixDeal(order) {
         productId = productIdFromSemantic || productIdFromOldMapping || productIdFromHandle || productIdFromConfig || null;
         
         if (productId) {
-          console.log(`[ORDER MAPPER] ✅ Legacy mapping used for SKU: ${item.sku} -> Product ID: ${productId}`);
+          if (productIdFromSemantic) mappingMethod = 'semantic SKU mapping';
+          else if (productIdFromOldMapping) mappingMethod = 'old SKU mapping';
+          else if (productIdFromHandle) mappingMethod = 'handle mapping';
+          else if (productIdFromConfig) mappingMethod = 'config SKU mapping';
+          console.log(`[ORDER MAPPER] ✅ Legacy mapping used: SKU "${item.sku}" -> Product ID: ${productId} (method: ${mappingMethod})`);
+        } else {
+          console.log(`[ORDER MAPPER] ❌ NO MAPPING FOUND for SKU: "${item.sku || 'N/A'}" - will use PRODUCT_NAME as fallback`);
         }
       }
       
@@ -663,15 +675,17 @@ export async function mapShopifyOrderToBitrixDeal(order) {
         if (productId && productId !== 0) {
           row.PRODUCT_ID = productId;
           // Don't set PRODUCT_NAME when PRODUCT_ID is set - Bitrix will use product name from catalog
-          console.log(`[ORDER MAPPER] ✅ Using Product ID ${productId} from mapping for SKU: ${item.sku || 'N/A'}`);
+          console.log(`[ORDER MAPPER] ✅ Row ${i + 1}/${quantity}: Using PRODUCT_ID=${productId} (mapped via ${mappingMethod}) for SKU: "${item.sku || 'N/A'}"`);
+          console.log(`[ORDER MAPPER]   ⚠️ IMPORTANT: PRODUCT_NAME is NOT set - Bitrix will use product name from catalog (ID: ${productId})`);
         } else {
           // Only use PRODUCT_NAME if no mapping found (fallback to custom row)
           row.PRODUCT_NAME = productName || item.title || item.sku || 'Shopify item';
-          console.warn(`[ORDER MAPPER] ⚠️ SKU ${item.sku || 'N/A'} not mapped, sending as custom row with name: ${productName}`);
+          console.warn(`[ORDER MAPPER] ⚠️ Row ${i + 1}/${quantity}: SKU "${item.sku || 'N/A'}" NOT MAPPED - using PRODUCT_NAME="${row.PRODUCT_NAME}" (custom row, NOT linked to catalog)`);
         }
         
         productRows.push(row);
-        console.log(`[ORDER MAPPER]   ✅ Added product row ${i + 1}/${quantity}: ${productName}, Price: ${priceAfterDiscount}, QUANTITY: 1`);
+        const rowType = productId ? `PRODUCT_ID=${productId}` : `PRODUCT_NAME="${row.PRODUCT_NAME}"`;
+        console.log(`[ORDER MAPPER]   ✅ Added product row ${i + 1}/${quantity}: ${rowType}, Price: ${priceAfterDiscount}, QUANTITY: 1`);
       }
       console.log(`[ORDER MAPPER] 📦 Finished processing item "${item.title || item.sku}": ${quantity} row(s) added`);
     }
