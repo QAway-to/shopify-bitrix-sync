@@ -49,6 +49,10 @@ export default function ShopifyPage() {
   const [selectedCategory, setSelectedCategory] = useState('category-a-f');
   const [syncProgress, setSyncProgress] = useState(null);
   const [progressInterval, setProgressInterval] = useState(null);
+  // File upload state
+  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const [fileInputRef, setFileInputRef] = useState(null);
 
   // Hardcoded section mapping
   const CATEGORY_SECTION_MAP = {
