@@ -7,6 +7,7 @@ import { setProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
 import { createHoldOrder } from '../../../src/lib/shopify/hold.js';
 import { createRefund } from '../../../src/lib/shopify/refund.js';
 import { updateShippingAddress } from '../../../src/lib/shopify/address.js';
+import { createOrderFromBitrix } from '../../../src/lib/shopify/order.js';
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 
@@ -631,6 +632,114 @@ async function handleDealUpdate(dealId, requestId) {
   if (mwActionResult !== null) {
     // MW action was processed (either success or error)
     return mwActionResult;
+  }
+
+  // ✅ STEP D: Check if we need to create order in Shopify from Bitrix deal
+  // Condition: No shopifyOrderId but deal has product rows
+  if (!shopifyOrderId || shopifyOrderId.trim() === '') {
+    try {
+      // Get product rows from deal
+      const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
+        id: dealId
+      });
+
+      if (productRowsResp.result && Array.isArray(productRowsResp.result) && productRowsResp.result.length > 0) {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_CHECK',
+          requestId,
+          dealId,
+          productRowsCount: productRowsResp.result.length,
+          timestamp: new Date().toISOString()
+        }));
+
+        // Convert Bitrix product rows to Shopify items
+        // Need to get SKU from Bitrix product by PRODUCT_ID
+        const items = [];
+        for (const row of productRowsResp.result) {
+          const productId = row.PRODUCT_ID;
+          if (!productId) continue;
+
+          // Get product details from Bitrix to get SKU
+          try {
+            const productResp = await callBitrix('/crm.product.get.json', {
+              id: productId
+            });
+
+            if (productResp.result) {
+              const product = productResp.result;
+              const sku = product.CODE || product.XML_ID; // SKU is usually in CODE or XML_ID
+              
+              if (sku && sku.trim() !== '') {
+                items.push({
+                  sku: sku.trim(),
+                  qty: row.QUANTITY || 1
+                });
+              } else {
+                console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no SKU (CODE/XML_ID), skipping`);
+              }
+            }
+          } catch (productError) {
+            console.error(`[BITRIX TO SHOPIFY] Error getting product ${productId}:`, productError);
+          }
+        }
+
+        if (items.length > 0) {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ATTEMPT',
+            requestId,
+            dealId,
+            itemsCount: items.length,
+            items: items.map(i => ({ sku: i.sku, qty: i.qty })),
+            timestamp: new Date().toISOString()
+          }));
+
+          // Create order in Shopify
+          const correlationId = `${dealId}:${Date.now()}`;
+          const orderResult = await createOrderFromBitrix(items, dealId, correlationId);
+
+          if (orderResult.success) {
+            // Save shopifyOrderId back to Bitrix deal
+            const createdOrderId = String(orderResult.orderId);
+            try {
+              await callBitrix('/crm.deal.update.json', {
+                id: dealId,
+                fields: {
+                  UF_CRM_1742556489: createdOrderId // Shopify Order ID field
+                }
+              });
+
+              console.log(JSON.stringify({
+                event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SUCCESS',
+                requestId,
+                dealId,
+                shopifyOrderId: createdOrderId,
+                orderName: orderResult.orderName,
+                lineItemsCount: orderResult.lineItems?.length || 0,
+                tags: orderResult.tags || [],
+                note: orderResult.note || '',
+                timestamp: new Date().toISOString()
+              }));
+
+              // Update shopifyOrderId for subsequent processing
+              shopifyOrderId = createdOrderId;
+            } catch (updateError) {
+              console.error(`[BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
+            }
+          } else {
+            console.log(JSON.stringify({
+              event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ERROR',
+              requestId,
+              dealId,
+              error: orderResult.error,
+              message: orderResult.message,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        }
+      }
+    } catch (orderCreateError) {
+      console.error(`[BITRIX TO SHOPIFY] Error checking/creating order:`, orderCreateError);
+    }
   }
 
   // No MW action found, continue with DELIVERY_EXECUTING trigger (existing logic)
