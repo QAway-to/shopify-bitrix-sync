@@ -4,6 +4,8 @@ import { createRefund } from '../../src/lib/shopify/refund.js';
 import { updateShippingAddress } from '../../src/lib/shopify/address.js';
 import { normalizePayload, payloadHash } from '../../src/lib/utils/hash.js';
 import { setProvenanceMarker } from '../../src/lib/shopify/metafields.js';
+import { createOrderFromBitrix } from '../../src/lib/shopify/order.js';
+import { callBitrix } from '../../src/lib/bitrix/client.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -177,12 +179,154 @@ export default async function handler(req, res) {
     }
     
     // Handle fulfillment (DELIVERY_EXECUTING) - requires shopifyOrderId
+    // If shopifyOrderId is missing, try to create order from Bitrix deal
+    if (!shopifyOrderId) {
+      // Try to create order in Shopify from Bitrix deal
+      try {
+        // Get product rows from deal
+        const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
+          id: dealId
+        });
+
+        if (productRowsResp.result && Array.isArray(productRowsResp.result) && productRowsResp.result.length > 0) {
+          console.log(JSON.stringify({
+            event: 'UI_BITRIX_TO_SHOPIFY_ORDER_CREATE_CHECK',
+            eventId: event.id,
+            dealId,
+            productRowsCount: productRowsResp.result.length,
+            timestamp: new Date().toISOString()
+          }));
+
+          // Convert Bitrix product rows to Shopify items
+          const items = [];
+          for (const row of productRowsResp.result) {
+            const productId = row.PRODUCT_ID;
+            if (!productId) continue;
+
+            // Get product details from Bitrix to get SKU
+            try {
+              const productResp = await callBitrix('/crm.product.get.json', {
+                id: productId
+              });
+
+              if (productResp.result) {
+                const product = productResp.result;
+                const sku = product.CODE || product.XML_ID; // SKU is usually in CODE or XML_ID
+                
+                if (sku && sku.trim() !== '') {
+                  items.push({
+                    sku: sku.trim(),
+                    qty: row.QUANTITY || 1
+                  });
+                } else {
+                  console.warn(`[UI BITRIX TO SHOPIFY] Product ${productId} has no SKU (CODE/XML_ID), skipping`);
+                }
+              }
+            } catch (productError) {
+              console.error(`[UI BITRIX TO SHOPIFY] Error getting product ${productId}:`, productError);
+            }
+          }
+
+          if (items.length > 0) {
+            console.log(JSON.stringify({
+              event: 'UI_BITRIX_TO_SHOPIFY_ORDER_CREATE_ATTEMPT',
+              eventId: event.id,
+              dealId,
+              itemsCount: items.length,
+              items: items.map(i => ({ sku: i.sku, qty: i.qty })),
+              timestamp: new Date().toISOString()
+            }));
+
+            // Create order in Shopify
+            const correlationId = `${dealId}:${Date.now()}`;
+            const orderResult = await createOrderFromBitrix(items, dealId, correlationId);
+
+            if (orderResult.success) {
+              // Save shopifyOrderId back to Bitrix deal
+              const createdOrderId = String(orderResult.orderId);
+              try {
+                await callBitrix('/crm.deal.update.json', {
+                  id: dealId,
+                  fields: {
+                    UF_CRM_1742556489: createdOrderId // Shopify Order ID field
+                  }
+                });
+
+                console.log(JSON.stringify({
+                  event: 'UI_BITRIX_TO_SHOPIFY_ORDER_CREATE_SUCCESS',
+                  eventId: event.id,
+                  dealId,
+                  shopifyOrderId: createdOrderId,
+                  orderName: orderResult.orderName,
+                  lineItemsCount: orderResult.lineItems?.length || 0,
+                  tags: orderResult.tags || [],
+                  note: orderResult.note || '',
+                  timestamp: new Date().toISOString()
+                }));
+
+                // Update shopifyOrderId for subsequent processing
+                shopifyOrderId = createdOrderId;
+
+                // Continue with fulfillment check below
+              } catch (updateError) {
+                console.error(`[UI BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
+                // Still continue with created order
+                shopifyOrderId = createdOrderId;
+              }
+            } else {
+              errors.push({
+                eventId: event.id,
+                success: false,
+                error: 'ORDER_CREATE_ERROR',
+                details: orderResult.message || 'Failed to create order in Shopify',
+                type: 'OrderCreateError',
+                dealId
+              });
+              continue;
+            }
+          } else {
+            // No valid items found
+            errors.push({
+              eventId: event.id,
+              success: false,
+              error: 'Missing Shopify Order ID',
+              details: 'Event does not contain shopifyOrderId field, no MW action found, and no valid items to create order',
+              type: 'ValidationError'
+            });
+            continue;
+          }
+        } else {
+          // No product rows found
+          errors.push({
+            eventId: event.id,
+            success: false,
+            error: 'Missing Shopify Order ID',
+            details: 'Event does not contain shopifyOrderId field, no MW action found, and deal has no product rows',
+            type: 'ValidationError'
+          });
+          continue;
+        }
+      } catch (orderCreateError) {
+        console.error(`[UI BITRIX TO SHOPIFY] Error checking/creating order:`, orderCreateError);
+        errors.push({
+          eventId: event.id,
+          success: false,
+          error: 'ORDER_CREATE_EXCEPTION',
+          details: orderCreateError.message || 'Failed to create order from Bitrix deal',
+          type: 'Exception',
+          dealId
+        });
+        continue;
+      }
+    }
+
+    // Now we have shopifyOrderId (either from event or just created)
     if (!shopifyOrderId) {
       errors.push({
         eventId: event.id,
         success: false,
         error: 'Missing Shopify Order ID',
-        details: 'Event does not contain shopifyOrderId field and no MW action found',
+        details: 'Could not get or create shopifyOrderId',
         type: 'ValidationError'
       });
       continue;
