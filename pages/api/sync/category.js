@@ -16,9 +16,42 @@ const BATCH_SIZE = 50; // Process products in batches
 const PARALLEL_LIMIT = 5; // Number of products to process in parallel
 const DOCUMENT_GROUP_SIZE = 20; // Group products into documents
 
+// Store progress in memory (simple approach)
+const progressStore = new Map();
+
+// Cleanup old progress entries (older than 1 hour)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of progressStore.entries()) {
+    if (value.timestamp && now - value.timestamp > 3600000) {
+      progressStore.delete(key);
+    }
+  }
+}, 60000); // Check every minute
+
 export default async function handler(req, res) {
+  // Support GET for progress updates
+  if (req.method === 'GET') {
+    const requestId = req.query.requestId;
+    if (!requestId) {
+      return res.status(400).json({ error: 'requestId is required' });
+    }
+
+    const progress = progressStore.get(requestId);
+    if (!progress) {
+      return res.status(404).json({ error: 'Progress not found' });
+    }
+
+    // Return current progress
+    if (progress.complete) {
+      return res.status(200).json({ type: 'complete', ...progress.result });
+    } else {
+      return res.status(200).json({ type: 'progress', ...progress });
+    }
+  }
+
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST']);
+    res.setHeader('Allow', ['POST', 'GET']);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
@@ -39,7 +72,7 @@ export default async function handler(req, res) {
     });
   }
 
-  const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const requestId = requestIdFromBody || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   console.log(JSON.stringify({
     event: 'SYNC_CATEGORY_START',
@@ -78,6 +111,18 @@ export default async function handler(req, res) {
 
     console.log(`[SYNC ${category.toUpperCase()}] Processing ${productsToProcess.length} products (out of ${products.length} total) using optimized batch processing`);
 
+    // Initialize progress
+    progressStore.set(requestId, {
+      processed: 0,
+      total: productsToProcess.length,
+      complete: false,
+      result: null,
+      currentProduct: null,
+      currentAction: 'Инициализация...',
+      details: [],
+      timestamp: Date.now()
+    });
+
     // 2. Process in batches with optimization
     for (let batchStart = 0; batchStart < productsToProcess.length; batchStart += BATCH_SIZE) {
       const batch = productsToProcess.slice(batchStart, batchStart + BATCH_SIZE);
@@ -93,7 +138,16 @@ export default async function handler(req, res) {
         // Stagger parallel requests slightly
         await new Promise(resolve => setTimeout(resolve, (index % PARALLEL_LIMIT) * 100));
 
-        return syncProductVariantOptimized(
+        // Update progress - current product
+        const currentProgress = progressStore.get(requestId);
+        if (currentProgress) {
+          currentProgress.currentProduct = `${product.sku || 'N/A'} - ${product.product_title || 'Unknown'}`;
+          currentProgress.currentAction = isCreateAction ? 'Создание товара...' : 'Проверка товара...';
+          currentProgress.timestamp = Date.now();
+          progressStore.set(requestId, currentProgress);
+        }
+
+        const syncResult = await syncProductVariantOptimized(
           {
             product_title: product.product_title,
             sku: product.sku,
@@ -108,6 +162,32 @@ export default async function handler(req, res) {
           existingProductsMap,
           null // Stock will be fetched later in groups
         );
+
+        // Update progress - add detail
+        const updatedProgress = progressStore.get(requestId);
+        if (updatedProgress) {
+          const detail = {
+            sku: product.sku || 'N/A',
+            title: product.product_title || 'Unknown',
+            status: syncResult.success ? 'success' : 'error',
+            action: syncResult.success 
+              ? (syncResult.productId && !existingProductsMap.get(product.sku) ? 'created' : 'exists')
+              : 'error',
+            message: syncResult.success 
+              ? (syncResult.productId && !existingProductsMap.get(product.sku) 
+                  ? `Создан (ID: ${syncResult.productId})` 
+                  : `Существует (ID: ${syncResult.productId})`)
+              : syncResult.error || 'Ошибка'
+          };
+          updatedProgress.details.push(detail);
+          updatedProgress.processed++;
+          updatedProgress.currentProduct = null;
+          updatedProgress.currentAction = `Обработано: ${updatedProgress.processed}/${updatedProgress.total}`;
+          updatedProgress.timestamp = Date.now();
+          progressStore.set(requestId, updatedProgress);
+        }
+
+        return syncResult;
       });
 
       const syncResults = await Promise.all(syncPromises);
@@ -224,6 +304,14 @@ export default async function handler(req, res) {
         }
       }
 
+      // Update progress after batch completion
+      const currentProgress = progressStore.get(requestId);
+      if (currentProgress) {
+        currentProgress.currentAction = `Батч ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(productsToProcess.length / BATCH_SIZE)} завершен. Создание документов...`;
+        currentProgress.timestamp = Date.now();
+        progressStore.set(requestId, currentProgress);
+      }
+
       // Small delay between batches
       if (batchStart + BATCH_SIZE < productsToProcess.length) {
         await new Promise(resolve => setTimeout(resolve, 200));
@@ -251,6 +339,17 @@ export default async function handler(req, res) {
         console.error(`[SYNC ${category.toUpperCase()}] ⚠️ Failed to refresh mappings after create:`, mapErr);
         results.mappingRefresh = { success: false, error: mapErr.message };
       }
+    }
+
+    // Mark as complete
+    const finalProgress = progressStore.get(requestId);
+    if (finalProgress) {
+      finalProgress.complete = true;
+      finalProgress.currentProduct = null;
+      finalProgress.currentAction = 'Завершено';
+      finalProgress.result = results;
+      finalProgress.timestamp = Date.now();
+      progressStore.set(requestId, finalProgress);
     }
 
     return res.status(200).json(results);
