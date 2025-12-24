@@ -12,7 +12,7 @@ import brandMapping from './brandMapping.json' assert { type: 'json' };
 // ✅ SEMANTIC MAPPING: Используем семантический маппинг с 100% совпадениями
 import skuMappingSemantic from './skuMappingSemantic.json' assert { type: 'json' };
 // ✅ NEW: Category-based mapping with hybrid search (cache + Bitrix API)
-import { findProductIdBySku, loadAllMappings } from './mappingUtils.js';
+import { findProductIdBySku, findProductIdByVariantId, loadAllMappings } from './mappingUtils.js';
 import { resolveResponsibleId } from './responsible.js';
 
 // Known certificate variant_id -> Bitrix PRODUCT_ID mapping (fallback when SKU is missing)
@@ -577,7 +577,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
         console.warn(`[ORDER MAPPER] ⚠️ SKU is missing for item: "${item.title || 'N/A'}"`);
       }
 
-      // Fallback: variant_id for known certificates (no SKU in Shopify)
+      // Fallback 1: variant_id for known certificates (no SKU in Shopify)
       if (!productId && item.variant_id) {
         const variantId = Number(item.variant_id);
         const certProductId = CERT_VARIANT_TO_PRODUCT_ID[variantId];
@@ -585,8 +585,20 @@ export async function mapShopifyOrderToBitrixDeal(order) {
           productId = certProductId;
           mappingMethod = 'variant_id_certificate';
           console.log(`[ORDER MAPPER] ✅ Found by variant_id (certificate): ${variantId} -> Product ID: ${productId}`);
+        }
+      }
+
+      // Fallback 2: variant_id for ALL products (not just certificates)
+      // This handles cases where SKU is not found but variant_id exists in Bitrix XML_ID
+      if (!productId && item.variant_id) {
+        console.log(`[ORDER MAPPER] 🔍 Trying fallback: variant_id for all products: ${item.variant_id}`);
+        const variantProductId = await findProductIdByVariantId(item.variant_id);
+        if (variantProductId) {
+          productId = variantProductId;
+          mappingMethod = 'variant_id_xml_id';
+          console.log(`[ORDER MAPPER] ✅ Found by variant_id (XML_ID): ${item.variant_id} -> Product ID: ${productId}`);
         } else {
-          console.error(`[ORDER MAPPER] ❌ variant_id NOT FOUND in certificate map: ${variantId}`);
+          console.warn(`[ORDER MAPPER] ⚠️ variant_id NOT FOUND in Bitrix (XML_ID): ${item.variant_id}`);
         }
       }
 
