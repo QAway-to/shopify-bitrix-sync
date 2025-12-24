@@ -560,45 +560,47 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       // CRITICAL: line_items are ALWAYS products, NEVER shipping
       // Even if a product has the same ID as shipping, it's still a product from line_items
       
-      // ===== STRICT MAPPING: SKU/XML_ID first, fallback to variant_id for certificates =====
+      // ===== STRICT MAPPING: SKU/XML_ID first, fallback to variant_id =====
       let productId = null;
       let mappingMethod = 'none';
 
-      if (item.sku) {
-        console.log(`[ORDER MAPPER] 🔍 Searching for Product ID by SKU/XML_ID: "${item.sku}"`);
-        productId = await findProductIdBySku(item.sku);
+      // Strategy 1: Try SKU first (if available)
+      if (item.sku && item.sku.trim()) {
+        console.log(`[ORDER MAPPER] 🔍 Strategy 1: Searching for Product ID by SKU/CODE: "${item.sku}"`);
+        productId = await findProductIdBySku(item.sku.trim());
         if (productId) {
-          mappingMethod = 'sku/xml_id';
-          console.log(`[ORDER MAPPER] ✅ Found by SKU/XML_ID: "${item.sku}" -> Product ID: ${productId}`);
+          mappingMethod = 'sku/code';
+          console.log(`[ORDER MAPPER] ✅ Found by SKU/CODE: "${item.sku}" -> Product ID: ${productId}`);
         } else {
-          console.error(`[ORDER MAPPER] ❌ SKU/XML_ID NOT FOUND in Bitrix: "${item.sku}"`);
+          console.warn(`[ORDER MAPPER] ⚠️ SKU/CODE NOT FOUND in Bitrix: "${item.sku}"`);
         }
       } else {
-        console.warn(`[ORDER MAPPER] ⚠️ SKU is missing for item: "${item.title || 'N/A'}"`);
+        console.warn(`[ORDER MAPPER] ⚠️ SKU is missing or empty for item: "${item.title || 'N/A'}"`);
       }
 
-      // Fallback 1: variant_id for known certificates (no SKU in Shopify)
+      // Strategy 2: Try variant_id for known certificates (hardcoded mapping)
       if (!productId && item.variant_id) {
         const variantId = Number(item.variant_id);
         const certProductId = CERT_VARIANT_TO_PRODUCT_ID[variantId];
         if (certProductId) {
           productId = certProductId;
-          mappingMethod = 'variant_id_certificate';
-          console.log(`[ORDER MAPPER] ✅ Found by variant_id (certificate): ${variantId} -> Product ID: ${productId}`);
+          mappingMethod = 'variant_id_certificate_hardcoded';
+          console.log(`[ORDER MAPPER] ✅ Found by variant_id (certificate hardcoded): ${variantId} -> Product ID: ${productId}`);
         }
       }
 
-      // Fallback 2: variant_id for ALL products (not just certificates)
-      // This handles cases where SKU is not found but variant_id exists in Bitrix XML_ID
+      // Strategy 3: Try variant_id for ALL products (search by XML_ID in Bitrix)
+      // This is the key fallback for socks and other products
       if (!productId && item.variant_id) {
-        console.log(`[ORDER MAPPER] 🔍 Trying fallback: variant_id for all products: ${item.variant_id}`);
+        console.log(`[ORDER MAPPER] 🔍 Strategy 3: Trying variant_id search (XML_ID) for all products: ${item.variant_id}`);
         const variantProductId = await findProductIdByVariantId(item.variant_id);
         if (variantProductId) {
           productId = variantProductId;
           mappingMethod = 'variant_id_xml_id';
           console.log(`[ORDER MAPPER] ✅ Found by variant_id (XML_ID): ${item.variant_id} -> Product ID: ${productId}`);
         } else {
-          console.warn(`[ORDER MAPPER] ⚠️ variant_id NOT FOUND in Bitrix (XML_ID): ${item.variant_id}`);
+          console.warn(`[ORDER MAPPER] ⚠️ variant_id NOT FOUND in Bitrix (XML_ID search): ${item.variant_id}`);
+          console.warn(`[ORDER MAPPER]   This means no product in Bitrix has XML_ID="${item.variant_id}"`);
         }
       }
 
