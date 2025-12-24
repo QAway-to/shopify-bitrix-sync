@@ -308,14 +308,13 @@ export async function getCategoryProducts(category) {
     const fs = eval('require')('fs');
     const path = eval('require')('path');
     
-    // Try to read from .data directory first (Render server), then fallback to other locations
+    // Try to read from .data directory first (Render server), then fallback to PythonProject
     const dataDir = path.join(process.cwd(), '.data');
     const pythonProjectPath = path.join(process.cwd(), '..', 'PythonProject');
     const filePaths = [
       path.join(dataDir, 'shopify_all_and_qty_not_zero.json'),
       path.join(pythonProjectPath, 'shopify_all_and_qty_not_zero.json'),
-      path.join(process.cwd(), 'shopify_all_and_qty_not_zero.json'),
-      path.join(process.cwd(), 'data', 'shopify_all_and_qty_not_zero.json')
+      path.join(process.cwd(), 'shopify_all_and_qty_not_zero.json')
     ];
 
     let allProducts = [];
@@ -326,6 +325,15 @@ export async function getCategoryProducts(category) {
         if (fs.existsSync(filePath)) {
           const fileContent = fs.readFileSync(filePath, 'utf-8');
           allProducts = JSON.parse(fileContent);
+          
+          // Normalize field names: in JSON file it's 'title', but we use 'product_title' in code
+          allProducts = allProducts.map(product => {
+            if (product.title && !product.product_title) {
+              product.product_title = product.title;
+            }
+            return product;
+          });
+          
           console.log(`[SHOPIFY INVENTORY] Loaded ${allProducts.length} products from ${filePath}`);
           fileRead = true;
           break;
