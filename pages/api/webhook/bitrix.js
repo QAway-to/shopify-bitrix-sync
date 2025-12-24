@@ -980,7 +980,7 @@ async function handleDealUpdate(dealId, requestId) {
 
 /**
  * Handle deal creation event from Bitrix
- * Usually not needed as deals are created from Shopify, but handle for completeness
+ * Creates Shopify order if deal has products but no shopifyOrderId
  */
 async function handleDealCreate(dealId, requestId) {
   // ✅ Structured logging: [BITRIX_WEBHOOK_RECEIVED] (CREATE)
@@ -992,9 +992,252 @@ async function handleDealCreate(dealId, requestId) {
     timestamp: new Date().toISOString()
   }));
 
-  // Deals are typically created from Shopify, so this is usually a no-op
-  // But we can log it for monitoring
-  return { success: true, triggerMatch: false, skip_reason: 'deal_create_event_ignored' };
+  // Get full deal data from Bitrix REST API
+  let dealData = null;
+  try {
+    const dealResp = await callBitrix('/crm.deal.get.json', {
+      id: dealId,
+    });
+
+    if (!dealResp.result) {
+      const error = {
+        event: 'DEAL_GET_FAILED',
+        requestId,
+        dealId,
+        error: 'Deal not found or failed to fetch',
+        response: dealResp,
+        timestamp: new Date().toISOString()
+      };
+      console.log(JSON.stringify(error));
+      return { success: false, reason: 'deal_not_found' };
+    }
+
+    dealData = dealResp.result;
+  } catch (error) {
+    const errorLog = {
+      event: 'DEAL_GET_ERROR',
+      requestId,
+      dealId,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    };
+    console.log(JSON.stringify(errorLog));
+    return { success: false, reason: 'deal_get_error', error: error.message };
+  }
+
+  // Extract required fields
+  const categoryId = dealData.CATEGORY_ID;
+  const stageId = dealData.STAGE_ID;
+  let shopifyOrderId = dealData.UF_CRM_1742556489 || dealData.uf_crm_1742556489;
+  const comments = dealData.COMMENTS || '';
+
+  // ✅ Structured logging: [DEAL_DATA_RECEIVED] (CREATE)
+  console.log(JSON.stringify({
+    event: 'DEAL_DATA_RECEIVED',
+    requestId,
+    dealId,
+    eventType: 'CREATE',
+    categoryId,
+    stageId,
+    shopifyOrderId,
+    timestamp: new Date().toISOString()
+  }));
+
+  // Store event in adapter for UI display
+  let storedEvent = null;
+  try {
+    storedEvent = bitrixAdapter.storeEvent({
+      dealId,
+      categoryId,
+      stageId,
+      shopifyOrderId,
+      comments,
+      received_at: new Date().toISOString(),
+      rawDealData: dealData,
+      fulfillmentState: null
+    });
+  } catch (storeError) {
+    console.error(`[BITRIX WEBHOOK] Failed to store event (non-blocking):`, storeError);
+  }
+
+  // ✅ Check for MW action first (UF_MW_SHOPIFY_ACTION)
+  const mwActionResult = await handleMWAction(dealId, requestId, dealData, shopifyOrderId);
+  if (mwActionResult !== null) {
+    // MW action was processed (either success or error)
+    return mwActionResult;
+  }
+
+  // ✅ Check if we need to create order in Shopify from Bitrix deal
+  // Condition: No shopifyOrderId but deal has product rows
+  if (!shopifyOrderId || shopifyOrderId.trim() === '') {
+    try {
+      // Get product rows from deal
+      const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
+        id: dealId
+      });
+
+      if (productRowsResp.result && Array.isArray(productRowsResp.result) && productRowsResp.result.length > 0) {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_CHECK',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          productRowsCount: productRowsResp.result.length,
+          timestamp: new Date().toISOString()
+        }));
+
+        // Convert Bitrix product rows to Shopify items
+        // Need to get SKU from Bitrix product by PRODUCT_ID
+        const items = [];
+        for (const row of productRowsResp.result) {
+          const productId = row.PRODUCT_ID;
+          if (!productId) continue;
+
+          // Get product details from Bitrix to get SKU
+          try {
+            const productResp = await callBitrix('/crm.product.get.json', {
+              id: productId
+            });
+
+            if (productResp.result) {
+              const product = productResp.result;
+              const sku = product.CODE || product.XML_ID; // SKU is usually in CODE or XML_ID
+              
+              if (sku && sku.trim() !== '') {
+                items.push({
+                  sku: sku.trim(),
+                  qty: row.QUANTITY || 1
+                });
+              } else {
+                console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no SKU (CODE/XML_ID), skipping`);
+              }
+            }
+          } catch (productError) {
+            console.error(`[BITRIX TO SHOPIFY] Error getting product ${productId}:`, productError);
+          }
+        }
+
+        if (items.length > 0) {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ATTEMPT',
+            requestId,
+            dealId,
+            eventType: 'CREATE',
+            itemsCount: items.length,
+            items: items.map(i => ({ sku: i.sku, qty: i.qty })),
+            timestamp: new Date().toISOString()
+          }));
+
+          // Create order in Shopify
+          const correlationId = `${dealId}:${Date.now()}`;
+          const orderResult = await createOrderFromBitrix(items, dealId, correlationId);
+
+          if (orderResult.success) {
+            // Save shopifyOrderId back to Bitrix deal
+            const createdOrderId = String(orderResult.orderId);
+            try {
+              await callBitrix('/crm.deal.update.json', {
+                id: dealId,
+                fields: {
+                  UF_CRM_1742556489: createdOrderId // Shopify Order ID field
+                }
+              });
+
+              console.log(JSON.stringify({
+                event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SUCCESS',
+                requestId,
+                dealId,
+                eventType: 'CREATE',
+                shopifyOrderId: createdOrderId,
+                orderName: orderResult.orderName,
+                lineItemsCount: orderResult.lineItems?.length || 0,
+                tags: orderResult.tags || [],
+                note: orderResult.note || '',
+                timestamp: new Date().toISOString()
+              }));
+
+              // Update stored event with shopifyOrderId
+              if (storedEvent) {
+                storedEvent.shopifyOrderId = createdOrderId;
+              }
+
+              return { 
+                success: true, 
+                triggerMatch: true, 
+                shopifyOrderId: createdOrderId,
+                orderName: orderResult.orderName
+              };
+            } catch (updateError) {
+              console.error(`[BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
+              return { 
+                success: true, 
+                triggerMatch: true, 
+                shopifyOrderId: createdOrderId,
+                orderCreated: true,
+                dealUpdateFailed: true
+              };
+            }
+          } else {
+            console.log(JSON.stringify({
+              event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ERROR',
+              requestId,
+              dealId,
+              eventType: 'CREATE',
+              error: orderResult.error,
+              message: orderResult.message,
+              timestamp: new Date().toISOString()
+            }));
+            return { 
+              success: false, 
+              triggerMatch: false, 
+              skip_reason: 'order_create_failed',
+              error: orderResult.error
+            };
+          }
+        } else {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
+            requestId,
+            dealId,
+            eventType: 'CREATE',
+            skip_reason: 'no_valid_items',
+            productRowsCount: productRowsResp.result.length,
+            timestamp: new Date().toISOString()
+          }));
+        }
+      } else {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          skip_reason: 'no_product_rows',
+          timestamp: new Date().toISOString()
+        }));
+      }
+    } catch (orderCreateError) {
+      console.error(`[BITRIX TO SHOPIFY] Error checking/creating order:`, orderCreateError);
+      return { 
+        success: false, 
+        triggerMatch: false, 
+        skip_reason: 'order_create_exception',
+        error: orderCreateError.message
+      };
+    }
+  } else {
+    console.log(JSON.stringify({
+      event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
+      requestId,
+      dealId,
+      eventType: 'CREATE',
+      skip_reason: 'shopify_order_id_exists',
+      shopifyOrderId,
+      timestamp: new Date().toISOString()
+    }));
+  }
+
+  // If no order creation was needed or attempted, return success
+  return { success: true, triggerMatch: false, skip_reason: 'no_action_needed' };
 }
 
 /**
