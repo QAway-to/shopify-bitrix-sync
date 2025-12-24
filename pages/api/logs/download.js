@@ -6,6 +6,7 @@ import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
 import { successAdapter } from '../../../src/lib/adapters/success/index.js';
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
 import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
+import { getCategorySyncResults } from '../sync/category.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -404,6 +405,97 @@ export default async function handler(req, res) {
       logs.push('');
     }
 
+    // ✅ Add CATEGORY SYNC OPERATIONS section
+    logs.push('='.repeat(80));
+    logs.push('CATEGORY SYNC OPERATIONS');
+    logs.push('='.repeat(80));
+    logs.push('');
+
+    try {
+      const syncResults = getCategorySyncResults();
+      
+      if (syncResults && syncResults.length > 0) {
+        logs.push(`Total category sync operations: ${syncResults.length}`);
+        logs.push('');
+
+        syncResults.forEach((sync, index) => {
+          logs.push(`Category Sync Operation #${index + 1}`);
+          logs.push(`  Request ID: ${sync.requestId || 'N/A'}`);
+          logs.push(`  Category: ${sync.category || 'N/A'}`);
+          logs.push(`  Section ID: ${sync.sectionId || 'N/A'}`);
+          logs.push(`  Action: ${sync.action || 'N/A'}`);
+          logs.push(`  Timestamp: ${sync.timestamp || 'N/A'}`);
+          logs.push(`  Success: ${sync.success ? 'Yes' : 'No'}`);
+          
+          if (sync.summary) {
+            logs.push(`  Summary:`);
+            logs.push(`    Total processed: ${sync.summary.total || 0}`);
+            logs.push(`    Created: ${sync.summary.created || 0}`);
+            logs.push(`    Updated: ${sync.summary.updated || 0}`);
+            logs.push(`    Skipped: ${sync.summary.skipped || 0}`);
+            logs.push(`    Errors: ${sync.summary.errors || 0}`);
+          }
+          
+          if (sync.totalProducts) {
+            logs.push(`  Total products in category: ${sync.totalProducts}`);
+          }
+          
+          if (sync.createdProducts && sync.createdProducts.length > 0) {
+            logs.push(`  Created Products (${sync.createdProducts.length}):`);
+            sync.createdProducts.slice(0, 20).forEach((product, idx) => {
+              logs.push(`    ${idx + 1}. SKU: ${product.sku || 'N/A'}, Product ID: ${product.productId || 'N/A'}, Name: ${product.productName || 'N/A'}`);
+            });
+            if (sync.createdProducts.length > 20) {
+              logs.push(`    ... and ${sync.createdProducts.length - 20} more`);
+            }
+          }
+          
+          if (sync.existingProducts && sync.existingProducts.length > 0) {
+            logs.push(`  Existing Products (${sync.existingProducts.length}):`);
+            logs.push(`    (Products that already existed in Bitrix - skipped creation)`);
+          }
+          
+          if (sync.errors && sync.errors.length > 0) {
+            logs.push(`  Errors (${sync.errors.length}):`);
+            sync.errors.slice(0, 20).forEach((error, idx) => {
+              logs.push(`    ${idx + 1}. SKU: ${error.sku || 'N/A'} - ${error.error || error.message || 'Unknown error'}`);
+            });
+            if (sync.errors.length > 20) {
+              logs.push(`    ... and ${sync.errors.length - 20} more errors`);
+            }
+          }
+          
+          if (sync.details && sync.details.length > 0) {
+            const errorDetails = sync.details.filter(d => d.status === 'error');
+            if (errorDetails.length > 0) {
+              logs.push(`  Product Processing Errors (${errorDetails.length}):`);
+              errorDetails.slice(0, 10).forEach((detail, idx) => {
+                logs.push(`    ${idx + 1}. SKU: ${detail.sku || 'N/A'}, Title: ${detail.title || 'N/A'}, Error: ${detail.message || 'Unknown error'}`);
+              });
+              if (errorDetails.length > 10) {
+                logs.push(`    ... and ${errorDetails.length - 10} more errors`);
+              }
+            }
+          }
+          
+          if (sync.error) {
+            logs.push(`  Operation Error: ${sync.error}`);
+            if (sync.stack) {
+              logs.push(`  Stack Trace: ${sync.stack}`);
+            }
+          }
+          
+          logs.push('');
+        });
+      } else {
+        logs.push('No category sync operations found.');
+        logs.push('');
+      }
+    } catch (error) {
+      logs.push(`Error collecting category sync operations: ${error.message}`);
+      logs.push('');
+    }
+
     logs.push('='.repeat(80));
     logs.push('NOTE');
     logs.push('='.repeat(80));
@@ -416,6 +508,8 @@ export default async function handler(req, res) {
     logs.push('  - Verification results (deals verified after creation/update)');
     logs.push('  - Errors and failures (operations with high retry counts, unverified deals, etc.)');
     logs.push('  - Product mapping details (PRODUCT_ID vs PRODUCT_NAME)');
+    logs.push('  - Category sync operations (product creation from Shopify to Bitrix)');
+    logs.push('  - Category sync errors and details');
     logs.push('');
     logs.push('Note: Detailed error logs (console.log output) are available in server-side logs.');
     logs.push('For production environments, check:');

@@ -19,6 +19,10 @@ const DOCUMENT_GROUP_SIZE = 20; // Group products into documents
 // Store progress in memory (simple approach)
 const progressStore = new Map();
 
+// Store category sync results for logging (keep last 100 operations)
+const categorySyncResults = [];
+const MAX_SYNC_RESULTS = 100;
+
 // Cleanup old progress entries (older than 1 hour)
 setInterval(() => {
   const now = Date.now();
@@ -28,6 +32,11 @@ setInterval(() => {
     }
   }
 }, 60000); // Check every minute
+
+// Export function to get sync results for logs
+export function getCategorySyncResults() {
+  return [...categorySyncResults].reverse(); // Most recent first
+}
 
 export default async function handler(req, res) {
   // Support GET for progress updates
@@ -352,6 +361,51 @@ export default async function handler(req, res) {
       progressStore.set(requestId, finalProgress);
     }
 
+    // Store result for logging
+    // Determine created vs existing products based on details
+    const createdProducts = [];
+    const existingProducts = [];
+    const errorProducts = [];
+    
+    if (finalProgress && finalProgress.details) {
+      for (const detail of finalProgress.details) {
+        const product = results.products.find(p => p.sku === detail.sku);
+        if (product && product.success && product.productId) {
+          if (detail.action === 'created') {
+            createdProducts.push(product);
+          } else if (detail.action === 'exists') {
+            existingProducts.push(product);
+          }
+        } else if (detail.status === 'error') {
+          errorProducts.push({
+            sku: detail.sku,
+            error: detail.message || 'Unknown error'
+          });
+        }
+      }
+    }
+    
+    const syncLogEntry = {
+      requestId: requestId,
+      category: category,
+      sectionId: sectionId,
+      action: action,
+      timestamp: new Date().toISOString(),
+      summary: results.summary,
+      totalProducts: productsToProcess.length,
+      details: finalProgress?.details || [],
+      success: results.success,
+      errors: errorProducts.length > 0 ? errorProducts : results.products.filter(p => !p.success || p.error),
+      createdProducts: createdProducts,
+      existingProducts: existingProducts
+    };
+    
+    categorySyncResults.push(syncLogEntry);
+    // Keep only last MAX_SYNC_RESULTS entries
+    if (categorySyncResults.length > MAX_SYNC_RESULTS) {
+      categorySyncResults.shift();
+    }
+
     return res.status(200).json(results);
   } catch (error) {
     console.error(JSON.stringify({
@@ -362,6 +416,23 @@ export default async function handler(req, res) {
       stack: error.stack,
       timestamp: new Date().toISOString()
     }));
+
+    // Store error result for logging
+    const errorLogEntry = {
+      requestId: requestId,
+      category: category,
+      sectionId: sectionId,
+      action: action,
+      timestamp: new Date().toISOString(),
+      success: false,
+      error: error.message,
+      stack: error.stack
+    };
+    
+    categorySyncResults.push(errorLogEntry);
+    if (categorySyncResults.length > MAX_SYNC_RESULTS) {
+      categorySyncResults.shift();
+    }
 
     return res.status(500).json({
       success: false,
