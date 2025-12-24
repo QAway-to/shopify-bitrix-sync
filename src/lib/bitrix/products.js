@@ -595,9 +595,10 @@ export async function syncCertificateVariant(variantData, handle, handleToProduc
  * @param {string} productData.brand - Optional brand
  * @param {string} productData.category - Optional category
  * @param {boolean} createNew - Whether to create product if it doesn't exist
+ * @param {number} sectionId - Section ID (folder) where to create product (default: 32)
  * @returns {Promise<Object>} Sync result
  */
-export async function syncProductVariant(productData, createNew = true) {
+export async function syncProductVariant(productData, createNew = true, sectionId = 32) {
   const { product_title, sku, price, qty } = productData;
 
   if (!sku || !sku.trim()) {
@@ -627,7 +628,7 @@ export async function syncProductVariant(productData, createNew = true) {
           sku: skuClean
         };
 
-        productId = await createBitrixProduct(productFields);
+        productId = await createBitrixProduct(productFields, 14, sectionId);
         
         // Update product with additional properties if available
         if (productData.brand || productData.category) {

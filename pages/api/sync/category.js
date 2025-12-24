@@ -1,8 +1,8 @@
-// API endpoint for syncing category A-F products from Shopify to Bitrix
+// Universal API endpoint for syncing products from any category (A-F, G-M, N-S, T-Z)
 import { getCategoryProducts } from '../../../src/lib/shopify/inventory.js';
 import { syncProductVariant, refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
 
-const CATEGORY = 'category-a-f';
+const VALID_CATEGORIES = ['category-a-f', 'category-g-m', 'category-n-s', 'category-t-z'];
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -14,29 +14,40 @@ export default async function handler(req, res) {
   const action = req.query.action || 'sync';
   const isCreateAction = action === 'create';
   
-  // Get sectionId from request body (default: 32)
+  // Get category and sectionId from request body
+  const category = req.body?.category || 'category-a-f';
   const sectionId = req.body?.sectionId ? parseInt(req.body.sectionId) : 32;
+
+  // Validate category
+  if (!VALID_CATEGORIES.includes(category)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid category',
+      message: `Category must be one of: ${VALID_CATEGORIES.join(', ')}`
+    });
+  }
 
   const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   console.log(JSON.stringify({
-    event: 'SYNC_CATEGORY_A_F_START',
+    event: 'SYNC_CATEGORY_START',
     requestId,
+    category,
     action,
     sectionId,
     timestamp: new Date().toISOString()
   }));
 
   try {
-    // 1. Get products data from Shopify for category A-F
-    console.log(`[SYNC CATEGORY A-F] Fetching products data from Shopify...`);
-    console.log(`[SYNC CATEGORY A-F] Section ID (folder): ${sectionId}`);
-    const products = await getCategoryProducts(CATEGORY);
+    // 1. Get products data from Shopify for the specified category
+    console.log(`[SYNC ${category.toUpperCase()}] Fetching products data from Shopify...`);
+    console.log(`[SYNC ${category.toUpperCase()}] Section ID (folder): ${sectionId}`);
+    const products = await getCategoryProducts(category);
 
     const results = {
       success: true,
       requestId,
-      category: CATEGORY,
+      category: category,
       sectionId: sectionId,
       products: [],
       summary: {
@@ -53,7 +64,7 @@ export default async function handler(req, res) {
       try {
         // Skip products with qty = 0 if this is create action (only create products with stock)
         if (isCreateAction && (!product.qty || product.qty === 0)) {
-          console.log(`[SYNC CATEGORY A-F] ⏭️ Skipping ${product.sku} (qty = 0)`);
+          console.log(`[SYNC ${category.toUpperCase()}] ⏭️ Skipping ${product.sku} (qty = 0)`);
           results.summary.skipped++;
           continue;
         }
@@ -90,7 +101,7 @@ export default async function handler(req, res) {
         // Rate limiting between products
         await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error) {
-        console.error(`[SYNC CATEGORY A-F] Error syncing product:`, error);
+        console.error(`[SYNC ${category.toUpperCase()}] Error syncing product:`, error);
         results.summary.errors++;
         results.products.push({
           success: false,
@@ -101,8 +112,9 @@ export default async function handler(req, res) {
     }
 
     console.log(JSON.stringify({
-      event: 'SYNC_CATEGORY_A_F_SUCCESS',
+      event: 'SYNC_CATEGORY_SUCCESS',
       requestId,
+      category,
       summary: results.summary,
       timestamp: new Date().toISOString()
     }));
@@ -112,9 +124,9 @@ export default async function handler(req, res) {
       try {
         const mappingRefresh = await refreshBitrixMappingsFromCatalog();
         results.mappingRefresh = mappingRefresh;
-        console.log(`[SYNC CATEGORY A-F] ✅ Mapping refreshed after create:`, mappingRefresh);
+        console.log(`[SYNC ${category.toUpperCase()}] ✅ Mapping refreshed after create:`, mappingRefresh);
       } catch (mapErr) {
-        console.error(`[SYNC CATEGORY A-F] ⚠️ Failed to refresh mappings after create:`, mapErr);
+        console.error(`[SYNC ${category.toUpperCase()}] ⚠️ Failed to refresh mappings after create:`, mapErr);
         results.mappingRefresh = { success: false, error: mapErr.message };
       }
     }
@@ -122,8 +134,9 @@ export default async function handler(req, res) {
     return res.status(200).json(results);
   } catch (error) {
     console.error(JSON.stringify({
-      event: 'SYNC_CATEGORY_A_F_ERROR',
+      event: 'SYNC_CATEGORY_ERROR',
       requestId,
+      category,
       error: error.message,
       stack: error.stack,
       timestamp: new Date().toISOString()

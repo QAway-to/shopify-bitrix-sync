@@ -940,18 +940,25 @@ async function handleOrderUpdated(order) {
     }
   } catch (error) {
     console.error(`[SHOPIFY WEBHOOK] ❌ Error updating deal ${dealId}:`, error);
-    throw error;
+    // ⚠️ Don't throw - continue to update product rows even if deal fields update failed
+    // This ensures product rows are updated even if there's a non-critical error with deal fields
+    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Continuing to update product rows despite deal update error`);
   }
 
-  // Verify updated deal
-  const verifiedDeal = await verifyDeal(dealId);
-  if (verifiedDeal) {
-    console.log(`[SHOPIFY WEBHOOK] ✅ Deal verified after update:`, {
-      ID: verifiedDeal.ID,
-      TITLE: verifiedDeal.TITLE,
-      OPPORTUNITY: verifiedDeal.OPPORTUNITY,
-      STAGE_ID: verifiedDeal.STAGE_ID
-    });
+  // Verify updated deal (only if update succeeded)
+  let verifiedDeal = null;
+  try {
+    verifiedDeal = await verifyDeal(dealId);
+    if (verifiedDeal) {
+      console.log(`[SHOPIFY WEBHOOK] ✅ Deal verified after update:`, {
+        ID: verifiedDeal.ID,
+        TITLE: verifiedDeal.TITLE,
+        OPPORTUNITY: verifiedDeal.OPPORTUNITY,
+        STAGE_ID: verifiedDeal.STAGE_ID
+      });
+    }
+  } catch (verifyError) {
+    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify deal after update:`, verifyError);
   }
 
   // 4. ✅ ALWAYS update product rows (including shipping) to reflect any changes
@@ -1011,7 +1018,7 @@ async function handleOrderUpdated(order) {
         productRowsCount: productRows.length
       });
     }
-    } else {
+  } else {
     // If no product rows (e.g., all items removed/refunded), clear rows to keep Bitrix in sync
     console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to update (all items may be refunded/removed). Clearing product rows in Bitrix.`);
     try {
@@ -1020,12 +1027,12 @@ async function handleOrderUpdated(order) {
         rows: [],
       });
       console.log(`[SHOPIFY WEBHOOK] ✅ Product rows cleared for deal ${dealId} (no active items)`);
-    try {
-      const rowsVerify = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
-      console.log(`[SHOPIFY WEBHOOK] ✅ Product rows verification after clear for deal ${dealId}:`, rowsVerify?.result || rowsVerify);
-    } catch (verifyErr) {
-      console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify product rows after clear for deal ${dealId}:`, verifyErr);
-    }
+      try {
+        const rowsVerify = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
+        console.log(`[SHOPIFY WEBHOOK] ✅ Product rows verification after clear for deal ${dealId}:`, rowsVerify?.result || rowsVerify);
+      } catch (verifyErr) {
+        console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify product rows after clear for deal ${dealId}:`, verifyErr);
+      }
     } catch (clearError) {
       console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to clear product rows:`, clearError);
     }

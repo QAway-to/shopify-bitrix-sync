@@ -43,9 +43,13 @@ export default function ShopifyPage() {
   // Update certificate product state (manual update button)
   const [isUpdatingCert500, setIsUpdatingCert500] = useState(false);
   const [updateCertResult, setUpdateCertResult] = useState(null);
-  // Category A-F state
-  const [isCreatingCategoryAF, setIsCreatingCategoryAF] = useState(false);
-  const [createCategoryAFResult, setCreateCategoryAFResult] = useState(null);
+  // Category sync state (universal for all categories)
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  const [createCategoryResult, setCreateCategoryResult] = useState(null);
+  const [selectedCategory, setSelectedCategory] = useState('category-a-f');
+  const [categorySectionId, setCategorySectionId] = useState(32); // Default section ID
+  const [availableSections, setAvailableSections] = useState([]);
+  const [isLoadingSections, setIsLoadingSections] = useState(false);
 
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);
@@ -579,34 +583,38 @@ export default function ShopifyPage() {
     }
   };
 
-  // Create products for category A-F
-  const handleCreateCategoryAF = async () => {
-    setIsCreatingCategoryAF(true);
-    setCreateCategoryAFResult(null);
+  // Create products for selected category
+  const handleCreateCategory = async () => {
+    setIsCreatingCategory(true);
+    setCreateCategoryResult(null);
     setError(null);
 
     try {
-      const response = await fetch('/api/sync/category-a-f?action=create', {
+      const response = await fetch('/api/sync/category?action=create', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({
+          category: selectedCategory,
+          sectionId: categorySectionId
+        }),
       });
 
       const data = await response.json();
 
       if (data.success) {
-        setCreateCategoryAFResult(data);
-        console.log('[CREATE CATEGORY A-F] Products created successfully:', data);
+        setCreateCategoryResult(data);
+        console.log(`[CREATE ${selectedCategory.toUpperCase()}] Products created successfully:`, data);
       } else {
-        setError(data.error || 'Failed to create category A-F products');
-        setCreateCategoryAFResult(data);
+        setError(data.error || `Failed to create ${selectedCategory} products`);
+        setCreateCategoryResult(data);
       }
     } catch (err) {
-      console.error('[CREATE CATEGORY A-F] Error creating products:', err);
-      setError(err.message || 'Failed to create category A-F products');
+      console.error(`[CREATE ${selectedCategory.toUpperCase()}] Error creating products:`, err);
+      setError(err.message || `Failed to create ${selectedCategory} products`);
     } finally {
-      setIsCreatingCategoryAF(false);
+      setIsCreatingCategory(false);
     }
   };
 
@@ -1019,34 +1027,120 @@ export default function ShopifyPage() {
                 borderRadius: '6px',
                 border: '1px solid rgba(16, 185, 129, 0.3)'
               }}>
-                <div style={{ color: '#f1f5f9', fontWeight: 500 }}>Категория A-F</div>
-                <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '4px' }}>
-                  Товары со SKU, начинающимися с A, B, C, D, E, F
+                <div style={{ color: '#f1f5f9', fontWeight: 500, marginBottom: '12px' }}>Категории товаров</div>
+                
+                {/* Category selector */}
+                <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 500 }}>
+                    Категория (SKU):
+                  </label>
+                  <select
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: '4px',
+                      border: '1px solid rgba(59, 130, 246, 0.3)',
+                      background: 'rgba(15, 23, 42, 0.6)',
+                      color: '#f1f5f9',
+                      fontSize: '0.9rem',
+                      width: '100%',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="category-a-f">A-F (SKU начинается с A, B, C, D, E, F)</option>
+                    <option value="category-g-m">G-M (SKU начинается с G, H, I, J, K, L, M)</option>
+                    <option value="category-n-s">N-S (SKU начинается с N, O, P, Q, R, S)</option>
+                    <option value="category-t-z">T-Z (SKU начинается с T, U, V, W, X, Y, Z)</option>
+                  </select>
                 </div>
+
+                {/* Section ID selector */}
+                <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 500 }}>
+                    Раздел (SECTION_ID):
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <select
+                      value={categorySectionId}
+                      onChange={(e) => setCategorySectionId(parseInt(e.target.value) || 32)}
+                      style={{
+                        padding: '6px 10px',
+                        borderRadius: '4px',
+                        border: '1px solid rgba(59, 130, 246, 0.3)',
+                        background: 'rgba(15, 23, 42, 0.6)',
+                        color: '#f1f5f9',
+                        fontSize: '0.9rem',
+                        flex: '1 1 auto',
+                        cursor: 'pointer'
+                      }}
+                      disabled={isLoadingSections}
+                    >
+                      {isLoadingSections ? (
+                        <option>Загрузка...</option>
+                      ) : availableSections.length > 0 ? (
+                        <>
+                          {availableSections.map(section => (
+                            <option key={section.id} value={section.id}>
+                              {section.name} (ID: {section.id})
+                            </option>
+                          ))}
+                        </>
+                      ) : (
+                        <>
+                          <option value="32">32 (Default)</option>
+                          <option value="36">36</option>
+                          <option value="38">38</option>
+                        </>
+                      )}
+                    </select>
+                    <input
+                      type="number"
+                      value={categorySectionId}
+                      onChange={(e) => setCategorySectionId(parseInt(e.target.value) || 32)}
+                      min="0"
+                      placeholder="Введите ID"
+                      style={{
+                        padding: '6px 10px',
+                        borderRadius: '4px',
+                        border: '1px solid rgba(59, 130, 246, 0.3)',
+                        background: 'rgba(15, 23, 42, 0.6)',
+                        color: '#f1f5f9',
+                        fontSize: '0.9rem',
+                        width: '100px',
+                        flexShrink: 0
+                      }}
+                    />
+                  </div>
+                  <div style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '-4px' }}>
+                    ID раздела в Bitrix, куда будут помещены товары
+                  </div>
+                </div>
+
                 <button
-                  onClick={handleCreateCategoryAF}
-                  disabled={isCreatingCategoryAF}
+                  onClick={handleCreateCategory}
+                  disabled={isCreatingCategory}
                   style={{
                     marginTop: '8px',
-                    background: isCreatingCategoryAF ? '#6b7280' : '#10b981',
+                    background: isCreatingCategory ? '#6b7280' : '#10b981',
                     border: 'none',
                     padding: '8px 16px',
                     borderRadius: '6px',
                     color: 'white',
-                    cursor: isCreatingCategoryAF ? 'not-allowed' : 'pointer',
+                    cursor: isCreatingCategory ? 'not-allowed' : 'pointer',
                     fontSize: '0.9rem',
                     fontWeight: 500,
                     width: '100%'
                   }}
-                  title="Создать товары категории A-F из Shopify"
+                  title={`Создать товары категории ${selectedCategory} из Shopify`}
                 >
-                  {isCreatingCategoryAF ? '⏳ Создание...' : '➕ Создать товары A-F'}
+                  {isCreatingCategory ? '⏳ Создание...' : `➕ Создать товары ${selectedCategory.toUpperCase().replace('CATEGORY-', '')}`}
                 </button>
               </div>
             </div>
           </div>
 
-          {(syncResult || createResult || createCategoryAFResult) && (
+          {(syncResult || createResult || createCategoryResult) && (
             <div style={{
               marginTop: '20px',
               padding: '16px',
@@ -1060,7 +1154,7 @@ export default function ShopifyPage() {
                   ? (syncResult.success ? '✅ Синхронизация завершена' : '❌ Ошибка синхронизации')
                   : createResult
                   ? (createResult.success ? '✅ Создание завершено' : '❌ Ошибка создания')
-                  : (createCategoryAFResult.success ? '✅ Создание категории A-F завершено' : '❌ Ошибка создания категории A-F')
+                  : (createCategoryResult.success ? `✅ Создание категории ${createCategoryResult.category?.toUpperCase().replace('CATEGORY-', '') || ''} завершено` : `❌ Ошибка создания категории`)
                 }
               </div>
               {((syncResult || createResult)?.summary && (
@@ -1071,13 +1165,19 @@ export default function ShopifyPage() {
                   Ошибок: {(syncResult || createResult).summary.errors}
                 </div>
               ))}
-              {createCategoryAFResult?.summary && (
+              {createCategoryResult?.summary && (
                 <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                  Всего товаров: {createCategoryAFResult.summary.total} | 
-                  Создано: {createCategoryAFResult.summary.created} | 
-                  Обновлено: {createCategoryAFResult.summary.updated} | 
-                  Пропущено (qty=0): {createCategoryAFResult.summary.skipped} | 
-                  Ошибок: {createCategoryAFResult.summary.errors}
+                  Категория: {createCategoryResult.category?.toUpperCase().replace('CATEGORY-', '') || 'N/A'} | 
+                  Всего товаров: {createCategoryResult.summary.total} | 
+                  Создано: {createCategoryResult.summary.created} | 
+                  Обновлено: {createCategoryResult.summary.updated} | 
+                  Пропущено (qty=0): {createCategoryResult.summary.skipped} | 
+                  Ошибок: {createCategoryResult.summary.errors}
+                  {createCategoryResult.sectionId && (
+                    <div style={{ marginTop: '4px', fontSize: '0.85rem' }}>
+                      Раздел (SECTION_ID): {createCategoryResult.sectionId}
+                    </div>
+                  )}
                 </div>
               )}
               {((syncResult || createResult)?.certificates) && Object.keys((syncResult || createResult).certificates).length > 0 && (
