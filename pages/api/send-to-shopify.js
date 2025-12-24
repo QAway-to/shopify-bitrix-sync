@@ -26,7 +26,7 @@ export default async function handler(req, res) {
 
   for (let i = 0; i < selectedEvents.length; i++) {
     const event = selectedEvents[i];
-    const shopifyOrderId = event.shopifyOrderId || event.shopify_order_id;
+    let shopifyOrderId = event.shopifyOrderId || event.shopify_order_id;
     const dealId = event.dealId || event.deal_id;
     const rawDealData = event.rawDealData || {};
     
