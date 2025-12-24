@@ -165,7 +165,7 @@ async function processCategoryAsync(requestId, category, sectionId, isCreateActi
         batch.map(product => 
           syncProductVariantOptimized(
             {
-              product_title: product.product_title,
+              product_title: product.title || product.product_title,
               sku: product.sku,
               price: product.price,
               qty: product.qty,
