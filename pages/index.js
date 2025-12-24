@@ -1237,9 +1237,9 @@ export default function ShopifyPage() {
               marginTop: '20px',
               padding: '16px',
               borderRadius: '8px',
-              background: (syncResult || createResult || createCategoryAFResult)?.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-              border: `1px solid ${(syncResult || createResult || createCategoryAFResult)?.success ? '#059669' : '#ef4444'}`,
-              color: (syncResult || createResult || createCategoryAFResult)?.success ? '#059669' : '#ef4444'
+              background: (syncResult || createResult || createCategoryResult)?.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              border: `1px solid ${(syncResult || createResult || createCategoryResult)?.success ? '#059669' : '#ef4444'}`,
+              color: (syncResult || createResult || createCategoryResult)?.success ? '#059669' : '#ef4444'
             }}>
               <div style={{ fontWeight: 600, marginBottom: '8px' }}>
                 {syncResult 
