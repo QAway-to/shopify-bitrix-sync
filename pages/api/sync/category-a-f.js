@@ -87,8 +87,8 @@ export default async function handler(req, res) {
           results.summary.errors++;
         }
 
-        // Rate limiting between products
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Rate limiting between products (optimized: reduced from 500ms to 100ms)
+        await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         console.error(`[SYNC CATEGORY A-F] Error syncing product:`, error);
         results.summary.errors++;

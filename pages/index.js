@@ -50,8 +50,8 @@ export default function ShopifyPage() {
   const [categorySectionId, setCategorySectionId] = useState(32); // Default section ID
   const [availableSections, setAvailableSections] = useState([]);
   const [isLoadingSections, setIsLoadingSections] = useState(false);
-  const [categoryProgress, setCategoryProgress] = useState(null);
-  const [progressRequestId, setProgressRequestId] = useState(null);
+  const [syncProgress, setSyncProgress] = useState(null);
+  const [progressInterval, setProgressInterval] = useState(null);
 
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);
@@ -227,6 +227,15 @@ export default function ShopifyPage() {
 
     return () => clearInterval(interval);
   }, []);
+
+  // Cleanup progress interval on unmount
+  useEffect(() => {
+    return () => {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+      }
+    };
+  }, [progressInterval]);
 
   const handleSendToBitrix = async () => {
     if (selectedEvents.length === 0) {
@@ -585,47 +594,47 @@ export default function ShopifyPage() {
     }
   };
 
-  // Poll progress updates
-  useEffect(() => {
-    if (!progressRequestId || !isCreatingCategory) {
-      return;
-    }
-
-    const pollProgress = async () => {
-      try {
-        const response = await fetch(`/api/sync/category?requestId=${progressRequestId}`);
-        if (response.ok) {
-          const progress = await response.json();
-          setCategoryProgress(progress);
-
-          if (progress.complete) {
-            // If progress has result, use it
-            if (progress.result) {
-              setCreateCategoryResult(progress.result);
-            }
-            setIsCreatingCategory(false);
-            setProgressRequestId(null);
-            setCategoryProgress(null);
+  // Fetch progress for sync
+  const fetchProgress = async (requestId) => {
+    try {
+      const response = await fetch(`/api/sync/progress?requestId=${requestId}`);
+      const data = await response.json();
+      if (data.success && data.progress) {
+        setSyncProgress(data.progress);
+        
+        // Stop polling if completed or error
+        if (data.progress.status === 'completed' || data.progress.status === 'error') {
+          if (progressInterval) {
+            clearInterval(progressInterval);
+            setProgressInterval(null);
           }
+          setIsCreatingCategory(false);
+          setCreateCategoryResult({
+            success: data.progress.status === 'completed',
+            summary: {
+              total: data.progress.total,
+              created: data.progress.created,
+              updated: data.progress.updated,
+              skipped: data.progress.skipped,
+              errors: data.progress.errors
+            }
+          });
         }
-      } catch (err) {
-        console.error('[PROGRESS] Error polling progress:', err);
       }
-    };
+    } catch (err) {
+      console.error('[PROGRESS] Error fetching progress:', err);
+    }
+  };
 
-    const interval = setInterval(pollProgress, 1000); // Poll every second
-    return () => clearInterval(interval);
-  }, [progressRequestId, isCreatingCategory, selectedCategory, categorySectionId]);
-
-  // Create products for selected category
+  // Create products for selected category (optimized version)
   const handleCreateCategory = async () => {
     setIsCreatingCategory(true);
     setCreateCategoryResult(null);
     setError(null);
-    setCategoryProgress(null);
+    setSyncProgress(null);
 
     try {
-      const response = await fetch('/api/sync/category?action=create', {
+      const response = await fetch('/api/sync/category-optimized?action=create', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -638,25 +647,26 @@ export default function ShopifyPage() {
 
       const data = await response.json();
 
-      if (data.success) {
-        // If request completed immediately (small batch)
-        if (data.requestId) {
-          setProgressRequestId(data.requestId);
-        } else {
-          setCreateCategoryResult(data);
-          setIsCreatingCategory(false);
-        }
-        console.log(`[CREATE ${selectedCategory.toUpperCase()}] Products created successfully:`, data);
+      if (data.success && data.requestId) {
+        // Start polling for progress every 30 seconds
+        const interval = setInterval(() => {
+          fetchProgress(data.requestId);
+        }, 30000); // 30 seconds
+        
+        setProgressInterval(interval);
+        
+        // Fetch initial progress immediately
+        fetchProgress(data.requestId);
+        
+        console.log(`[CREATE ${selectedCategory.toUpperCase()}] Processing started, requestId: ${data.requestId}`);
       } else {
-        setError(data.error || `Failed to create ${selectedCategory} products`);
-        setCreateCategoryResult(data);
+        setError(data.error || `Failed to start ${selectedCategory} sync`);
         setIsCreatingCategory(false);
       }
     } catch (err) {
-      console.error(`[CREATE ${selectedCategory.toUpperCase()}] Error creating products:`, err);
-      setError(err.message || `Failed to create ${selectedCategory} products`);
+      console.error(`[CREATE ${selectedCategory.toUpperCase()}] Error starting sync:`, err);
+      setError(err.message || `Failed to start ${selectedCategory} sync`);
       setIsCreatingCategory(false);
-      setProgressRequestId(null);
     }
   };
 
@@ -1159,41 +1169,6 @@ export default function ShopifyPage() {
                   </div>
                 </div>
 
-                {/* Progress bar */}
-                {categoryProgress && !categoryProgress.complete && (
-                  <div style={{ marginTop: '12px', marginBottom: '8px' }}>
-                    <div style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      marginBottom: '4px',
-                      fontSize: '0.85rem',
-                      color: '#94a3b8'
-                    }}>
-                      <span>
-                        {categoryProgress.processed || 0} / {categoryProgress.total || 0}
-                      </span>
-                      <span>
-                        Батч {categoryProgress.currentBatch || 0} / {categoryProgress.totalBatches || 0}
-                      </span>
-                    </div>
-                    <div style={{
-                      width: '100%',
-                      height: '8px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      borderRadius: '4px',
-                      overflow: 'hidden'
-                    }}>
-                      <div style={{
-                        width: `${categoryProgress.total > 0 ? (categoryProgress.processed / categoryProgress.total) * 100 : 0}%`,
-                        height: '100%',
-                        background: '#10b981',
-                        transition: 'width 0.3s ease',
-                        borderRadius: '4px'
-                      }} />
-                    </div>
-                  </div>
-                )}
-
                 <button
                   onClick={handleCreateCategory}
                   disabled={isCreatingCategory}
@@ -1211,13 +1186,48 @@ export default function ShopifyPage() {
                   }}
                   title={`Создать товары категории ${selectedCategory} из Shopify`}
                 >
-                  {isCreatingCategory 
-                    ? (categoryProgress 
-                        ? `⏳ Обработка: ${categoryProgress.processed || 0}/${categoryProgress.total || 0}`
-                        : '⏳ Создание...')
-                    : `➕ Создать товары ${selectedCategory.toUpperCase().replace('CATEGORY-', '')}`
-                  }
+                  {isCreatingCategory ? '⏳ Создание...' : `➕ Создать товары ${selectedCategory.toUpperCase().replace('CATEGORY-', '')}`}
                 </button>
+                
+                {/* Progress display */}
+                {syncProgress && (
+                  <div style={{
+                    marginTop: '12px',
+                    padding: '12px',
+                    background: 'rgba(59, 130, 246, 0.1)',
+                    borderRadius: '6px',
+                    border: '1px solid rgba(59, 130, 246, 0.3)'
+                  }}>
+                    <div style={{ color: '#f1f5f9', fontSize: '0.9rem', fontWeight: 500, marginBottom: '8px' }}>
+                      {syncProgress.message}
+                    </div>
+                    {syncProgress.total > 0 && (
+                      <>
+                        <div style={{ 
+                          width: '100%', 
+                          height: '8px', 
+                          background: 'rgba(15, 23, 42, 0.6)', 
+                          borderRadius: '4px',
+                          overflow: 'hidden',
+                          marginBottom: '8px'
+                        }}>
+                          <div style={{
+                            width: `${(syncProgress.processed / syncProgress.total) * 100}%`,
+                            height: '100%',
+                            background: '#3b82f6',
+                            transition: 'width 0.3s ease'
+                          }} />
+                        </div>
+                        <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
+                          Обработано: {syncProgress.processed} / {syncProgress.total}
+                          {syncProgress.created > 0 && ` | Создано: ${syncProgress.created}`}
+                          {syncProgress.updated > 0 && ` | Обновлено: ${syncProgress.updated}`}
+                          {syncProgress.errors > 0 && ` | Ошибок: ${syncProgress.errors}`}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

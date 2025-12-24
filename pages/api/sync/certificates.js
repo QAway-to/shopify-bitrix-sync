@@ -92,8 +92,8 @@ export default async function handler(req, res) {
             });
           }
 
-          // Rate limiting between variants
-          await new Promise(resolve => setTimeout(resolve, 500));
+          // Rate limiting between variants (optimized: reduced from 500ms to 100ms)
+          await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
           console.error(`[SYNC CERTIFICATES] Error syncing variant:`, error);
           results.summary.errors++;

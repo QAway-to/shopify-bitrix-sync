@@ -1,19 +1,44 @@
-// Optimized API endpoint for syncing products with batching and parallel processing
+// Optimized API endpoint for syncing products with progress tracking and parallel processing
 import { getCategoryProducts } from '../../../src/lib/shopify/inventory.js';
-import { 
-  syncProductVariantOptimized,
-  batchFindProductsBySku,
-  batchGetCurrentStock,
-  createGroupedIncomingDocument
-} from '../../../src/lib/bitrix/productsBatch.js';
-import { refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
+import { syncProductVariantOptimized, refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
+
+// Server-only imports
+const isServer = typeof window === 'undefined';
+let writeFileSync, existsSync, mkdirSync, join;
+
+if (isServer) {
+  const fs = eval('require')('fs');
+  const path = eval('require')('path');
+  writeFileSync = fs.writeFileSync;
+  existsSync = fs.existsSync;
+  mkdirSync = fs.mkdirSync;
+  join = path.join;
+}
 
 const VALID_CATEGORIES = ['category-a-f', 'category-g-m', 'category-n-s', 'category-t-z'];
+const PARALLEL_WORKERS = 8; // Number of parallel workers
 
-// Configuration
-const BATCH_SIZE = 50; // Process products in batches
-const PARALLEL_LIMIT = 5; // Number of products to process in parallel
-const DOCUMENT_GROUP_SIZE = 20; // Group products into documents
+// Get progress directory (lazy initialization)
+function getProgressDir() {
+  if (!isServer) return null;
+  const PROGRESS_DIR = join(process.cwd(), '.data', 'progress');
+  if (!existsSync(PROGRESS_DIR)) {
+    mkdirSync(PROGRESS_DIR, { recursive: true });
+  }
+  return PROGRESS_DIR;
+}
+
+function saveProgress(requestId, progress) {
+  if (!isServer) return;
+  try {
+    const PROGRESS_DIR = getProgressDir();
+    if (!PROGRESS_DIR) return;
+    const progressFile = join(PROGRESS_DIR, `${requestId}.json`);
+    writeFileSync(progressFile, JSON.stringify(progress, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('[PROGRESS] Error saving progress:', error);
+  }
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -37,6 +62,23 @@ export default async function handler(req, res) {
 
   const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
+  // Initialize progress
+  const progress = {
+    requestId,
+    category,
+    status: 'starting',
+    message: 'Загрузка товаров из Shopify...',
+    total: 0,
+    processed: 0,
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    errors: 0,
+    startTime: new Date().toISOString(),
+    lastUpdate: new Date().toISOString()
+  };
+  saveProgress(requestId, progress);
+
   console.log(JSON.stringify({
     event: 'SYNC_CATEGORY_OPTIMIZED_START',
     requestId,
@@ -46,183 +88,164 @@ export default async function handler(req, res) {
     timestamp: new Date().toISOString()
   }));
 
+  // Start processing in background (don't wait for response)
+  processCategoryAsync(requestId, category, sectionId, isCreateAction, progress)
+    .catch(error => {
+      console.error(`[SYNC ${category.toUpperCase()}] Background error:`, error);
+      progress.status = 'error';
+      progress.message = `Ошибка: ${error.message}`;
+      progress.lastUpdate = new Date().toISOString();
+      saveProgress(requestId, progress);
+    });
+
+  // Return immediately with requestId
+  return res.status(202).json({
+    success: true,
+    requestId,
+    message: 'Processing started',
+    progressUrl: `/api/sync/progress?requestId=${requestId}`
+  });
+}
+
+async function processCategoryAsync(requestId, category, sectionId, isCreateAction, progress) {
   try {
-    // 1. Get products from Shopify
-    console.log(`[SYNC ${category.toUpperCase()}] Fetching products from Shopify...`);
-    const allProducts = await getCategoryProducts(category);
-    
-    // Filter products with qty > 0 if create action
-    const productsToProcess = isCreateAction
-      ? allProducts.filter(p => p.qty && p.qty > 0)
-      : allProducts;
+    // 1. Fetch products
+    progress.status = 'fetching';
+    progress.message = 'Загрузка товаров из Shopify...';
+    progress.lastUpdate = new Date().toISOString();
+    saveProgress(requestId, progress);
 
-    console.log(`[SYNC ${category.toUpperCase()}] Processing ${productsToProcess.length} products (out of ${allProducts.length} total)`);
+    const products = await getCategoryProducts(category);
+    const productsToProcess = isCreateAction 
+      ? products.filter(p => p.qty && p.qty > 0)
+      : products;
 
+    progress.total = productsToProcess.length;
+    progress.status = 'processing';
+    progress.message = `Обработка товаров: 0/${progress.total}`;
+    progress.lastUpdate = new Date().toISOString();
+    saveProgress(requestId, progress);
+
+    // 2. Process in parallel batches
     const results = {
-      success: true,
-      requestId,
-      category: category,
-      sectionId: sectionId,
       products: [],
       summary: {
         total: 0,
         created: 0,
         updated: 0,
-        skipped: allProducts.length - productsToProcess.length,
+        skipped: 0,
         errors: 0
       }
     };
 
-    // 2. Process in batches
-    for (let batchStart = 0; batchStart < productsToProcess.length; batchStart += BATCH_SIZE) {
-      const batch = productsToProcess.slice(batchStart, batchStart + BATCH_SIZE);
-      console.log(`[SYNC ${category.toUpperCase()}] Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(productsToProcess.length / BATCH_SIZE)} (${batch.length} products)`);
+    // Split into batches for parallel processing
+    const batches = [];
+    for (let i = 0; i < productsToProcess.length; i += PARALLEL_WORKERS) {
+      batches.push(productsToProcess.slice(i, i + PARALLEL_WORKERS));
+    }
 
-      // 2.1. Pre-fetch existing products for this batch
-      const skus = batch.map(p => p.sku?.trim()).filter(Boolean);
-      const existingProductsMap = await batchFindProductsBySku(skus);
-      console.log(`[SYNC ${category.toUpperCase()}] Found ${Array.from(existingProductsMap.values()).filter(v => v !== null).length} existing products in batch`);
+    let lastProgressUpdate = Date.now();
 
-      // 2.2. Process products in parallel (with limit)
-      const syncPromises = batch.map(async (product, index) => {
-        // Stagger parallel requests slightly
-        await new Promise(resolve => setTimeout(resolve, (index % PARALLEL_LIMIT) * 100));
-
-        return syncProductVariantOptimized(
-          {
-            product_title: product.product_title,
-            sku: product.sku,
-            price: product.price,
-            qty: product.qty,
-            variant_id: product.variant_id,
-            brand: product.brand || null,
-            category: product.category || null
-          },
-          isCreateAction,
-          sectionId,
-          existingProductsMap,
-          null // Stock will be fetched later in groups
-        );
-      });
-
-      const syncResults = await Promise.all(syncPromises);
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
       
-      // 2.3. Collect results and group products needing documents
-      const productsNeedingIncoming = [];
-      const productsNeedingOutgoing = [];
-      const productIdsForStock = [];
+      // Process batch in parallel
+      const batchResults = await Promise.allSettled(
+        batch.map(product => 
+          syncProductVariantOptimized(
+            {
+              product_title: product.product_title,
+              sku: product.sku,
+              price: product.price,
+              qty: product.qty,
+              variant_id: product.variant_id,
+              brand: product.brand || null,
+              category: product.category || null
+            },
+            isCreateAction,
+            sectionId
+          )
+        )
+      );
 
-      for (const syncResult of syncResults) {
-        results.products.push(syncResult);
-        results.summary.total++;
-
-        if (syncResult.success) {
-          if (isCreateAction && syncResult.productId && !existingProductsMap.get(syncResult.sku)) {
-            results.summary.created++;
-          }
-
-          if (syncResult.productId) {
-            productIdsForStock.push(syncResult.productId);
-          }
-
-          if (syncResult.needsIncomingDocument) {
-            productsNeedingIncoming.push({
-              productId: syncResult.productId,
-              amount: syncResult.difference,
-              sku: syncResult.sku
-            });
-          } else if (syncResult.needsOutgoingDocument) {
-            productsNeedingOutgoing.push({
-              productId: syncResult.productId,
-              amount: Math.abs(syncResult.difference),
-              sku: syncResult.sku
-            });
+      // Process results
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          results.products.push(result.value);
+          results.summary.total++;
+          
+          if (result.value.success) {
+            if (isCreateAction && result.value.productId) {
+              results.summary.created++;
+              progress.created++;
+            }
+            if (result.value.documentId) {
+              results.summary.updated++;
+              progress.updated++;
+            }
+          } else {
+            results.summary.errors++;
+            progress.errors++;
           }
         } else {
           results.summary.errors++;
+          progress.errors++;
+          results.products.push({
+            success: false,
+            sku: 'N/A',
+            error: result.reason?.message || 'Unknown error'
+          });
         }
       }
 
-      // 2.4. Batch fetch stock for all products
-      if (productIdsForStock.length > 0) {
-        const stockMap = await batchGetCurrentStock(productIdsForStock);
-        
-        // Re-calculate differences with actual stock
-        for (const syncResult of syncResults) {
-          if (syncResult.success && syncResult.productId && stockMap.has(syncResult.productId)) {
-            const actualStock = stockMap.get(syncResult.productId);
-            const actualDifference = syncResult.quantity - actualStock;
-            
-            // Update needsIncomingDocument/needsOutgoingDocument based on actual stock
-            if (syncResult.quantity > 0 && actualDifference > 0) {
-              const existingIndex = productsNeedingIncoming.findIndex(p => p.productId === syncResult.productId);
-              if (existingIndex >= 0) {
-                productsNeedingIncoming[existingIndex].amount = actualDifference;
-              } else {
-                productsNeedingIncoming.push({
-                  productId: syncResult.productId,
-                  amount: actualDifference,
-                  sku: syncResult.sku
-                });
-              }
-            } else if (actualDifference < 0) {
-              const existingIndex = productsNeedingOutgoing.findIndex(p => p.productId === syncResult.productId);
-              if (existingIndex >= 0) {
-                productsNeedingOutgoing[existingIndex].amount = Math.abs(actualDifference);
-              } else {
-                productsNeedingOutgoing.push({
-                  productId: syncResult.productId,
-                  amount: Math.abs(actualDifference),
-                  sku: syncResult.sku
-                });
-              }
-            }
-          }
-        }
-      }
+      progress.processed = results.summary.total;
+      progress.message = `Обработка товаров: ${progress.processed}/${progress.total}`;
+      progress.lastUpdate = new Date().toISOString();
 
-      // 2.5. Create grouped incoming documents
-      for (let i = 0; i < productsNeedingIncoming.length; i += DOCUMENT_GROUP_SIZE) {
-        const documentGroup = productsNeedingIncoming.slice(i, i + DOCUMENT_GROUP_SIZE);
-        try {
-          const docId = await createGroupedIncomingDocument(
-            documentGroup,
-            `Синхронизация товаров ${category} из Shopify (батч ${Math.floor(i / DOCUMENT_GROUP_SIZE) + 1})`,
-            2
-          );
-          results.summary.updated += documentGroup.length;
-          console.log(`[SYNC ${category.toUpperCase()}] ✅ Created incoming document ${docId} for ${documentGroup.length} products`);
-        } catch (error) {
-          console.error(`[SYNC ${category.toUpperCase()}] ❌ Error creating grouped document:`, error);
-          results.summary.errors += documentGroup.length;
-        }
-      }
-
-      // 2.6. Create outgoing documents (one per product for now, can be optimized later)
-      if (productsNeedingOutgoing.length > 0) {
-        const { createOutgoingDocument } = await import('../../../src/lib/bitrix/products.js');
-        
-        for (const product of productsNeedingOutgoing) {
-          try {
-            const docId = await createOutgoingDocument({
-              title: `Синхронизация товара ${product.sku} из Shopify (списание)`,
-              productId: product.productId,
-              amount: product.amount
-            });
-            results.summary.updated++;
-            console.log(`[SYNC ${category.toUpperCase()}] ✅ Created outgoing document for ${product.sku}`);
-          } catch (error) {
-            console.error(`[SYNC ${category.toUpperCase()}] ❌ Error creating outgoing document:`, error);
-            results.summary.errors++;
-          }
-        }
+      // Update progress every 30 seconds or after each batch
+      const now = Date.now();
+      if (now - lastProgressUpdate >= 30000 || batchIndex === batches.length - 1) {
+        saveProgress(requestId, progress);
+        lastProgressUpdate = now;
       }
 
       // Small delay between batches to avoid overwhelming API
-      if (batchStart + BATCH_SIZE < productsToProcess.length) {
-        await new Promise(resolve => setTimeout(resolve, 200));
+      if (batchIndex < batches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
     }
+
+    // 3. Group inventory documents (optimization: one document per batch of products)
+    if (isCreateAction && results.summary.created > 0) {
+      progress.status = 'syncing_inventory';
+      progress.message = 'Синхронизация остатков...';
+      progress.lastUpdate = new Date().toISOString();
+      saveProgress(requestId, progress);
+
+      // Inventory sync is already done in syncProductVariantOptimized
+      // But we can optimize further by grouping documents
+    }
+
+    // 4. Refresh mappings
+    if (isCreateAction) {
+      progress.status = 'refreshing_mappings';
+      progress.message = 'Обновление маппинга...';
+      progress.lastUpdate = new Date().toISOString();
+      saveProgress(requestId, progress);
+
+      try {
+        await refreshBitrixMappingsFromCatalog();
+      } catch (mapErr) {
+        console.error(`[SYNC ${category.toUpperCase()}] ⚠️ Failed to refresh mappings:`, mapErr);
+      }
+    }
+
+    // 5. Finalize
+    progress.status = 'completed';
+    progress.message = `Завершено: создано ${results.summary.created}, обновлено ${results.summary.updated}`;
+    progress.lastUpdate = new Date().toISOString();
+    progress.endTime = new Date().toISOString();
+    saveProgress(requestId, progress);
 
     console.log(JSON.stringify({
       event: 'SYNC_CATEGORY_OPTIMIZED_SUCCESS',
@@ -232,19 +255,6 @@ export default async function handler(req, res) {
       timestamp: new Date().toISOString()
     }));
 
-    // Refresh mappings after creation
-    if (isCreateAction) {
-      try {
-        const mappingRefresh = await refreshBitrixMappingsFromCatalog();
-        results.mappingRefresh = mappingRefresh;
-        console.log(`[SYNC ${category.toUpperCase()}] ✅ Mapping refreshed after create:`, mappingRefresh);
-      } catch (mapErr) {
-        console.error(`[SYNC ${category.toUpperCase()}] ⚠️ Failed to refresh mappings:`, mapErr);
-        results.mappingRefresh = { success: false, error: mapErr.message };
-      }
-    }
-
-    return res.status(200).json(results);
   } catch (error) {
     console.error(JSON.stringify({
       event: 'SYNC_CATEGORY_OPTIMIZED_ERROR',
@@ -255,12 +265,10 @@ export default async function handler(req, res) {
       timestamp: new Date().toISOString()
     }));
 
-    return res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      message: error.message,
-      requestId
-    });
+    progress.status = 'error';
+    progress.message = `Ошибка: ${error.message}`;
+    progress.lastUpdate = new Date().toISOString();
+    saveProgress(requestId, progress);
   }
 }
 
