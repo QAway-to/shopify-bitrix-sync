@@ -283,6 +283,13 @@ export async function findProductIdByVariantId(variant_id) {
       select: ['ID', 'NAME', 'CODE', 'XML_ID']
     });
 
+    console.log(`[MAPPING UTILS] 📋 Bitrix API response for XML_ID="${variantIdStr}":`, JSON.stringify({
+      hasResult: !!response.result,
+      resultLength: response.result?.length || 0,
+      result: response.result || null,
+      error: response.error || null
+    }, null, 2));
+
     if (response.result && response.result.length > 0) {
       const product = response.result[0];
       const productId = parseInt(product.ID);
@@ -298,9 +305,13 @@ export async function findProductIdByVariantId(variant_id) {
     } else {
       console.warn(`[MAPPING UTILS] ⚠️ No products found in Bitrix with XML_ID="${variantIdStr}"`);
       console.warn(`[MAPPING UTILS]   Required: Product in Bitrix must have XML_ID field = "${variantIdStr}"`);
+      if (response.error) {
+        console.error(`[MAPPING UTILS]   Bitrix API error:`, response.error);
+      }
     }
   } catch (error) {
     console.error(`[MAPPING UTILS] ❌ Error searching Bitrix API for variant_id ${variantIdStr}:`, error);
+    console.error(`[MAPPING UTILS]   Error details:`, JSON.stringify(error, null, 2));
   }
 
   console.warn(`[MAPPING UTILS] ⚠️ Product not found for variant_id: ${variantIdStr}`);
@@ -347,6 +358,13 @@ export async function findProductIdBySku(sku) {
       select: ['ID', 'NAME', 'CODE', 'XML_ID']
     });
 
+    console.log(`[MAPPING UTILS] 📋 Bitrix API response for CODE="${sku}":`, JSON.stringify({
+      hasResult: !!response.result,
+      resultLength: response.result?.length || 0,
+      result: response.result || null,
+      error: response.error || null
+    }, null, 2));
+
     if (response.result && response.result.length > 0) {
       const product = response.result[0];
       const productId = parseInt(product.ID);
@@ -362,9 +380,13 @@ export async function findProductIdBySku(sku) {
     } else {
       console.warn(`[MAPPING UTILS] ⚠️ No products found in Bitrix with CODE="${sku}"`);
       console.warn(`[MAPPING UTILS]   Required: Product in Bitrix must have CODE field = "${sku}"`);
+      if (response.error) {
+        console.error(`[MAPPING UTILS]   Bitrix API error:`, response.error);
+      }
     }
   } catch (error) {
     console.error(`[MAPPING UTILS] ❌ Error searching Bitrix API for ${sku}:`, error);
+    console.error(`[MAPPING UTILS]   Error details:`, JSON.stringify(error, null, 2));
   }
 
   console.warn(`[MAPPING UTILS] ⚠️ Product not found for SKU: ${sku}`);
