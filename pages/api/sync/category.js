@@ -124,7 +124,7 @@ export default async function handler(req, res) {
       console.log(`[SYNC ${category.toUpperCase()}] Processing batch ${currentBatch}/${totalBatches} (${batch.length} products)`);
       
       // Update progress
-      const progress = progressStore.get(requestId);
+      let progress = progressStore.get(requestId);
       if (progress) {
         progress.currentBatch = currentBatch;
         progress.totalBatches = totalBatches;
@@ -162,7 +162,7 @@ export default async function handler(req, res) {
       const syncResults = await Promise.all(syncPromises);
       
       // Update progress after batch
-      const progress = progressStore.get(requestId);
+      progress = progressStore.get(requestId);
       if (progress) {
         progress.processed += syncResults.length;
         progress.timestamp = Date.now();
