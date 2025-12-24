@@ -16,14 +16,10 @@ const BATCH_SIZE = 50; // Process products in batches
 const PARALLEL_LIMIT = 5; // Number of products to process in parallel
 const DOCUMENT_GROUP_SIZE = 20; // Group products into documents
 
-// Store progress in memory (simple approach)
+// Simple progress store (in-memory)
 const progressStore = new Map();
 
-// Store category sync results for logging (keep last 100 operations)
-const categorySyncResults = [];
-const MAX_SYNC_RESULTS = 100;
-
-// Cleanup old progress entries (older than 1 hour)
+// Cleanup old progress (older than 1 hour)
 setInterval(() => {
   const now = Date.now();
   for (const [key, value] of progressStore.entries()) {
@@ -31,12 +27,7 @@ setInterval(() => {
       progressStore.delete(key);
     }
   }
-}, 60000); // Check every minute
-
-// Export function to get sync results for logs
-export function getCategorySyncResults() {
-  return [...categorySyncResults].reverse(); // Most recent first
-}
+}, 60000);
 
 export default async function handler(req, res) {
   // Support GET for progress updates
@@ -51,16 +42,10 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Progress not found' });
     }
 
-    // Return current progress
-    if (progress.complete) {
-      return res.status(200).json({ type: 'complete', ...progress.result });
-    } else {
-      return res.status(200).json({ type: 'progress', ...progress });
-    }
+    return res.status(200).json(progress);
   }
-
   if (req.method !== 'POST') {
-    res.setHeader('Allow', ['POST', 'GET']);
+    res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
@@ -81,7 +66,7 @@ export default async function handler(req, res) {
     });
   }
 
-  const requestId = requestIdFromBody || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   console.log(JSON.stringify({
     event: 'SYNC_CATEGORY_START',
@@ -124,18 +109,28 @@ export default async function handler(req, res) {
     progressStore.set(requestId, {
       processed: 0,
       total: productsToProcess.length,
+      currentBatch: 0,
+      totalBatches: Math.ceil(productsToProcess.length / BATCH_SIZE),
       complete: false,
-      result: null,
-      currentProduct: null,
-      currentAction: 'Инициализация...',
-      details: [],
       timestamp: Date.now()
     });
 
     // 2. Process in batches with optimization
     for (let batchStart = 0; batchStart < productsToProcess.length; batchStart += BATCH_SIZE) {
       const batch = productsToProcess.slice(batchStart, batchStart + BATCH_SIZE);
-      console.log(`[SYNC ${category.toUpperCase()}] Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(productsToProcess.length / BATCH_SIZE)} (${batch.length} products)`);
+      const currentBatch = Math.floor(batchStart / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(productsToProcess.length / BATCH_SIZE);
+      
+      console.log(`[SYNC ${category.toUpperCase()}] Processing batch ${currentBatch}/${totalBatches} (${batch.length} products)`);
+      
+      // Update progress
+      const progress = progressStore.get(requestId);
+      if (progress) {
+        progress.currentBatch = currentBatch;
+        progress.totalBatches = totalBatches;
+        progress.timestamp = Date.now();
+        progressStore.set(requestId, progress);
+      }
 
       // 2.1. Pre-fetch existing products for this batch
       const skus = batch.map(p => p.sku?.trim()).filter(Boolean);
@@ -147,16 +142,7 @@ export default async function handler(req, res) {
         // Stagger parallel requests slightly
         await new Promise(resolve => setTimeout(resolve, (index % PARALLEL_LIMIT) * 100));
 
-        // Update progress - current product
-        const currentProgress = progressStore.get(requestId);
-        if (currentProgress) {
-          currentProgress.currentProduct = `${product.sku || 'N/A'} - ${product.product_title || 'Unknown'}`;
-          currentProgress.currentAction = isCreateAction ? 'Создание товара...' : 'Проверка товара...';
-          currentProgress.timestamp = Date.now();
-          progressStore.set(requestId, currentProgress);
-        }
-
-        const syncResult = await syncProductVariantOptimized(
+        return syncProductVariantOptimized(
           {
             product_title: product.product_title,
             sku: product.sku,
@@ -171,35 +157,17 @@ export default async function handler(req, res) {
           existingProductsMap,
           null // Stock will be fetched later in groups
         );
-
-        // Update progress - add detail
-        const updatedProgress = progressStore.get(requestId);
-        if (updatedProgress) {
-          const detail = {
-            sku: product.sku || 'N/A',
-            title: product.product_title || 'Unknown',
-            status: syncResult.success ? 'success' : 'error',
-            action: syncResult.success 
-              ? (syncResult.productId && !existingProductsMap.get(product.sku) ? 'created' : 'exists')
-              : 'error',
-            message: syncResult.success 
-              ? (syncResult.productId && !existingProductsMap.get(product.sku) 
-                  ? `Создан (ID: ${syncResult.productId})` 
-                  : `Существует (ID: ${syncResult.productId})`)
-              : syncResult.error || 'Ошибка'
-          };
-          updatedProgress.details.push(detail);
-          updatedProgress.processed++;
-          updatedProgress.currentProduct = null;
-          updatedProgress.currentAction = `Обработано: ${updatedProgress.processed}/${updatedProgress.total}`;
-          updatedProgress.timestamp = Date.now();
-          progressStore.set(requestId, updatedProgress);
-        }
-
-        return syncResult;
       });
 
       const syncResults = await Promise.all(syncPromises);
+      
+      // Update progress after batch
+      const progress = progressStore.get(requestId);
+      if (progress) {
+        progress.processed += syncResults.length;
+        progress.timestamp = Date.now();
+        progressStore.set(requestId, progress);
+      }
       
       // 2.3. Collect results and group products needing documents
       const productsNeedingIncoming = [];
@@ -313,14 +281,6 @@ export default async function handler(req, res) {
         }
       }
 
-      // Update progress after batch completion
-      const currentProgress = progressStore.get(requestId);
-      if (currentProgress) {
-        currentProgress.currentAction = `Батч ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(productsToProcess.length / BATCH_SIZE)} завершен. Создание документов...`;
-        currentProgress.timestamp = Date.now();
-        progressStore.set(requestId, currentProgress);
-      }
-
       // Small delay between batches
       if (batchStart + BATCH_SIZE < productsToProcess.length) {
         await new Promise(resolve => setTimeout(resolve, 200));
@@ -330,13 +290,39 @@ export default async function handler(req, res) {
     // Update skipped count
     results.summary.skipped = products.length - productsToProcess.length;
 
+    // Mark progress as complete and store result
+    const finalProgress = progressStore.get(requestId);
+    if (finalProgress) {
+      finalProgress.complete = true;
+      finalProgress.processed = productsToProcess.length;
+      finalProgress.result = results;
+      finalProgress.timestamp = Date.now();
+      progressStore.set(requestId, finalProgress);
+    }
+
+    // Log detailed results
     console.log(JSON.stringify({
       event: 'SYNC_CATEGORY_SUCCESS',
       requestId,
       category,
+      sectionId,
+      action,
       summary: results.summary,
+      totalProducts: products.length,
+      processedProducts: productsToProcess.length,
       timestamp: new Date().toISOString()
     }));
+
+    // Log detailed report
+    console.log(`[SYNC ${category.toUpperCase()}] === ОТЧЁТ ПО ОБРАБОТКЕ ===`);
+    console.log(`[SYNC ${category.toUpperCase()}] Всего товаров в категории: ${products.length}`);
+    console.log(`[SYNC ${category.toUpperCase()}] Обработано товаров: ${productsToProcess.length}`);
+    console.log(`[SYNC ${category.toUpperCase()}] Пропущено (qty=0): ${results.summary.skipped}`);
+    console.log(`[SYNC ${category.toUpperCase()}] Создано новых: ${results.summary.created}`);
+    console.log(`[SYNC ${category.toUpperCase()}] Обновлено (документы): ${results.summary.updated}`);
+    console.log(`[SYNC ${category.toUpperCase()}] Ошибок: ${results.summary.errors}`);
+    console.log(`[SYNC ${category.toUpperCase()}] Раздел (SECTION_ID): ${sectionId}`);
+    console.log(`[SYNC ${category.toUpperCase()}] ===========================`);
 
     // If this was a create action, refresh mappings from Bitrix catalog after creation
     if (isCreateAction) {
@@ -350,89 +336,33 @@ export default async function handler(req, res) {
       }
     }
 
-    // Mark as complete
-    const finalProgress = progressStore.get(requestId);
-    if (finalProgress) {
-      finalProgress.complete = true;
-      finalProgress.currentProduct = null;
-      finalProgress.currentAction = 'Завершено';
-      finalProgress.result = results;
-      finalProgress.timestamp = Date.now();
-      progressStore.set(requestId, finalProgress);
-    }
-
-    // Store result for logging
-    // Determine created vs existing products based on details
-    const createdProducts = [];
-    const existingProducts = [];
-    const errorProducts = [];
-    
-    if (finalProgress && finalProgress.details) {
-      for (const detail of finalProgress.details) {
-        const product = results.products.find(p => p.sku === detail.sku);
-        if (product && product.success && product.productId) {
-          if (detail.action === 'created') {
-            createdProducts.push(product);
-          } else if (detail.action === 'exists') {
-            existingProducts.push(product);
-          }
-        } else if (detail.status === 'error') {
-          errorProducts.push({
-            sku: detail.sku,
-            error: detail.message || 'Unknown error'
-          });
-        }
-      }
-    }
-    
-    const syncLogEntry = {
-      requestId: requestId,
-      category: category,
-      sectionId: sectionId,
-      action: action,
-      timestamp: new Date().toISOString(),
-      summary: results.summary,
-      totalProducts: productsToProcess.length,
-      details: finalProgress?.details || [],
-      success: results.success,
-      errors: errorProducts.length > 0 ? errorProducts : results.products.filter(p => !p.success || p.error),
-      createdProducts: createdProducts,
-      existingProducts: existingProducts
-    };
-    
-    categorySyncResults.push(syncLogEntry);
-    // Keep only last MAX_SYNC_RESULTS entries
-    if (categorySyncResults.length > MAX_SYNC_RESULTS) {
-      categorySyncResults.shift();
-    }
-
     return res.status(200).json(results);
   } catch (error) {
+    // Mark progress as error
+    const errorProgress = progressStore.get(requestId);
+    if (errorProgress) {
+      errorProgress.complete = true;
+      errorProgress.error = error.message;
+      errorProgress.timestamp = Date.now();
+      progressStore.set(requestId, errorProgress);
+    }
+
     console.error(JSON.stringify({
       event: 'SYNC_CATEGORY_ERROR',
       requestId,
       category,
+      sectionId,
+      action,
       error: error.message,
       stack: error.stack,
       timestamp: new Date().toISOString()
     }));
 
-    // Store error result for logging
-    const errorLogEntry = {
-      requestId: requestId,
-      category: category,
-      sectionId: sectionId,
-      action: action,
-      timestamp: new Date().toISOString(),
-      success: false,
-      error: error.message,
-      stack: error.stack
-    };
-    
-    categorySyncResults.push(errorLogEntry);
-    if (categorySyncResults.length > MAX_SYNC_RESULTS) {
-      categorySyncResults.shift();
-    }
+    console.error(`[SYNC ${category.toUpperCase()}] === ОШИБКА ОБРАБОТКИ ===`);
+    console.error(`[SYNC ${category.toUpperCase()}] Категория: ${category}`);
+    console.error(`[SYNC ${category.toUpperCase()}] Раздел: ${sectionId}`);
+    console.error(`[SYNC ${category.toUpperCase()}] Ошибка: ${error.message}`);
+    console.error(`[SYNC ${category.toUpperCase()}] ======================`);
 
     return res.status(500).json({
       success: false,
