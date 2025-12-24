@@ -287,7 +287,7 @@ async function getAllProductsFromShopify() {
 }
 
 /**
- * Get products for a specific category from Shopify API
+ * Get products for a specific category from shopify_all_and_qty_not_zero.json file
  * @param {string} category - Category name (e.g., 'category-a-f')
  * @returns {Promise<Array>} Array of products filtered by category
  */
@@ -297,10 +297,46 @@ export async function getCategoryProducts(category) {
   }
 
   try {
-    console.log(`[SHOPIFY INVENTORY] Fetching all products from Shopify for category ${category}...`);
+    console.log(`[SHOPIFY INVENTORY] Loading products from shopify_all_and_qty_not_zero.json for category ${category}...`);
     
-    // Get all products from Shopify API
-    const allProducts = await getAllProductsFromShopify();
+    // Server-only file reading
+    const isServer = typeof window === 'undefined';
+    if (!isServer) {
+      throw new Error('getCategoryProducts can only be called on the server');
+    }
+
+    const fs = eval('require')('fs');
+    const path = eval('require')('path');
+    
+    // Try to read from .data directory first (Render server), then fallback to PythonProject
+    const dataDir = path.join(process.cwd(), '.data');
+    const pythonProjectPath = path.join(process.cwd(), '..', 'PythonProject');
+    const filePaths = [
+      path.join(dataDir, 'shopify_all_and_qty_not_zero.json'),
+      path.join(pythonProjectPath, 'shopify_all_and_qty_not_zero.json'),
+      path.join(process.cwd(), 'shopify_all_and_qty_not_zero.json')
+    ];
+
+    let allProducts = [];
+    let fileRead = false;
+
+    for (const filePath of filePaths) {
+      try {
+        if (fs.existsSync(filePath)) {
+          const fileContent = fs.readFileSync(filePath, 'utf-8');
+          allProducts = JSON.parse(fileContent);
+          console.log(`[SHOPIFY INVENTORY] Loaded ${allProducts.length} products from ${filePath}`);
+          fileRead = true;
+          break;
+        }
+      } catch (err) {
+        console.warn(`[SHOPIFY INVENTORY] Failed to read ${filePath}:`, err.message);
+      }
+    }
+
+    if (!fileRead) {
+      throw new Error(`shopify_all_and_qty_not_zero.json not found in any of: ${filePaths.join(', ')}`);
+    }
 
     // Filter products by category (first letter of SKU)
     const categoryProducts = allProducts.filter(product => {

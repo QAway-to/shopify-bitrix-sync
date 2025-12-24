@@ -47,11 +47,21 @@ export default function ShopifyPage() {
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [createCategoryResult, setCreateCategoryResult] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState('category-a-f');
-  const [categorySectionId, setCategorySectionId] = useState(32); // Default section ID
-  const [availableSections, setAvailableSections] = useState([]);
-  const [isLoadingSections, setIsLoadingSections] = useState(false);
   const [syncProgress, setSyncProgress] = useState(null);
   const [progressInterval, setProgressInterval] = useState(null);
+
+  // Hardcoded section mapping
+  const CATEGORY_SECTION_MAP = {
+    'category-a-f': 36,
+    'category-g-m': 38,
+    'category-n-s': 40,
+    'category-t-z': 42
+  };
+
+  // Get section ID for selected category
+  const getSectionIdForCategory = (category) => {
+    return CATEGORY_SECTION_MAP[category] || 32;
+  };
 
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);
@@ -633,6 +643,8 @@ export default function ShopifyPage() {
     setError(null);
     setSyncProgress(null);
 
+    const sectionId = getSectionIdForCategory(selectedCategory);
+
     try {
       const response = await fetch('/api/sync/category-optimized?action=create', {
         method: 'POST',
@@ -641,7 +653,7 @@ export default function ShopifyPage() {
         },
         body: JSON.stringify({
           category: selectedCategory,
-          sectionId: categorySectionId
+          sectionId: sectionId
         }),
       });
 
@@ -1107,65 +1119,30 @@ export default function ShopifyPage() {
                   </select>
                 </div>
 
-                {/* Section ID selector */}
+                {/* Section ID display (hardcoded mapping) */}
                 <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <label style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 500 }}>
                     Раздел (SECTION_ID):
                   </label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <select
-                      value={categorySectionId}
-                      onChange={(e) => setCategorySectionId(parseInt(e.target.value) || 32)}
-                      style={{
-                        padding: '6px 10px',
-                        borderRadius: '4px',
-                        border: '1px solid rgba(59, 130, 246, 0.3)',
-                        background: 'rgba(15, 23, 42, 0.6)',
-                        color: '#f1f5f9',
-                        fontSize: '0.9rem',
-                        flex: '1 1 auto',
-                        cursor: 'pointer'
-                      }}
-                      disabled={isLoadingSections}
-                    >
-                      {isLoadingSections ? (
-                        <option>Загрузка...</option>
-                      ) : availableSections.length > 0 ? (
-                        <>
-                          {availableSections.map(section => (
-                            <option key={section.id} value={section.id}>
-                              {section.name} (ID: {section.id})
-                            </option>
-                          ))}
-                        </>
-                      ) : (
-                        <>
-                          <option value="32">32 (Default)</option>
-                          <option value="36">36</option>
-                          <option value="38">38</option>
-                        </>
-                      )}
-                    </select>
-                    <input
-                      type="number"
-                      value={categorySectionId}
-                      onChange={(e) => setCategorySectionId(parseInt(e.target.value) || 32)}
-                      min="0"
-                      placeholder="Введите ID"
-                      style={{
-                        padding: '6px 10px',
-                        borderRadius: '4px',
-                        border: '1px solid rgba(59, 130, 246, 0.3)',
-                        background: 'rgba(15, 23, 42, 0.6)',
-                        color: '#f1f5f9',
-                        fontSize: '0.9rem',
-                        width: '100px',
-                        flexShrink: 0
-                      }}
-                    />
+                  <div style={{
+                    padding: '8px 12px',
+                    borderRadius: '4px',
+                    border: '1px solid rgba(59, 130, 246, 0.3)',
+                    background: 'rgba(15, 23, 42, 0.6)',
+                    color: '#f1f5f9',
+                    fontSize: '0.9rem',
+                    fontWeight: 500
+                  }}>
+                    {getSectionIdForCategory(selectedCategory)}
+                    <span style={{ color: '#64748b', fontSize: '0.85rem', marginLeft: '8px' }}>
+                      ({selectedCategory === 'category-a-f' && 'A-F → 36' ||
+                        selectedCategory === 'category-g-m' && 'G-M → 38' ||
+                        selectedCategory === 'category-n-s' && 'N-S → 40' ||
+                        selectedCategory === 'category-t-z' && 'T-Z → 42'})
+                    </span>
                   </div>
                   <div style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '-4px' }}>
-                    ID раздела в Bitrix, куда будут помещены товары
+                    ID раздела в Bitrix автоматически определяется по категории
                   </div>
                 </div>
 

@@ -18,6 +18,14 @@ if (isServer) {
 const VALID_CATEGORIES = ['category-a-f', 'category-g-m', 'category-n-s', 'category-t-z'];
 const PARALLEL_WORKERS = 8; // Number of parallel workers
 
+// Hardcoded section mapping
+const CATEGORY_SECTION_MAP = {
+  'category-a-f': 36,
+  'category-g-m': 38,
+  'category-n-s': 40,
+  'category-t-z': 42
+};
+
 // Get progress directory (lazy initialization)
 function getProgressDir() {
   if (!isServer) return null;
@@ -50,7 +58,10 @@ export default async function handler(req, res) {
   const isCreateAction = action === 'create';
   
   const category = req.body?.category || 'category-a-f';
-  const sectionId = req.body?.sectionId ? parseInt(req.body.sectionId) : 32;
+  // Use hardcoded section mapping, fallback to body if provided (for backward compatibility)
+  const sectionId = req.body?.sectionId 
+    ? parseInt(req.body.sectionId) 
+    : (CATEGORY_SECTION_MAP[category] || 32);
 
   if (!VALID_CATEGORIES.includes(category)) {
     return res.status(400).json({
@@ -159,6 +170,7 @@ async function processCategoryAsync(requestId, category, sectionId, isCreateActi
               price: product.price,
               qty: product.qty,
               variant_id: product.variant_id,
+              variant_title: product.variant_title || null,
               brand: product.brand || null,
               category: product.category || null
             },
