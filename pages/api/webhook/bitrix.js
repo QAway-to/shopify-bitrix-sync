@@ -596,7 +596,7 @@ async function handleDealUpdate(dealId, requestId) {
   // Extract required fields
   const categoryId = dealData.CATEGORY_ID;
   const stageId = dealData.STAGE_ID;
-  const shopifyOrderId = dealData.UF_CRM_1742556489 || dealData.uf_crm_1742556489;
+  let shopifyOrderId = dealData.UF_CRM_1742556489 || dealData.uf_crm_1742556489;
   const comments = dealData.COMMENTS || '';
 
   // ✅ Structured logging: [DEAL_DATA_RECEIVED]
