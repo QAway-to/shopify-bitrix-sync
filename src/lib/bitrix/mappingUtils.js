@@ -227,9 +227,91 @@ export function updateSkuMappingSilent(sku, productId) {
 }
 
 /**
+ * Add or update variant_id mapping in category file
+ * @param {string|number} variant_id - Shopify variant_id
+ * @param {number} productId - Bitrix Product ID
+ */
+export function updateVariantIdMapping(variant_id, productId) {
+  const variantIdStr = String(variant_id);
+  // Use first character of variant_id to determine category (fallback to category-a-f)
+  const category = getCategoryByHandle(variantIdStr) || 'category-a-f';
+  
+  const mapping = loadCategoryMapping(category);
+  mapping[variantIdStr] = productId;
+  saveCategoryMapping(category, mapping);
+  
+  console.log(`[MAPPING UTILS] ✅ Updated variant_id mapping: ${variantIdStr} -> ${productId} in ${category}`);
+}
+
+/**
+ * Find Product ID by variant_id (Shopify unique identifier) using hybrid approach (cache + Bitrix API)
+ * @param {string|number} variant_id - Shopify variant_id to find
+ * @returns {Promise<number|null>} Product ID or null if not found
+ */
+export async function findProductIdByVariantId(variant_id) {
+  if (!variant_id) {
+    return null;
+  }
+
+  const variantIdStr = String(variant_id);
+
+  // 1. Try cache first (fast) - check variant_id mapping
+  const category = getCategoryByHandle(variantIdStr);
+  if (category) {
+    const mapping = loadCategoryMapping(category);
+    if (mapping[variantIdStr]) {
+      console.log(`[MAPPING UTILS] ✅ Found in cache: variant_id ${variantIdStr} -> ${mapping[variantIdStr]}`);
+      return parseInt(mapping[variantIdStr]);
+    }
+  }
+
+  // 2. Try all mappings (fallback)
+  const allMappings = loadAllMappings();
+  if (allMappings[variantIdStr]) {
+    console.log(`[MAPPING UTILS] ✅ Found in all mappings: variant_id ${variantIdStr} -> ${allMappings[variantIdStr]}`);
+    if (category) {
+      updateVariantIdMapping(variantIdStr, allMappings[variantIdStr]);
+    }
+    return parseInt(allMappings[variantIdStr]);
+  }
+
+  // 3. Try Bitrix API (dynamic lookup by XML_ID = variant_id)
+  try {
+    console.log(`[MAPPING UTILS] 🔍 Searching in Bitrix API for variant_id: ${variantIdStr}`);
+    const response = await callBitrix('crm.product.list', {
+      filter: { XML_ID: variantIdStr },
+      select: ['ID', 'NAME', 'CODE', 'XML_ID']
+    });
+
+    if (response.result && response.result.length > 0) {
+      const product = response.result[0];
+      const productId = parseInt(product.ID);
+      console.log(`[MAPPING UTILS] ✅ Found in Bitrix API: variant_id ${variantIdStr} -> ${productId}`);
+      console.log(`[MAPPING UTILS]   Product details: ID=${productId}, NAME="${product.NAME}", CODE="${product.CODE}", XML_ID="${product.XML_ID}"`);
+      
+      // Update cache for future lookups
+      if (category) {
+        updateVariantIdMapping(variantIdStr, productId);
+      }
+      
+      return productId;
+    } else {
+      console.warn(`[MAPPING UTILS] ⚠️ No products found in Bitrix with XML_ID="${variantIdStr}"`);
+      console.warn(`[MAPPING UTILS]   Required: Product in Bitrix must have XML_ID field = "${variantIdStr}"`);
+    }
+  } catch (error) {
+    console.error(`[MAPPING UTILS] ❌ Error searching Bitrix API for variant_id ${variantIdStr}:`, error);
+  }
+
+  console.warn(`[MAPPING UTILS] ⚠️ Product not found for variant_id: ${variantIdStr}`);
+  return null;
+}
+
+/**
  * Find Product ID by SKU using hybrid approach (cache + Bitrix API)
  * @param {string} sku - SKU to find
  * @returns {Promise<number|null>} Product ID or null if not found
+ * @deprecated Use findProductIdByVariantId instead for new products
  */
 export async function findProductIdBySku(sku) {
   if (!sku || typeof sku !== 'string') {
@@ -257,17 +339,19 @@ export async function findProductIdBySku(sku) {
     return parseInt(allMappings[sku]);
   }
 
-  // 3. Try Bitrix API (dynamic lookup)
+  // 3. Try Bitrix API (dynamic lookup by CODE = SKU)
   try {
     console.log(`[MAPPING UTILS] 🔍 Searching in Bitrix API for SKU: ${sku}`);
     const response = await callBitrix('crm.product.list', {
-      filter: { XML_ID: sku },
+      filter: { CODE: sku },
       select: ['ID', 'NAME', 'CODE', 'XML_ID']
     });
 
     if (response.result && response.result.length > 0) {
-      const productId = parseInt(response.result[0].ID);
+      const product = response.result[0];
+      const productId = parseInt(product.ID);
       console.log(`[MAPPING UTILS] ✅ Found in Bitrix API: ${sku} -> ${productId}`);
+      console.log(`[MAPPING UTILS]   Product details: ID=${productId}, NAME="${product.NAME}", CODE="${product.CODE}", XML_ID="${product.XML_ID}"`);
       
       // Update cache for future lookups
       if (category) {
@@ -275,6 +359,9 @@ export async function findProductIdBySku(sku) {
       }
       
       return productId;
+    } else {
+      console.warn(`[MAPPING UTILS] ⚠️ No products found in Bitrix with CODE="${sku}"`);
+      console.warn(`[MAPPING UTILS]   Required: Product in Bitrix must have CODE field = "${sku}"`);
     }
   } catch (error) {
     console.error(`[MAPPING UTILS] ❌ Error searching Bitrix API for ${sku}:`, error);
