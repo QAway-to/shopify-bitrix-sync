@@ -1,17 +1,16 @@
-// Universal API endpoint for syncing products from any category (A-F, G-M, N-S, T-Z)
-// Uses optimized batch processing for better performance
+// Optimized API endpoint for syncing products with batching and parallel processing
 import { getCategoryProducts } from '../../../src/lib/shopify/inventory.js';
-import { refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
 import { 
   syncProductVariantOptimized,
   batchFindProductsBySku,
   batchGetCurrentStock,
   createGroupedIncomingDocument
 } from '../../../src/lib/bitrix/productsBatch.js';
+import { refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
 
 const VALID_CATEGORIES = ['category-a-f', 'category-g-m', 'category-n-s', 'category-t-z'];
 
-// Optimization configuration
+// Configuration
 const BATCH_SIZE = 50; // Process products in batches
 const PARALLEL_LIMIT = 5; // Number of products to process in parallel
 const DOCUMENT_GROUP_SIZE = 20; // Group products into documents
@@ -22,15 +21,12 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  // Check action: 'create' for creating new products, default is 'sync' (update quantities)
   const action = req.query.action || 'sync';
   const isCreateAction = action === 'create';
   
-  // Get category and sectionId from request body
   const category = req.body?.category || 'category-a-f';
   const sectionId = req.body?.sectionId ? parseInt(req.body.sectionId) : 32;
 
-  // Validate category
   if (!VALID_CATEGORIES.includes(category)) {
     return res.status(400).json({
       success: false,
@@ -42,7 +38,7 @@ export default async function handler(req, res) {
   const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
   console.log(JSON.stringify({
-    event: 'SYNC_CATEGORY_START',
+    event: 'SYNC_CATEGORY_OPTIMIZED_START',
     requestId,
     category,
     action,
@@ -51,10 +47,16 @@ export default async function handler(req, res) {
   }));
 
   try {
-    // 1. Get products data from Shopify for the specified category
-    console.log(`[SYNC ${category.toUpperCase()}] Fetching products data from Shopify...`);
-    console.log(`[SYNC ${category.toUpperCase()}] Section ID (folder): ${sectionId}`);
-    const products = await getCategoryProducts(category);
+    // 1. Get products from Shopify
+    console.log(`[SYNC ${category.toUpperCase()}] Fetching products from Shopify...`);
+    const allProducts = await getCategoryProducts(category);
+    
+    // Filter products with qty > 0 if create action
+    const productsToProcess = isCreateAction
+      ? allProducts.filter(p => p.qty && p.qty > 0)
+      : allProducts;
+
+    console.log(`[SYNC ${category.toUpperCase()}] Processing ${productsToProcess.length} products (out of ${allProducts.length} total)`);
 
     const results = {
       success: true,
@@ -66,19 +68,12 @@ export default async function handler(req, res) {
         total: 0,
         created: 0,
         updated: 0,
-        skipped: 0,
+        skipped: allProducts.length - productsToProcess.length,
         errors: 0
       }
     };
 
-    // Filter products with qty > 0 if create action
-    const productsToProcess = isCreateAction
-      ? products.filter(p => p.qty && p.qty > 0)
-      : products;
-
-    console.log(`[SYNC ${category.toUpperCase()}] Processing ${productsToProcess.length} products (out of ${products.length} total) using optimized batch processing`);
-
-    // 2. Process in batches with optimization
+    // 2. Process in batches
     for (let batchStart = 0; batchStart < productsToProcess.length; batchStart += BATCH_SIZE) {
       const batch = productsToProcess.slice(batchStart, batchStart + BATCH_SIZE);
       console.log(`[SYNC ${category.toUpperCase()}] Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(productsToProcess.length / BATCH_SIZE)} (${batch.length} products)`);
@@ -153,8 +148,7 @@ export default async function handler(req, res) {
         const stockMap = await batchGetCurrentStock(productIdsForStock);
         
         // Re-calculate differences with actual stock
-        for (let i = 0; i < syncResults.length; i++) {
-          const syncResult = syncResults[i];
+        for (const syncResult of syncResults) {
           if (syncResult.success && syncResult.productId && stockMap.has(syncResult.productId)) {
             const actualStock = stockMap.get(syncResult.productId);
             const actualDifference = syncResult.quantity - actualStock;
@@ -204,7 +198,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // 2.6. Create outgoing documents (one per product for now)
+      // 2.6. Create outgoing documents (one per product for now, can be optimized later)
       if (productsNeedingOutgoing.length > 0) {
         const { createOutgoingDocument } = await import('../../../src/lib/bitrix/products.js');
         
@@ -224,31 +218,28 @@ export default async function handler(req, res) {
         }
       }
 
-      // Small delay between batches
+      // Small delay between batches to avoid overwhelming API
       if (batchStart + BATCH_SIZE < productsToProcess.length) {
         await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
 
-    // Update skipped count
-    results.summary.skipped = products.length - productsToProcess.length;
-
     console.log(JSON.stringify({
-      event: 'SYNC_CATEGORY_SUCCESS',
+      event: 'SYNC_CATEGORY_OPTIMIZED_SUCCESS',
       requestId,
       category,
       summary: results.summary,
       timestamp: new Date().toISOString()
     }));
 
-    // If this was a create action, refresh mappings from Bitrix catalog after creation
+    // Refresh mappings after creation
     if (isCreateAction) {
       try {
         const mappingRefresh = await refreshBitrixMappingsFromCatalog();
         results.mappingRefresh = mappingRefresh;
         console.log(`[SYNC ${category.toUpperCase()}] ✅ Mapping refreshed after create:`, mappingRefresh);
       } catch (mapErr) {
-        console.error(`[SYNC ${category.toUpperCase()}] ⚠️ Failed to refresh mappings after create:`, mapErr);
+        console.error(`[SYNC ${category.toUpperCase()}] ⚠️ Failed to refresh mappings:`, mapErr);
         results.mappingRefresh = { success: false, error: mapErr.message };
       }
     }
@@ -256,7 +247,7 @@ export default async function handler(req, res) {
     return res.status(200).json(results);
   } catch (error) {
     console.error(JSON.stringify({
-      event: 'SYNC_CATEGORY_ERROR',
+      event: 'SYNC_CATEGORY_OPTIMIZED_ERROR',
       requestId,
       category,
       error: error.message,
