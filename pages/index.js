@@ -640,6 +640,79 @@ export default function ShopifyPage() {
     }
   };
 
+  // Handle file upload for shopify_all_and_qty_not_zero.json
+  const handleFileUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    // Validate file name
+    if (!file.name.includes('shopify_all_and_qty_not_zero')) {
+      setUploadResult({
+        success: false,
+        message: 'Неверное имя файла. Ожидается shopify_all_and_qty_not_zero.json'
+      });
+      return;
+    }
+
+    setIsUploadingFile(true);
+    setUploadResult(null);
+
+    try {
+      // Read file as text
+      const fileContent = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsText(file);
+      });
+
+      // Parse JSON
+      const products = JSON.parse(fileContent);
+
+      if (!Array.isArray(products)) {
+        throw new Error('Файл должен содержать массив товаров');
+      }
+
+      // Upload to server
+      const response = await fetch('/api/data/upload-shopify-products', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ products })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setUploadResult({
+          success: true,
+          message: `✅ Успешно загружено ${result.count} товаров`,
+          count: result.count
+        });
+        // Clear file input
+        if (fileInputRef) {
+          fileInputRef.value = '';
+        }
+      } else {
+        setUploadResult({
+          success: false,
+          message: result.message || 'Ошибка загрузки файла'
+        });
+      }
+    } catch (error) {
+      console.error('[FILE UPLOAD] Error:', error);
+      setUploadResult({
+        success: false,
+        message: `Ошибка: ${error.message}`
+      });
+    } finally {
+      setIsUploadingFile(false);
+    }
+  };
+
   // Create products for selected category (optimized version)
   const handleCreateCategory = async () => {
     setIsCreatingCategory(true);
@@ -1096,6 +1169,64 @@ export default function ShopifyPage() {
                 border: '1px solid rgba(16, 185, 129, 0.3)'
               }}>
                 <div style={{ color: '#f1f5f9', fontWeight: 500, marginBottom: '12px' }}>Категории товаров</div>
+                
+                {/* File upload section */}
+                <div style={{
+                  marginBottom: '16px',
+                  padding: '12px',
+                  background: 'rgba(59, 130, 246, 0.1)',
+                  borderRadius: '6px',
+                  border: '1px solid rgba(59, 130, 246, 0.3)'
+                }}>
+                  <div style={{ color: '#f1f5f9', fontSize: '0.9rem', fontWeight: 500, marginBottom: '8px' }}>
+                    📁 Загрузка данных из Shopify
+                  </div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '10px' }}>
+                    Загрузите файл shopify_all_and_qty_not_zero.json для синхронизации товаров
+                  </div>
+                  <input
+                    ref={(ref) => setFileInputRef(ref)}
+                    type="file"
+                    accept=".json"
+                    onChange={handleFileUpload}
+                    disabled={isUploadingFile}
+                    style={{ display: 'none' }}
+                    id="shopify-file-upload"
+                  />
+                  <label
+                    htmlFor="shopify-file-upload"
+                    style={{
+                      display: 'inline-block',
+                      padding: '8px 16px',
+                      background: isUploadingFile ? '#6b7280' : '#3b82f6',
+                      border: 'none',
+                      borderRadius: '6px',
+                      color: 'white',
+                      cursor: isUploadingFile ? 'not-allowed' : 'pointer',
+                      fontSize: '0.9rem',
+                      fontWeight: 500,
+                      width: '100%',
+                      textAlign: 'center'
+                    }}
+                  >
+                    {isUploadingFile ? '⏳ Загрузка...' : '📤 Выбрать и загрузить файл'}
+                  </label>
+                  {uploadResult && (
+                    <div style={{
+                      marginTop: '10px',
+                      padding: '8px 12px',
+                      borderRadius: '4px',
+                      background: uploadResult.success 
+                        ? 'rgba(5, 150, 105, 0.1)' 
+                        : 'rgba(239, 68, 68, 0.1)',
+                      border: `1px solid ${uploadResult.success ? '#059669' : '#ef4444'}`,
+                      color: uploadResult.success ? '#059669' : '#ef4444',
+                      fontSize: '0.85rem'
+                    }}>
+                      {uploadResult.message}
+                    </div>
+                  )}
+                </div>
                 
                 {/* Category selector */}
                 <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
