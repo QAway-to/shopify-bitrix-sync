@@ -308,13 +308,14 @@ export async function getCategoryProducts(category) {
     const fs = eval('require')('fs');
     const path = eval('require')('path');
     
-    // Try to read from .data directory first (Render server), then fallback to PythonProject
+    // Try to read from .data directory first (Render server), then fallback to other locations
     const dataDir = path.join(process.cwd(), '.data');
     const pythonProjectPath = path.join(process.cwd(), '..', 'PythonProject');
     const filePaths = [
       path.join(dataDir, 'shopify_all_and_qty_not_zero.json'),
       path.join(pythonProjectPath, 'shopify_all_and_qty_not_zero.json'),
-      path.join(process.cwd(), 'shopify_all_and_qty_not_zero.json')
+      path.join(process.cwd(), 'shopify_all_and_qty_not_zero.json'),
+      path.join(process.cwd(), 'data', 'shopify_all_and_qty_not_zero.json')
     ];
 
     let allProducts = [];
