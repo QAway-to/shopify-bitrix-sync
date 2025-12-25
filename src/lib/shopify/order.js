@@ -183,6 +183,10 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
         await new Promise(resolve => setTimeout(resolve, 200)); // Wait 200ms between checks
       }
     }
+  } catch (preCheckError) {
+    releaseLock(dealId);
+    throw preCheckError;
+  }
 
   // Separate items with SKU from items with variantId
   const itemsWithSku = items.filter(item => item.sku && !item.variantId);
