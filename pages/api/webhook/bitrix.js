@@ -611,7 +611,13 @@ async function handleDealUpdate(dealId, requestId) {
   }));
 
   // ✅ STEP A: Check if deal is cancelled (LOSE stage) and cancel technical order if exists
-  if (stageId === 'LOSE' || stageId === BITRIX_CONFIG.STAGES.CANCELLED || stageId === BITRIX_CONFIG.STAGES.REFUNDED) {
+  // Check if stage ends with :LOSE or is exactly LOSE (handles both C6:LOSE and LOSE formats)
+  const isLoseStage = stageId === 'LOSE' || 
+                      stageId === BITRIX_CONFIG.STAGES.CANCELLED || 
+                      stageId === BITRIX_CONFIG.STAGES.REFUNDED ||
+                      (typeof stageId === 'string' && stageId.endsWith(':LOSE'));
+  
+  if (isLoseStage) {
     console.log(JSON.stringify({
       event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_CHECK',
       requestId,
