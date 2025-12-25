@@ -105,3 +105,86 @@ export function cleanEmptyFields(obj) {
   return removeEmptyFields(obj);
 }
 
+/**
+ * Normalize payload based on action type
+ */
+export function normalizePayload(action, rawPayload) {
+  if (!rawPayload || typeof rawPayload !== 'object') {
+    return null;
+  }
+
+  switch (action) {
+    case 'hold_create': {
+      // Normalize: {action, items:[{sku,qty}...]} - items сортировать по sku
+      const items = Array.isArray(rawPayload.items) ? rawPayload.items : [];
+      const normalizedItems = items
+        .map(item => ({
+          sku: String(item.sku || '').trim(),
+          qty: Number(item.qty || 0)
+        }))
+        .filter(item => item.sku && item.qty > 0)
+        .sort((a, b) => a.sku.localeCompare(b.sku));
+      
+      return {
+        action: 'hold_create',
+        items: normalizedItems
+      };
+    }
+    
+    case 'hold_release': {
+      // Normalize: {action, items:[{sku,qty}...]} - items сортировать по sku
+      const items = Array.isArray(rawPayload.items) ? rawPayload.items : [];
+      const normalizedItems = items
+        .map(item => ({
+          sku: String(item.sku || '').trim(),
+          qty: Number(item.qty || 0)
+        }))
+        .filter(item => item.sku && item.qty > 0)
+        .sort((a, b) => a.sku.localeCompare(b.sku));
+      
+      return {
+        action: 'hold_release',
+        items: normalizedItems
+      };
+    }
+    
+    case 'refund_create': {
+      // Normalize: {action, refund_type, items:[{sku,qty,reason}...], note}
+      const items = Array.isArray(rawPayload.items) ? rawPayload.items : [];
+      const normalizedItems = items
+        .map(item => ({
+          sku: String(item.sku || '').trim(),
+          qty: Number(item.qty || 0),
+          reason: String(item.reason || '').trim()
+        }))
+        .filter(item => item.sku && item.qty > 0)
+        .sort((a, b) => a.sku.localeCompare(b.sku));
+      
+      return {
+        action: 'refund_create',
+        refund_type: String(rawPayload.refund_type || 'partial').trim(),
+        items: normalizedItems,
+        note: String(rawPayload.note || '').trim()
+      };
+    }
+    
+    case 'address_update': {
+      // Normalize: {action, address:{...}} - удалить пустые поля
+      const address = rawPayload.address || {};
+      const cleanedAddress = removeEmptyFields(address);
+      
+      if (!cleanedAddress || Object.keys(cleanedAddress).length === 0) {
+        return null;
+      }
+      
+      return {
+        action: 'address_update',
+        address: cleanedAddress
+      };
+    }
+    
+    default:
+      return null;
+  }
+}
+

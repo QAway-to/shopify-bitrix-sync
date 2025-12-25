@@ -70,6 +70,68 @@ export default function ShopifyPage() {
     return CATEGORY_SECTION_MAP[category] || 32;
   };
 
+  // Check authentication status from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const authStatus = localStorage.getItem('auth_status');
+      const guestStatus = localStorage.getItem('guest_mode');
+      
+      if (authStatus === 'authenticated') {
+        setIsAuthenticated(true);
+        setShowAuthModal(false);
+      } else if (guestStatus === 'true') {
+        setIsGuestMode(true);
+        setIsAuthenticated(false);
+        setShowAuthModal(false);
+      }
+    }
+  }, []);
+
+  // Handle authentication
+  const handleAuth = async (password, guestMode = false) => {
+    try {
+      const response = await fetch('/api/config/password');
+      const data = await response.json();
+      
+      if (data.success) {
+        const correctPassword = data.password;
+        
+        if (guestMode) {
+          // Guest mode - no password needed
+          setIsGuestMode(true);
+          setIsAuthenticated(false);
+          setShowAuthModal(false);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('guest_mode', 'true');
+            localStorage.removeItem('auth_status');
+          }
+        } else if (password === correctPassword) {
+          // Full access
+          setIsAuthenticated(true);
+          setIsGuestMode(false);
+          setShowAuthModal(false);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('auth_status', 'authenticated');
+            localStorage.removeItem('guest_mode');
+          }
+        } else {
+          alert('Incorrect password');
+          setAuthPassword('');
+          return false;
+        }
+        return true;
+      }
+    } catch (error) {
+      console.error('Auth error:', error);
+      alert('Authentication error. Please try again.');
+      return false;
+    }
+  };
+
+  const handleGuestMode = () => {
+    handleAuth('', true);
+  };
+
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);
     try {
