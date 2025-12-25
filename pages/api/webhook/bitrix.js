@@ -1415,14 +1415,15 @@ async function handleDealCreate(dealId, requestId) {
 
               // Update stored event with shopifyOrderId
               if (storedEvent) {
-                storedEvent.shopifyOrderId = createdOrderId;
+                storedEvent.shopifyOrderId = existingShopifyOrderId;
               }
 
               return { 
                 success: true, 
                 triggerMatch: true, 
-                shopifyOrderId: createdOrderId,
-                orderName: orderResult.orderName
+                shopifyOrderId: existingShopifyOrderId,
+                orderName: orderResult.orderName,
+                wasDuplicate: orderResult.wasDuplicate || false
               };
             } catch (updateError) {
               console.error(`[BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
