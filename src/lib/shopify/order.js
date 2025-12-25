@@ -76,8 +76,12 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
   const note = `Технический ордер из Bitrix. Сделка: ${dealId}${correlationId ? `. CorrelationId: ${correlationId}` : ''}`;
 
   const mutation = `
-    mutation orderCreate($input: OrderInput!) {
-      orderCreate(input: $input) {
+    mutation orderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+      orderCreate(order: $order, options: $options) {
+        userErrors {
+          field
+          message
+        }
         order {
           id
           name
@@ -85,6 +89,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
           confirmed
           tags
           note
+          createdAt
           lineItems(first: 250) {
             edges {
               node {
@@ -99,21 +104,26 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
             }
           }
         }
-        userErrors {
-          field
-          message
-        }
       }
     }
   `;
 
+  const order_input = {
+    lineItems: lineItems,
+    tags: tags,
+    note: note,
+    email: 'hold@bfcshoes.local'
+  };
+
+  const options_input = {
+    inventoryBehaviour: 'DECREMENT_OBEYING_POLICY', // Reserve inventory (British spelling as per Shopify API)
+    sendReceipt: false,
+    sendFulfillmentReceipt: false
+  };
+
   const variables = {
-    input: {
-      lineItems: lineItems,
-      inventoryBehavior: 'DECREMENT_OBEYING_POLICY', // Reserve inventory
-      tags: tags,
-      note: note
-    }
+    order: order_input,
+    options: options_input
   };
 
   try {
