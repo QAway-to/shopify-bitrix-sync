@@ -185,10 +185,13 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
                             padding: '2px 8px',
                             borderRadius: '4px',
                             fontSize: '0.75rem',
+                            fontWeight: 600,
                             background: '#10b981',
-                            color: 'white'
+                            color: 'white',
+                            textAlign: 'center',
+                            display: 'inline-block'
                           }}>
-                            ✓ ВЕРИФИЦИРОВАНА
+                            ✓ Проверка
                           </span>
                         )}
                       </div>
