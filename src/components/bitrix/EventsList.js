@@ -1,4 +1,4 @@
-export default function BitrixEventsList({ events, selectedEvents = [], onSelectionChange, onPreviewEvent, isLoading = false }) {
+export default function BitrixEventsList({ events, selectedEvents = [], onSelectionChange, onPreviewEvent, isLoading = false, isGuestMode = false }) {
   // ✅ Show empty state only if no events AND not loading
   if ((!events || events.length === 0) && !isLoading) {
     return (

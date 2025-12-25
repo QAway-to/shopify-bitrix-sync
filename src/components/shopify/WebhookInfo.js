@@ -53,8 +53,23 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
   const [bitrixEndpointPassword, setBitrixEndpointPassword] = useState('');
   const [bitrixEndpointUnlocked, setBitrixEndpointUnlocked] = useState(false);
   const [bitrixEndpointCopied, setBitrixEndpointCopied] = useState(false);
-  
-  const CORRECT_PASSWORD = '1spotify2';
+  const [correctPassword, setCorrectPassword] = useState(null);
+
+  // ✅ Load password from API
+  useEffect(() => {
+    const fetchPassword = async () => {
+      try {
+        const response = await fetch('/api/config/password');
+        const data = await response.json();
+        if (data.success && data.password) {
+          setCorrectPassword(data.password);
+        }
+      } catch (err) {
+        console.error('Fetch password error:', err);
+      }
+    };
+    fetchPassword();
+  }, []);
 
   // ✅ Load Bitrix webhook URL from API (reads from BITRIX_WEBHOOK_BASE env var)
   useEffect(() => {
@@ -99,7 +114,11 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
 
   const handlePasswordSubmit = (e) => {
     e.preventDefault();
-    if (password === CORRECT_PASSWORD) {
+    if (!correctPassword) {
+      alert('Password not loaded yet. Please wait.');
+      return;
+    }
+    if (password === correctPassword) {
       setUnlocked(true);
       setPassword('');
     } else {
@@ -110,7 +129,11 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
 
   const handleBitrixPasswordSubmit = (e) => {
     e.preventDefault();
-    if (bitrixPassword === CORRECT_PASSWORD) {
+    if (!correctPassword) {
+      alert('Password not loaded yet. Please wait.');
+      return;
+    }
+    if (bitrixPassword === correctPassword) {
       setBitrixUnlocked(true);
       setBitrixPassword('');
     } else {
@@ -121,7 +144,11 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
 
   const handleBitrixEndpointPasswordSubmit = (e) => {
     e.preventDefault();
-    if (bitrixEndpointPassword === CORRECT_PASSWORD) {
+    if (!correctPassword) {
+      alert('Password not loaded yet. Please wait.');
+      return;
+    }
+    if (bitrixEndpointPassword === correctPassword) {
       setBitrixEndpointUnlocked(true);
       setBitrixEndpointPassword('');
     } else {

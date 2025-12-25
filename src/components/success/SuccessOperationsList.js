@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-export default function SuccessOperationsList({ operations, selectedOperations, onSelectionChange, onPreviewOperation, isLoading = false }) {
+export default function SuccessOperationsList({ operations, selectedOperations, onSelectionChange, onPreviewOperation, isLoading = false, isGuestMode = false }) {
   const [expandedOperations, setExpandedOperations] = useState(new Set());
 
   const toggleExpand = (operationId) => {

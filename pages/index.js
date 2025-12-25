@@ -5,9 +5,16 @@ import EventsList from '../src/components/shopify/EventsList';
 import BitrixEventsList from '../src/components/bitrix/EventsList';
 import SuccessOperationsList from '../src/components/success/SuccessOperationsList';
 import DataPreview from '../src/components/shopify/DataPreview';
+import AuthModal from '../src/components/auth/AuthModal';
 // Removed shopifyAdapter import - now using API endpoint for transformation
+import AuthModal from '../src/components/auth/AuthModal';
 
 export default function ShopifyPage() {
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isGuestMode, setIsGuestMode] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(true);
+  const [authPassword, setAuthPassword] = useState('');
   const [events, setEvents] = useState([]);
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [bitrixEvents, setBitrixEvents] = useState([]);
@@ -682,6 +689,19 @@ export default function ShopifyPage() {
     }
   };
 
+  // Show auth modal if not authenticated and not in guest mode
+  if (showAuthModal && !isAuthenticated && !isGuestMode) {
+    return (
+      <>
+        <Head>
+          <title>Shopify Webhook - API Services</title>
+          <meta name="description" content="Monitor Shopify webhook events" />
+        </Head>
+        <AuthModal onAuth={handleAuth} onGuest={handleGuestMode} />
+      </>
+    );
+  }
+
   return (
     <>
       <Head>
@@ -863,14 +883,15 @@ export default function ShopifyPage() {
             <button
               onClick={handleSendToShopify}
               className="btn"
-              disabled={isSendingToShopify || selectedBitrixEvents.length === 0}
+              disabled={isSendingToShopify || selectedBitrixEvents.length === 0 || isGuestMode}
               style={{
-                background: selectedBitrixEvents.length > 0 ? '#059669' : '#6b7280',
+                background: (selectedBitrixEvents.length > 0 && !isGuestMode) ? '#059669' : '#6b7280',
                 border: 'none',
                 padding: '8px 16px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: selectedBitrixEvents.length > 0 ? 'pointer' : 'not-allowed',
+                cursor: (selectedBitrixEvents.length > 0 && !isGuestMode) ? 'pointer' : 'not-allowed',
+                opacity: (isSendingToShopify || selectedBitrixEvents.length === 0 || isGuestMode) ? 0.5 : 1
                 minWidth: '220px',
                 whiteSpace: 'nowrap',
                 flexShrink: 0
@@ -1027,6 +1048,7 @@ export default function ShopifyPage() {
         <WebhookInfo onBitrixUrlChange={setBitrixWebhookUrl} />
 
         {/* Sync Certificates Section */}
+        <LockedSection isGuestMode={isGuestMode} title="Guest Mode - Sync operations locked">
         <div style={{
           marginTop: '30px',
           padding: '20px',
@@ -1041,14 +1063,15 @@ export default function ShopifyPage() {
           <div style={{ marginBottom: '16px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <button
               onClick={handleSyncCertificates}
-              disabled={isSyncingCertificates}
+              disabled={isSyncingCertificates || isGuestMode}
               style={{
-                background: isSyncingCertificates ? '#6b7280' : '#059669',
+                background: (isSyncingCertificates || isGuestMode) ? '#475569' : '#059669',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: isSyncingCertificates ? 'not-allowed' : 'pointer',
+                cursor: (isSyncingCertificates || isGuestMode) ? 'not-allowed' : 'pointer',
+                opacity: (isSyncingCertificates || isGuestMode) ? 0.5 : 1,
                 fontSize: '1rem',
                 fontWeight: 500,
                 minWidth: '200px',
@@ -1063,12 +1086,13 @@ export default function ShopifyPage() {
               onClick={handleCreateCertificates}
               disabled={isCreatingCertificates}
               style={{
-                background: isCreatingCertificates ? '#6b7280' : '#3b82f6',
+                background: (isCreatingCertificates || isGuestMode) ? '#475569' : '#3b82f6',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: isCreatingCertificates ? 'not-allowed' : 'pointer',
+                cursor: (isCreatingCertificates || isGuestMode) ? 'not-allowed' : 'pointer',
+                opacity: (isCreatingCertificates || isGuestMode) ? 0.5 : 1,
                 fontSize: '1rem',
                 fontWeight: 500,
                 minWidth: '200px',
@@ -1081,7 +1105,7 @@ export default function ShopifyPage() {
             </button>
             <button
               onClick={handleUpdateCertificate500}
-              disabled={isUpdatingCert500}
+              disabled={isUpdatingCert500 || isGuestMode}
               style={{
                 padding: '10px 12px',
                 background: isUpdatingCert500 ? '#475569' : '#14b8a6',
@@ -1141,7 +1165,8 @@ export default function ShopifyPage() {
                   </label>
                   <select
                     value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    onChange={(e) => !isGuestMode && setSelectedCategory(e.target.value)}
+                    disabled={isGuestMode}
                     style={{
                       padding: '6px 10px',
                       borderRadius: '4px',
@@ -1150,7 +1175,8 @@ export default function ShopifyPage() {
                       color: '#f1f5f9',
                       fontSize: '0.9rem',
                       width: '100%',
-                      cursor: 'pointer'
+                      cursor: isGuestMode ? 'not-allowed' : 'pointer',
+                      opacity: isGuestMode ? 0.5 : 1
                     }}
                   >
                     <option value="category-a-f">A-F (SKU начинается с A, B, C, D, E, F)</option>
@@ -1189,15 +1215,16 @@ export default function ShopifyPage() {
 
                 <button
                   onClick={handleCreateCategory}
-                  disabled={isCreatingCategory}
+                  disabled={isCreatingCategory || isGuestMode}
                   style={{
                     marginTop: '8px',
-                    background: isCreatingCategory ? '#6b7280' : '#10b981',
+                    background: (isCreatingCategory || isGuestMode) ? '#475569' : '#10b981',
                     border: 'none',
                     padding: '8px 16px',
                     borderRadius: '6px',
                     color: 'white',
-                    cursor: isCreatingCategory ? 'not-allowed' : 'pointer',
+                    cursor: (isCreatingCategory || isGuestMode) ? 'not-allowed' : 'pointer',
+                    opacity: (isCreatingCategory || isGuestMode) ? 0.5 : 1,
                     fontSize: '0.9rem',
                     fontWeight: 500,
                     width: '100%'
@@ -1427,6 +1454,7 @@ export default function ShopifyPage() {
                 onSelectionChange={setSelectedBitrixEvents}
                 onPreviewEvent={handleBitrixPreviewEvent}
                 isLoading={isInitialFetch && isBitrixLoading}
+                isGuestMode={isGuestMode}
               />
             </div>
           </div>
@@ -1443,10 +1471,12 @@ export default function ShopifyPage() {
                 onSelectionChange={setSelectedSuccessOperations}
                 onPreviewOperation={handleSuccessPreviewOperation}
                 isLoading={isInitialFetch && isSuccessLoading}
+                isGuestMode={isGuestMode}
               />
             </div>
           </div>
         </div>
+        </LockedSection>
 
         {/* Data Preview - Wide block below */}
         {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation) ? (
@@ -1458,6 +1488,7 @@ export default function ShopifyPage() {
             eventId={previewEvent.id}
             onSendEvent={handleSendPreviewEvent}
             isSending={isSending}
+            isGuestMode={isGuestMode}
           />
         )}
             {bitrixPreviewData && bitrixPreviewEvent && (
@@ -1466,6 +1497,7 @@ export default function ShopifyPage() {
                 bitrixData={bitrixPreviewData.bitrixData}
                 eventId={bitrixPreviewEvent.dealId || bitrixPreviewEvent.id}
                 eventType="bitrix"
+                isGuestMode={isGuestMode}
               />
             )}
             {previewData && successPreviewOperation && (
@@ -1475,6 +1507,7 @@ export default function ShopifyPage() {
                 eventId={successPreviewOperation.dealId || successPreviewOperation.id}
                 eventType="success"
                 operation={successPreviewOperation}
+                isGuestMode={isGuestMode}
               />
             )}
           </div>
