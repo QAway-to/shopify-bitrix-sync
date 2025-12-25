@@ -255,6 +255,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
   const existingOrderId = await findExistingOrderByDealId(dealId);
   if (existingOrderId) {
     console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Order already exists for deal ${dealId}: ${existingOrderId}. Skipping creation to prevent duplicate.`);
+    releaseLock(dealId); // Release lock before returning
     // Return success with existing order ID
     return {
       success: true,
