@@ -172,6 +172,23 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
     options: options_input
   };
 
+  // ✅ CRITICAL: Final duplicate check right before creation
+  // Check if order already exists by BITRIX:{dealId} tag
+  const existingOrderId = await findExistingOrderByDealId(dealId);
+  if (existingOrderId) {
+    console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Order already exists for deal ${dealId}: ${existingOrderId}. Skipping creation to prevent duplicate.`);
+    // Return success with existing order ID
+    return {
+      success: true,
+      orderId: existingOrderId,
+      orderName: `Existing order ${existingOrderId}`,
+      wasDuplicate: true,
+      lineItems: [],
+      tags: tags,
+      note: note
+    };
+  }
+
   try {
     const data = await callShopifyGraphQL(mutation, variables);
 

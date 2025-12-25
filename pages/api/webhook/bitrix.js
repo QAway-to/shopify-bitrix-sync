@@ -1354,28 +1354,64 @@ async function handleDealCreate(dealId, requestId) {
           const orderResult = await createOrderFromBitrix(items, dealId, correlationId);
 
           if (orderResult.success) {
-            // Save shopifyOrderId back to Bitrix deal
-            const createdOrderId = String(orderResult.orderId);
-            try {
-              await callBitrix('/crm.deal.update.json', {
-                id: dealId,
-                fields: {
-                  UF_CRM_1742556489: createdOrderId // Shopify Order ID field
-                }
-              });
-
+            // Handle duplicate case
+            if (orderResult.wasDuplicate) {
               console.log(JSON.stringify({
-                event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SUCCESS',
+                event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE',
                 requestId,
                 dealId,
                 eventType: 'CREATE',
-                shopifyOrderId: createdOrderId,
-                orderName: orderResult.orderName,
-                lineItemsCount: orderResult.lineItems?.length || 0,
-                tags: orderResult.tags || [],
-                note: orderResult.note || '',
+                message: 'Order creation prevented - duplicate found',
+                existingShopifyOrderId: orderResult.orderId,
                 timestamp: new Date().toISOString()
               }));
+              // Use existing order ID
+              existingShopifyOrderId = String(orderResult.orderId);
+            } else {
+              // Save shopifyOrderId back to Bitrix deal
+              const createdOrderId = String(orderResult.orderId);
+              
+              // ✅ CRITICAL: Re-check for duplicate immediately after creation (race condition protection)
+              await new Promise(resolve => setTimeout(resolve, 100));
+              const postCreateCheck = await findExistingOrderByDealId(dealId);
+              if (postCreateCheck && postCreateCheck !== createdOrderId) {
+                console.log(JSON.stringify({
+                  event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE_AFTER_CREATE',
+                  requestId,
+                  dealId,
+                  eventType: 'CREATE',
+                  message: 'Duplicate detected immediately after creation',
+                  createdOrderId: createdOrderId,
+                  foundOrderId: postCreateCheck,
+                  timestamp: new Date().toISOString()
+                }));
+                // Use the first found order
+                existingShopifyOrderId = postCreateCheck;
+              } else {
+                existingShopifyOrderId = createdOrderId;
+              }
+              
+              try {
+                await callBitrix('/crm.deal.update.json', {
+                  id: dealId,
+                  fields: {
+                    UF_CRM_1742556489: existingShopifyOrderId // Shopify Order ID field
+                  }
+                });
+
+                console.log(JSON.stringify({
+                  event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SUCCESS',
+                  requestId,
+                  dealId,
+                  eventType: 'CREATE',
+                  shopifyOrderId: existingShopifyOrderId,
+                  orderName: orderResult.orderName,
+                  wasDuplicate: orderResult.wasDuplicate || false,
+                  lineItemsCount: orderResult.lineItems?.length || 0,
+                  tags: orderResult.tags || [],
+                  note: orderResult.note || '',
+                  timestamp: new Date().toISOString()
+                }));
 
               // Update stored event with shopifyOrderId
               if (storedEvent) {
