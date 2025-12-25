@@ -100,7 +100,53 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
     throw new Error('Deal ID is required');
   }
 
-  // Separate items with SKU from items with variantId
+  // ✅ CRITICAL: Acquire lock to prevent concurrent order creation for same deal
+  const lockAcquired = acquireLock(dealId);
+  if (!lockAcquired) {
+    // Wait for lock to be released (another request is creating order)
+    console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Lock already held for deal ${dealId}, waiting...`);
+    const lockAvailable = await waitForLock(dealId, 3000);
+    
+    if (!lockAvailable) {
+      releaseLock(dealId); // Just in case
+      throw new Error(`Timeout waiting for lock on deal ${dealId} - order creation already in progress`);
+    }
+    
+    // After lock is released, check if order was created
+    const existingOrderId = await findExistingOrderByDealId(dealId);
+    if (existingOrderId) {
+      console.log(`[CREATE ORDER FROM BITRIX] ✅ Found existing order ${existingOrderId} for deal ${dealId} after lock release`);
+      return {
+        success: true,
+        orderId: existingOrderId,
+        orderName: `Existing order ${existingOrderId}`,
+        wasDuplicate: true,
+        lineItems: [],
+        tags: ['TECH', 'BITRIX', `BITRIX:${dealId}`],
+        note: `Технический ордер из Bitrix. Сделка: ${dealId}`
+      };
+    }
+    // Lock released but no order found - acquire lock and continue
+    if (!acquireLock(dealId)) {
+      // Another request acquired lock in the meantime - check again
+      const existingOrderId2 = await findExistingOrderByDealId(dealId);
+      if (existingOrderId2) {
+        return {
+          success: true,
+          orderId: existingOrderId2,
+          orderName: `Existing order ${existingOrderId2}`,
+          wasDuplicate: true,
+          lineItems: [],
+          tags: ['TECH', 'BITRIX', `BITRIX:${dealId}`],
+          note: `Технический ордер из Bitrix. Сделка: ${dealId}`
+        };
+      }
+      throw new Error(`Could not acquire lock for deal ${dealId} after waiting`);
+    }
+  }
+
+  try {
+    // Separate items with SKU from items with variantId
   const itemsWithSku = items.filter(item => item.sku && !item.variantId);
   const itemsWithVariantId = items.filter(item => item.variantId);
 
@@ -258,6 +304,9 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
       error: 'ORDER_CREATE_ERROR',
       message: error.message
     };
+  } finally {
+    // Always release lock when done
+    releaseLock(dealId);
   }
 }
 
