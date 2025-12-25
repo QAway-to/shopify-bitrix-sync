@@ -1430,9 +1430,10 @@ async function handleDealCreate(dealId, requestId) {
               return { 
                 success: true, 
                 triggerMatch: true, 
-                shopifyOrderId: createdOrderId,
+                shopifyOrderId: existingShopifyOrderId || createdOrderId,
                 orderCreated: true,
-                dealUpdateFailed: true
+                dealUpdateFailed: true,
+                wasDuplicate: orderResult.wasDuplicate || false
               };
             }
           } else {
