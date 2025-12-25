@@ -145,8 +145,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
     }
   }
 
-  try {
-    // Separate items with SKU from items with variantId
+  // Separate items with SKU from items with variantId
   const itemsWithSku = items.filter(item => item.sku && !item.variantId);
   const itemsWithVariantId = items.filter(item => item.variantId);
 
