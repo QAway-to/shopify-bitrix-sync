@@ -204,7 +204,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
           orderName: `Existing order ${existingOrderId}`,
           wasDuplicate: true,
           lineItems: [],
-          tags: ['TECH', 'BITRIX', `BITRIX:${dealId}`],
+          tags: ['TECH', `BITRIX:${dealId}`],
           note: `Технический ордер из Bitrix. Сделка: ${dealId}`
         };
       }
@@ -259,7 +259,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
           orderName: `Existing order ${existingOrderId}`,
           wasDuplicate: true,
           lineItems: [],
-          tags: ['TECH', 'BITRIX', `BITRIX:${dealId}`],
+          tags: ['TECH', `BITRIX:${dealId}`],
           note: `Технический ордер из Bitrix. Сделка: ${dealId}`
         };
       }
@@ -312,14 +312,12 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
     });
   }
 
-  // Build tags: ["TECH", "BITRIX", dealId]
-  // TECH tag indicates this is a technical order
-  const tags = ['TECH', 'BITRIX'];
+  // Build tags: ["TECH", "BITRIX:{dealId}"]
+  // TECH tag indicates this is a technical order (used to filter in Shopify webhook)
+  // BITRIX:{dealId} tag is used for duplicate detection and linking to Bitrix deal
+  const tags = ['TECH'];
   if (dealId) {
     tags.push(`BITRIX:${dealId}`);
-  }
-  if (correlationId) {
-    tags.push(`CORR:${correlationId}`);
   }
 
   // Build note with technical order information
