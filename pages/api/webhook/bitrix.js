@@ -1436,6 +1436,7 @@ async function handleDealCreate(dealId, requestId) {
                 wasDuplicate: orderResult.wasDuplicate || false
               };
             }
+            }
           } else {
             console.log(JSON.stringify({
               event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ERROR',
