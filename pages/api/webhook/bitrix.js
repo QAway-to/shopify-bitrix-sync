@@ -636,6 +636,16 @@ async function handleDealUpdate(dealId, requestId) {
 
   // ✅ STEP D: Check if we need to create order in Shopify from Bitrix deal
   // Condition: No shopifyOrderId but deal has product rows
+  console.log(JSON.stringify({
+    event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_PRE_CHECK',
+    requestId,
+    dealId,
+    eventType: 'UPDATE',
+    shopifyOrderId: shopifyOrderId || 'empty',
+    shopifyOrderIdExists: !!(shopifyOrderId && shopifyOrderId.trim() !== ''),
+    timestamp: new Date().toISOString()
+  }));
+
   if (!shopifyOrderId || shopifyOrderId.trim() === '') {
     try {
       // Get product rows from deal
@@ -643,11 +653,23 @@ async function handleDealUpdate(dealId, requestId) {
         id: dealId
       });
 
+      console.log(JSON.stringify({
+        event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_PRODUCT_ROWS_RESPONSE',
+        requestId,
+        dealId,
+        eventType: 'UPDATE',
+        productRowsExists: !!(productRowsResp && productRowsResp.result),
+        productRowsIsArray: Array.isArray(productRowsResp?.result),
+        productRowsCount: productRowsResp?.result?.length || 0,
+        timestamp: new Date().toISOString()
+      }));
+
       if (productRowsResp.result && Array.isArray(productRowsResp.result) && productRowsResp.result.length > 0) {
         console.log(JSON.stringify({
           event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_CHECK',
           requestId,
           dealId,
+          eventType: 'UPDATE',
           productRowsCount: productRowsResp.result.length,
           timestamp: new Date().toISOString()
         }));
@@ -683,11 +705,22 @@ async function handleDealUpdate(dealId, requestId) {
           }
         }
 
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ITEMS_COLLECTED',
+          requestId,
+          dealId,
+          eventType: 'UPDATE',
+          itemsCount: items.length,
+          items: items.map(i => ({ sku: i.sku, qty: i.qty })),
+          timestamp: new Date().toISOString()
+        }));
+
         if (items.length > 0) {
           console.log(JSON.stringify({
             event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ATTEMPT',
             requestId,
             dealId,
+            eventType: 'UPDATE',
             itemsCount: items.length,
             items: items.map(i => ({ sku: i.sku, qty: i.qty })),
             timestamp: new Date().toISOString()
@@ -1069,12 +1102,33 @@ async function handleDealCreate(dealId, requestId) {
 
   // ✅ Check if we need to create order in Shopify from Bitrix deal
   // Condition: No shopifyOrderId but deal has product rows
+  console.log(JSON.stringify({
+    event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_PRE_CHECK',
+    requestId,
+    dealId,
+    eventType: 'CREATE',
+    shopifyOrderId: shopifyOrderId || 'empty',
+    shopifyOrderIdExists: !!(shopifyOrderId && shopifyOrderId.trim() !== ''),
+    timestamp: new Date().toISOString()
+  }));
+
   if (!shopifyOrderId || shopifyOrderId.trim() === '') {
     try {
       // Get product rows from deal
       const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
         id: dealId
       });
+
+      console.log(JSON.stringify({
+        event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_PRODUCT_ROWS_RESPONSE',
+        requestId,
+        dealId,
+        eventType: 'CREATE',
+        productRowsExists: !!(productRowsResp && productRowsResp.result),
+        productRowsIsArray: Array.isArray(productRowsResp?.result),
+        productRowsCount: productRowsResp?.result?.length || 0,
+        timestamp: new Date().toISOString()
+      }));
 
       if (productRowsResp.result && Array.isArray(productRowsResp.result) && productRowsResp.result.length > 0) {
         console.log(JSON.stringify({
@@ -1116,6 +1170,16 @@ async function handleDealCreate(dealId, requestId) {
             console.error(`[BITRIX TO SHOPIFY] Error getting product ${productId}:`, productError);
           }
         }
+
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ITEMS_COLLECTED',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          itemsCount: items.length,
+          items: items.map(i => ({ sku: i.sku, qty: i.qty })),
+          timestamp: new Date().toISOString()
+        }));
 
         if (items.length > 0) {
           console.log(JSON.stringify({
