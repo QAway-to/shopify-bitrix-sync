@@ -6,8 +6,8 @@ import BitrixEventsList from '../src/components/bitrix/EventsList';
 import SuccessOperationsList from '../src/components/success/SuccessOperationsList';
 import DataPreview from '../src/components/shopify/DataPreview';
 import AuthModal from '../src/components/auth/AuthModal';
+import LockedSection from '../src/components/common/LockedSection';
 // Removed shopifyAdapter import - now using API endpoint for transformation
-import AuthModal from '../src/components/auth/AuthModal';
 
 export default function ShopifyPage() {
   // Authentication state
