@@ -6,6 +6,38 @@
 import { callShopifyGraphQL } from './adminClient.js';
 import { getVariantIdsBySkus } from './hold.js';
 
+// In-memory lock to prevent concurrent order creation for the same deal
+const dealIdLocks = new Map();
+
+/**
+ * Acquire lock for dealId (returns true if acquired, false if already locked)
+ */
+function acquireLock(dealId) {
+  if (dealIdLocks.has(dealId)) {
+    return false; // Already locked
+  }
+  dealIdLocks.set(dealId, Date.now());
+  return true;
+}
+
+/**
+ * Release lock for dealId
+ */
+function releaseLock(dealId) {
+  dealIdLocks.delete(dealId);
+}
+
+/**
+ * Wait for lock to be released (with timeout)
+ */
+async function waitForLock(dealId, maxWaitMs = 2000) {
+  const startTime = Date.now();
+  while (dealIdLocks.has(dealId) && (Date.now() - startTime) < maxWaitMs) {
+    await new Promise(resolve => setTimeout(resolve, 50)); // Check every 50ms
+  }
+  return !dealIdLocks.has(dealId); // Returns true if lock is now available
+}
+
 /**
  * Check if order already exists in Shopify by BITRIX:{dealId} tag
  * @param {string} dealId - Bitrix deal ID
