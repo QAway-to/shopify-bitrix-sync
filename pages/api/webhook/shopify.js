@@ -1105,6 +1105,37 @@ export default async function handler(req, res) {
   console.log(`[SHOPIFY WEBHOOK] Order ID: ${order?.id || 'N/A'}`);
   console.log(`[SHOPIFY WEBHOOK] Order Name: ${order?.name || 'N/A'}`);
   
+  // ✅ CRITICAL: Check if this is a technical order (should not be sent to Bitrix)
+  // Technical orders are created FROM Bitrix to reserve inventory, so they should not create deals IN Bitrix
+  // Handle tags as either array or comma-separated string (Shopify webhook may return both formats)
+  const orderTags = Array.isArray(order?.tags) 
+    ? order.tags 
+    : (order?.tags ? String(order.tags).split(',').map(t => t.trim()) : []);
+  const isTechnicalOrder = orderTags.includes('TECH');
+  
+  if (isTechnicalOrder) {
+    console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: Technical order detected (tags: ${orderTags.join(', ')}). Order ${order?.name || order?.id} will NOT be sent to Bitrix.`);
+    console.log(`[SHOPIFY WEBHOOK] This is a technical order created from Bitrix to reserve inventory. It should not create a deal in Bitrix.`);
+    
+    // Store event for monitoring (non-blocking) even though we skip Bitrix
+    try {
+      const storedEvent = shopifyAdapter.storeEvent(order, topic);
+      console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
+    } catch (storeError) {
+      console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
+    }
+    
+    // Return 200 to prevent Shopify from retrying
+    return res.status(200).json({ 
+      success: true, 
+      skipped: true,
+      reason: 'Technical order (TECH tag) - not sent to Bitrix',
+      orderId: order?.id,
+      orderName: order?.name,
+      tags: orderTags
+    });
+  }
+  
   // ✅ CRITICAL: Log financial_status and cancellation/refund status for debugging
   const financialStatus = order?.financial_status || 'N/A';
   const statusLower = financialStatus?.toLowerCase() || '';
@@ -1121,6 +1152,7 @@ export default async function handler(req, res) {
     financial_status: financialStatus,
     cancelled: isCancelled,
     line_items_count: order?.line_items?.length || 0,
+    tags: orderTags,
     created_at: order?.created_at,
     updated_at: order?.updated_at
   });
