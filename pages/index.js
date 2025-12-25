@@ -1543,6 +1543,7 @@ export default function ShopifyPage() {
 
         {/* Data Preview - Wide block below */}
         {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation) ? (
+          <LockedSection isGuestMode={isGuestMode} title="Guest Mode - Data preview locked">
           <div style={{ marginTop: '20px', width: '100%' }}>
         {previewData && previewEvent && !successPreviewOperation && (
           <DataPreview
@@ -1574,6 +1575,7 @@ export default function ShopifyPage() {
               />
             )}
           </div>
+          </LockedSection>
         ) : null}
       </main>
     </>
