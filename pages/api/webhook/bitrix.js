@@ -689,15 +689,26 @@ async function handleDealUpdate(dealId, requestId) {
 
             if (productResp.result) {
               const product = productResp.result;
-              const sku = product.CODE || product.XML_ID; // SKU is usually in CODE or XML_ID
+              const code = product.CODE;
+              const xmlId = product.XML_ID; // XML_ID = variant_id in Shopify
               
-              if (sku && sku.trim() !== '') {
+              // Priority: CODE (SKU) first, then XML_ID (variant_id) directly
+              if (code && code.trim() !== '') {
+                // Use CODE as SKU - will look up variant_id by SKU
                 items.push({
-                  sku: sku.trim(),
+                  sku: code.trim(),
                   qty: row.QUANTITY || 1
                 });
+                console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using CODE as SKU: ${code.trim()}`);
+              } else if (xmlId && xmlId.toString().trim() !== '') {
+                // Use XML_ID directly as variant_id (no SKU lookup needed)
+                items.push({
+                  variantId: xmlId.toString().trim(),
+                  qty: row.QUANTITY || 1
+                });
+                console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using XML_ID as variantId directly: ${xmlId}`);
               } else {
-                console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no SKU (CODE/XML_ID), skipping`);
+                console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE (SKU) or XML_ID (variant_id), skipping`);
               }
             }
           } catch (productError) {
@@ -1155,15 +1166,26 @@ async function handleDealCreate(dealId, requestId) {
 
             if (productResp.result) {
               const product = productResp.result;
-              const sku = product.CODE || product.XML_ID; // SKU is usually in CODE or XML_ID
+              const code = product.CODE;
+              const xmlId = product.XML_ID; // XML_ID = variant_id in Shopify
               
-              if (sku && sku.trim() !== '') {
+              // Priority: CODE (SKU) first, then XML_ID (variant_id) directly
+              if (code && code.trim() !== '') {
+                // Use CODE as SKU - will look up variant_id by SKU
                 items.push({
-                  sku: sku.trim(),
+                  sku: code.trim(),
                   qty: row.QUANTITY || 1
                 });
+                console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using CODE as SKU: ${code.trim()}`);
+              } else if (xmlId && xmlId.toString().trim() !== '') {
+                // Use XML_ID directly as variant_id (no SKU lookup needed)
+                items.push({
+                  variantId: xmlId.toString().trim(),
+                  qty: row.QUANTITY || 1
+                });
+                console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using XML_ID as variantId directly: ${xmlId}`);
               } else {
-                console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no SKU (CODE/XML_ID), skipping`);
+                console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE (SKU) or XML_ID (variant_id), skipping`);
               }
             }
           } catch (productError) {
@@ -1177,7 +1199,13 @@ async function handleDealCreate(dealId, requestId) {
           dealId,
           eventType: 'CREATE',
           itemsCount: items.length,
-          items: items.map(i => ({ sku: i.sku, qty: i.qty })),
+          items: items.map(i => ({ 
+            sku: i.sku || null, 
+            variantId: i.variantId || null,
+            qty: i.qty 
+          })),
+          itemsWithSku: items.filter(i => i.sku).length,
+          itemsWithVariantId: items.filter(i => i.variantId).length,
           timestamp: new Date().toISOString()
         }));
 

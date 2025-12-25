@@ -8,7 +8,7 @@ import { getVariantIdsBySkus } from './hold.js';
 
 /**
  * Create order in Shopify from Bitrix deal
- * @param {Array<{sku: string, qty: number}>} items - Array of items with SKU and quantity
+ * @param {Array<{sku?: string, variantId?: string|number, qty: number}>} items - Array of items with SKU or variantId and quantity
  * @param {string} dealId - Bitrix deal ID
  * @param {string} correlationId - Correlation ID for tracking (optional)
  * @returns {Promise<Object>} Created order data
@@ -22,16 +22,37 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
     throw new Error('Deal ID is required');
   }
 
-  // Step 1: Get variant IDs for all SKUs
-  const skus = items.map(item => item.sku);
-  const variantIdMap = await getVariantIdsBySkus(skus);
+  // Separate items with SKU from items with variantId
+  const itemsWithSku = items.filter(item => item.sku && !item.variantId);
+  const itemsWithVariantId = items.filter(item => item.variantId);
+
+  // Step 1: Get variant IDs for all SKUs (single batch query)
+  let variantIdMap = new Map();
+  if (itemsWithSku.length > 0) {
+    const skus = itemsWithSku.map(item => item.sku);
+    variantIdMap = await getVariantIdsBySkus(skus);
+  }
 
   // Build line items with variant IDs
   const lineItems = [];
   for (const item of items) {
-    const variantId = variantIdMap.get(item.sku);
-    if (!variantId) {
-      throw new Error(`Variant ID not found for SKU: ${item.sku}`);
+    let variantId = null;
+
+    // If variantId is provided directly, use it (XML_ID from Bitrix)
+    if (item.variantId) {
+      variantId = String(item.variantId);
+      console.log(`[CREATE ORDER FROM BITRIX] Using variantId directly: ${variantId}`);
+    } 
+    // Otherwise, if SKU is provided, look up variantId by SKU from batch result
+    else if (item.sku) {
+      variantId = variantIdMap.get(item.sku);
+      
+      if (!variantId) {
+        throw new Error(`Variant ID not found for SKU: ${item.sku}`);
+      }
+      console.log(`[CREATE ORDER FROM BITRIX] Found variantId by SKU: ${item.sku} -> ${variantId}`);
+    } else {
+      throw new Error(`Item must have either sku or variantId: ${JSON.stringify(item)}`);
     }
 
     // GraphQL requires variant ID in format "gid://shopify/ProductVariant/{id}"
