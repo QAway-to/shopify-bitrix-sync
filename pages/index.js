@@ -1542,41 +1542,41 @@ export default function ShopifyPage() {
         </div>
 
         {/* Data Preview - Wide block below */}
-        {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation) ? (
+        {((previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation)) && (
           <LockedSection isGuestMode={isGuestMode} title="Guest Mode - Data preview locked">
-          <div style={{ marginTop: '20px', width: '100%' }}>
-        {previewData && previewEvent && !successPreviewOperation && (
-          <DataPreview
-            shopifyData={previewData.shopifyData}
-            bitrixData={previewData.bitrixData}
-            eventId={previewEvent.id}
-            onSendEvent={handleSendPreviewEvent}
-            isSending={isSending}
-            isGuestMode={isGuestMode}
-          />
-        )}
-            {bitrixPreviewData && bitrixPreviewEvent && (
-              <DataPreview
-                shopifyData={bitrixPreviewData.shopifyData}
-                bitrixData={bitrixPreviewData.bitrixData}
-                eventId={bitrixPreviewEvent.dealId || bitrixPreviewEvent.id}
-                eventType="bitrix"
-                isGuestMode={isGuestMode}
-              />
-            )}
-            {previewData && successPreviewOperation && (
-              <DataPreview
-                shopifyData={previewData.shopifyData}
-                bitrixData={previewData.bitrixData}
-                eventId={successPreviewOperation.dealId || successPreviewOperation.id}
-                eventType="success"
-                operation={successPreviewOperation}
-                isGuestMode={isGuestMode}
-              />
-            )}
-          </div>
+            <div style={{ marginTop: '20px', width: '100%' }}>
+              {previewData && previewEvent && !successPreviewOperation && (
+                <DataPreview
+                  shopifyData={previewData.shopifyData}
+                  bitrixData={previewData.bitrixData}
+                  eventId={previewEvent.id}
+                  onSendEvent={handleSendPreviewEvent}
+                  isSending={isSending}
+                  isGuestMode={isGuestMode}
+                />
+              )}
+              {bitrixPreviewData && bitrixPreviewEvent && (
+                <DataPreview
+                  shopifyData={bitrixPreviewData.shopifyData}
+                  bitrixData={bitrixPreviewData.bitrixData}
+                  eventId={bitrixPreviewEvent.dealId || bitrixPreviewEvent.id}
+                  eventType="bitrix"
+                  isGuestMode={isGuestMode}
+                />
+              )}
+              {previewData && successPreviewOperation && (
+                <DataPreview
+                  shopifyData={previewData.shopifyData}
+                  bitrixData={previewData.bitrixData}
+                  eventId={successPreviewOperation.dealId || successPreviewOperation.id}
+                  eventType="success"
+                  operation={successPreviewOperation}
+                  isGuestMode={isGuestMode}
+                />
+              )}
+            </div>
           </LockedSection>
-        ) : null}
+        )}
       </main>
     </>
   );
