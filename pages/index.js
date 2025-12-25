@@ -891,7 +891,7 @@ export default function ShopifyPage() {
                 borderRadius: '6px',
                 color: 'white',
                 cursor: (selectedBitrixEvents.length > 0 && !isGuestMode) ? 'pointer' : 'not-allowed',
-                opacity: (isSendingToShopify || selectedBitrixEvents.length === 0 || isGuestMode) ? 0.5 : 1
+                opacity: (isSendingToShopify || selectedBitrixEvents.length === 0 || isGuestMode) ? 0.5 : 1,
                 minWidth: '220px',
                 whiteSpace: 'nowrap',
                 flexShrink: 0
