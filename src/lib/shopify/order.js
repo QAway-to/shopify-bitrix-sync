@@ -7,6 +7,52 @@ import { callShopifyGraphQL } from './adminClient.js';
 import { getVariantIdsBySkus } from './hold.js';
 
 /**
+ * Check if order already exists in Shopify by BITRIX:{dealId} tag
+ * @param {string} dealId - Bitrix deal ID
+ * @returns {Promise<string|null>} Existing order ID or null if not found
+ */
+export async function findExistingOrderByDealId(dealId) {
+  if (!dealId) {
+    return null;
+  }
+
+  const tag = `BITRIX:${dealId}`;
+  const query = `
+    query findOrderByTag($query: String!) {
+      orders(first: 1, query: $query) {
+        edges {
+          node {
+            id
+            legacyResourceId
+            name
+            tags
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    // Shopify tag search: use quotes for tags with special characters like ':'
+    const data = await callShopifyGraphQL(query, {
+      query: `tag:'${tag}'`
+    });
+
+    if (data?.orders?.edges && data.orders.edges.length > 0) {
+      const order = data.orders.edges[0].node;
+      const orderId = order.legacyResourceId || order.id.split('/').pop();
+      console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealId} by tag ${tag}`);
+      return String(orderId);
+    }
+
+    return null;
+  } catch (error) {
+    console.warn(`[FIND EXISTING ORDER] Error searching for order by tag ${tag}:`, error.message);
+    return null; // Don't block order creation if search fails
+  }
+}
+
+/**
  * Create order in Shopify from Bitrix deal
  * @param {Array<{sku?: string, variantId?: string|number, qty: number}>} items - Array of items with SKU or variantId and quantity
  * @param {string} dealId - Bitrix deal ID

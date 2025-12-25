@@ -7,7 +7,7 @@ import { setProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
 import { createHoldOrder } from '../../../src/lib/shopify/hold.js';
 import { createRefund } from '../../../src/lib/shopify/refund.js';
 import { updateShippingAddress } from '../../../src/lib/shopify/address.js';
-import { createOrderFromBitrix } from '../../../src/lib/shopify/order.js';
+import { createOrderFromBitrix, findExistingOrderByDealId } from '../../../src/lib/shopify/order.js';
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 
@@ -646,7 +646,70 @@ async function handleDealUpdate(dealId, requestId) {
     timestamp: new Date().toISOString()
   }));
 
-  if (!shopifyOrderId || shopifyOrderId.trim() === '') {
+  // ✅ CRITICAL: Multiple duplicate checks to prevent race conditions (same as CREATE)
+  let shouldCreateOrder = !shopifyOrderId || shopifyOrderId.trim() === '';
+  let existingShopifyOrderId = shopifyOrderId;
+
+  if (shouldCreateOrder) {
+    // Re-check shopifyOrderId after a short delay (race condition protection)
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    try {
+      const dealRecheckResp = await callBitrix('/crm.deal.get.json', { id: dealId });
+      if (dealRecheckResp.result) {
+        const recheckShopifyOrderId = dealRecheckResp.result.UF_CRM_1742556489 || dealRecheckResp.result.uf_crm_1742556489;
+        if (recheckShopifyOrderId && recheckShopifyOrderId.trim() !== '') {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE_CHECK',
+            requestId,
+            dealId,
+            eventType: 'UPDATE',
+            message: 'Found shopifyOrderId on recheck (race condition prevented)',
+            shopifyOrderId: recheckShopifyOrderId,
+            timestamp: new Date().toISOString()
+          }));
+          shouldCreateOrder = false;
+          existingShopifyOrderId = recheckShopifyOrderId;
+        }
+      }
+    } catch (recheckError) {
+      console.warn(`[BITRIX TO SHOPIFY] Error rechecking deal for shopifyOrderId:`, recheckError);
+    }
+
+    // If still should create, check Shopify for existing order by tag
+    if (shouldCreateOrder) {
+      const existingOrderId = await findExistingOrderByDealId(dealId);
+      
+      if (existingOrderId) {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE_CHECK',
+          requestId,
+          dealId,
+          eventType: 'UPDATE',
+          message: 'Found existing order in Shopify by BITRIX tag (duplicate prevented)',
+          existingShopifyOrderId: existingOrderId,
+          timestamp: new Date().toISOString()
+        }));
+        shouldCreateOrder = false;
+        existingShopifyOrderId = existingOrderId;
+        
+        // Update deal with found shopifyOrderId
+        try {
+          await callBitrix('/crm.deal.update.json', {
+            id: dealId,
+            fields: {
+              UF_CRM_1742556489: existingOrderId
+            }
+          });
+          console.log(`[BITRIX TO SHOPIFY] Updated deal ${dealId} with found shopifyOrderId ${existingOrderId}`);
+        } catch (updateError) {
+          console.warn(`[BITRIX TO SHOPIFY] Failed to update deal with found shopifyOrderId:`, updateError);
+        }
+      }
+    }
+  }
+
+  if (shouldCreateOrder) {
     try {
       // Get product rows from deal
       const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
@@ -1123,7 +1186,73 @@ async function handleDealCreate(dealId, requestId) {
     timestamp: new Date().toISOString()
   }));
 
-  if (!shopifyOrderId || shopifyOrderId.trim() === '') {
+  // ✅ CRITICAL: Multiple duplicate checks to prevent race conditions
+  // Check 1: shopifyOrderId from deal data
+  // Check 2: Re-check shopifyOrderId after delay (in case another request just updated it)
+  // Check 3: Search Shopify for existing order by BITRIX:{dealId} tag
+  let shouldCreateOrder = !shopifyOrderId || shopifyOrderId.trim() === '';
+  let existingShopifyOrderId = shopifyOrderId;
+
+  if (shouldCreateOrder) {
+    // Re-check shopifyOrderId after a short delay (race condition protection)
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    try {
+      const dealRecheckResp = await callBitrix('/crm.deal.get.json', { id: dealId });
+      if (dealRecheckResp.result) {
+        const recheckShopifyOrderId = dealRecheckResp.result.UF_CRM_1742556489 || dealRecheckResp.result.uf_crm_1742556489;
+        if (recheckShopifyOrderId && recheckShopifyOrderId.trim() !== '') {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE_CHECK',
+            requestId,
+            dealId,
+            eventType: 'CREATE',
+            message: 'Found shopifyOrderId on recheck (race condition prevented)',
+            shopifyOrderId: recheckShopifyOrderId,
+            timestamp: new Date().toISOString()
+          }));
+          shouldCreateOrder = false;
+          existingShopifyOrderId = recheckShopifyOrderId;
+        }
+      }
+    } catch (recheckError) {
+      console.warn(`[BITRIX TO SHOPIFY] Error rechecking deal for shopifyOrderId:`, recheckError);
+    }
+
+    // If still should create, check Shopify for existing order by tag
+    if (shouldCreateOrder) {
+      const existingOrderId = await findExistingOrderByDealId(dealId);
+      
+      if (existingOrderId) {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE_CHECK',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          message: 'Found existing order in Shopify by BITRIX tag (duplicate prevented)',
+          existingShopifyOrderId: existingOrderId,
+          timestamp: new Date().toISOString()
+        }));
+        shouldCreateOrder = false;
+        existingShopifyOrderId = existingOrderId;
+        
+        // Update deal with found shopifyOrderId
+        try {
+          await callBitrix('/crm.deal.update.json', {
+            id: dealId,
+            fields: {
+              UF_CRM_1742556489: existingOrderId
+            }
+          });
+          console.log(`[BITRIX TO SHOPIFY] Updated deal ${dealId} with found shopifyOrderId ${existingOrderId}`);
+        } catch (updateError) {
+          console.warn(`[BITRIX TO SHOPIFY] Failed to update deal with found shopifyOrderId:`, updateError);
+        }
+      }
+    }
+  }
+
+  if (shouldCreateOrder) {
     try {
       // Get product rows from deal
       const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {

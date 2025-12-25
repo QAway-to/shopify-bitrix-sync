@@ -65,12 +65,33 @@ export class BitrixAdapter {
    * @returns {Object} Stored event with timestamp
    */
   storeEvent(payload) {
+    const dealId = payload.dealId;
+    const receivedAt = payload.received_at || new Date().toISOString();
+    const receivedTimestamp = new Date(receivedAt).getTime();
+    
+    // ✅ Deduplication: Check for duplicate events (same dealId within 5 seconds)
+    const DEDUP_WINDOW_MS = 5000; // 5 seconds window for duplicate detection
+    const recentDuplicate = this.storage.find(event => {
+      if (event.dealId !== dealId) return false;
+      
+      const eventTimestamp = new Date(event.received_at || event.receivedAt || 0).getTime();
+      const timeDiff = Math.abs(receivedTimestamp - eventTimestamp);
+      
+      // Consider duplicate if same dealId and within dedup window
+      return timeDiff < DEDUP_WINDOW_MS;
+    });
+    
+    if (recentDuplicate) {
+      console.log(`[BITRIX ADAPTER] 🔄 Duplicate event detected (dealId=${dealId}, timeDiff < ${DEDUP_WINDOW_MS}ms), skipping. Existing eventId: ${recentDuplicate.id}`);
+      return recentDuplicate; // Return existing event instead of creating duplicate
+    }
+    
     // Generate unique event ID (timestamp + random to ensure uniqueness)
     const uniqueId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
     const event = {
       ...payload,
-      received_at: payload.received_at || new Date().toISOString(),
+      received_at: receivedAt,
       id: uniqueId, // Unique ID for each event
       eventId: uniqueId, // Also store as eventId for clarity
     };
