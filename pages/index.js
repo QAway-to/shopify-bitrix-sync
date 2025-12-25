@@ -823,6 +823,7 @@ export default function ShopifyPage() {
               🔧 Тех.док
             </a>
           </div>
+          <LockedSection isGuestMode={isGuestMode} title="Guest Mode - Actions locked">
           <div className="header-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', width: '100%', marginTop: '8px' }}>
             {events.length > 0 && (
               <>
@@ -1538,7 +1539,6 @@ export default function ShopifyPage() {
             </div>
           </div>
         </div>
-        </LockedSection>
 
         {/* Data Preview - Wide block below */}
         {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation) ? (
