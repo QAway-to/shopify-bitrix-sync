@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { sanitizeData } from '../../lib/utils/sanitize';
 
 export default function SuccessOperationsList({ operations, selectedOperations, onSelectionChange, onPreviewOperation, isLoading = false, isGuestMode = false }) {
   const [expandedOperations, setExpandedOperations] = useState(new Set());
@@ -252,7 +253,7 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
                         fontSize: '0.7rem',
                         color: '#cbd5e1'
                       }}>
-                        {JSON.stringify(operation, null, 2)}
+                        {JSON.stringify(isGuestMode ? sanitizeData(operation, true) : operation, null, 2)}
                       </pre>
                     </div>
                   )}
