@@ -985,6 +985,7 @@ export default function ShopifyPage() {
               {(isLoading || isBitrixLoading || isSuccessLoading) ? 'Refreshing...' : '🔄 Refresh'}
             </button>
           </div>
+          </LockedSection>
         </header>
 
         {sendResult && (
