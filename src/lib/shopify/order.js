@@ -100,50 +100,89 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
     throw new Error('Deal ID is required');
   }
 
-  // ✅ CRITICAL: Acquire lock to prevent concurrent order creation for same deal
+  // ✅ CRITICAL STEP 1: Acquire lock IMMEDIATELY to prevent concurrent order creation
   const lockAcquired = acquireLock(dealId);
   if (!lockAcquired) {
-    // Wait for lock to be released (another request is creating order)
-    console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Lock already held for deal ${dealId}, waiting...`);
-    const lockAvailable = await waitForLock(dealId, 3000);
+    // Another request is creating order - wait and check for existing order multiple times
+    console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Lock already held for deal ${dealId}, waiting and checking for existing order...`);
     
-    if (!lockAvailable) {
-      releaseLock(dealId); // Just in case
-      throw new Error(`Timeout waiting for lock on deal ${dealId} - order creation already in progress`);
-    }
-    
-    // After lock is released, check if order was created
-    const existingOrderId = await findExistingOrderByDealId(dealId);
-    if (existingOrderId) {
-      console.log(`[CREATE ORDER FROM BITRIX] ✅ Found existing order ${existingOrderId} for deal ${dealId} after lock release`);
-      return {
-        success: true,
-        orderId: existingOrderId,
-        orderName: `Existing order ${existingOrderId}`,
-        wasDuplicate: true,
-        lineItems: [],
-        tags: ['TECH', 'BITRIX', `BITRIX:${dealId}`],
-        note: `Технический ордер из Bitrix. Сделка: ${dealId}`
-      };
-    }
-    // Lock released but no order found - acquire lock and continue
-    if (!acquireLock(dealId)) {
-      // Another request acquired lock in the meantime - check again
-      const existingOrderId2 = await findExistingOrderByDealId(dealId);
-      if (existingOrderId2) {
+    // Wait with multiple checks for existing order
+    for (let checkAttempt = 1; checkAttempt <= 10; checkAttempt++) {
+      await new Promise(resolve => setTimeout(resolve, 300)); // Wait 300ms between checks
+      
+      // Check if order already exists
+      const existingOrderId = await findExistingOrderByDealId(dealId);
+      if (existingOrderId) {
+        console.log(`[CREATE ORDER FROM BITRIX] ✅ Found existing order ${existingOrderId} for deal ${dealId} on check attempt ${checkAttempt}`);
         return {
           success: true,
-          orderId: existingOrderId2,
-          orderName: `Existing order ${existingOrderId2}`,
+          orderId: existingOrderId,
+          orderName: `Existing order ${existingOrderId}`,
           wasDuplicate: true,
           lineItems: [],
           tags: ['TECH', 'BITRIX', `BITRIX:${dealId}`],
           note: `Технический ордер из Bitrix. Сделка: ${dealId}`
         };
       }
+      
+      // Check if lock is released
+      if (!dealIdLocks.has(dealId)) {
+        console.log(`[CREATE ORDER FROM BITRIX] Lock released for deal ${dealId} on attempt ${checkAttempt}`);
+        // Try to acquire lock
+        if (acquireLock(dealId)) {
+          break; // Lock acquired, continue with creation
+        }
+        // Another request got the lock, continue waiting
+      }
+    }
+    
+    // Final check after waiting
+    const finalExistingOrderId = await findExistingOrderByDealId(dealId);
+    if (finalExistingOrderId) {
+      console.log(`[CREATE ORDER FROM BITRIX] ✅ Found existing order ${finalExistingOrderId} for deal ${dealId} after all checks`);
+      return {
+        success: true,
+        orderId: finalExistingOrderId,
+        orderName: `Existing order ${finalExistingOrderId}`,
+        wasDuplicate: true,
+        lineItems: [],
+        tags: ['TECH', 'BITRIX', `BITRIX:${dealId}`],
+        note: `Технический ордер из Bitrix. Сделка: ${dealId}`
+      };
+    }
+    
+    // If still locked after all checks, throw error
+    if (dealIdLocks.has(dealId)) {
+      throw new Error(`Timeout waiting for lock on deal ${dealId} - order creation already in progress for too long`);
+    }
+    
+    // Try one more time to acquire lock
+    if (!acquireLock(dealId)) {
       throw new Error(`Could not acquire lock for deal ${dealId} after waiting`);
     }
   }
+
+  try {
+    // ✅ CRITICAL STEP 2: Multiple duplicate checks BEFORE preparing data
+    for (let preCheck = 1; preCheck <= 3; preCheck++) {
+      const existingOrderId = await findExistingOrderByDealId(dealId);
+      if (existingOrderId) {
+        console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Existing order ${existingOrderId} found for deal ${dealId} on pre-check ${preCheck}`);
+        releaseLock(dealId);
+        return {
+          success: true,
+          orderId: existingOrderId,
+          orderName: `Existing order ${existingOrderId}`,
+          wasDuplicate: true,
+          lineItems: [],
+          tags: ['TECH', 'BITRIX', `BITRIX:${dealId}`],
+          note: `Технический ордер из Bitrix. Сделка: ${dealId}`
+        };
+      }
+      if (preCheck < 3) {
+        await new Promise(resolve => setTimeout(resolve, 200)); // Wait 200ms between checks
+      }
+    }
 
   // Separate items with SKU from items with variantId
   const itemsWithSku = items.filter(item => item.sku && !item.variantId);
