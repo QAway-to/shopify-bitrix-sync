@@ -85,6 +85,90 @@ export async function findExistingOrderByDealId(dealId) {
 }
 
 /**
+ * Cancel technical order in Shopify by dealId
+ * @param {string} dealId - Bitrix deal ID
+ * @returns {Promise<Object>} Cancellation result
+ */
+export async function cancelOrderByDealId(dealId) {
+  if (!dealId) {
+    throw new Error('Deal ID is required');
+  }
+
+  // Find existing technical order by dealId
+  const existingOrderId = await findExistingOrderByDealId(dealId);
+  if (!existingOrderId) {
+    console.log(`[CANCEL ORDER] No technical order found for deal ${dealId}`);
+    return {
+      success: false,
+      error: 'ORDER_NOT_FOUND',
+      message: `No technical order found for deal ${dealId}`
+    };
+  }
+
+  // Get order GraphQL ID
+  const orderGid = `gid://shopify/Order/${existingOrderId}`;
+
+  // Use exact mutation format from working script
+  const mutation = `
+    mutation orderCancel($orderId: ID!) {
+      orderCancel(
+        orderId: $orderId,
+        reason: OTHER,
+        restock: true,
+        refund: false
+      ) {
+        userErrors {
+          field
+          message
+        }
+        job {
+          id
+        }
+      }
+    }
+  `;
+
+  try {
+    const data = await callShopifyGraphQL(mutation, {
+      orderId: orderGid
+    });
+
+    if (!data?.orderCancel) {
+      throw new Error('Invalid GraphQL response: orderCancel is missing');
+    }
+
+    const { userErrors, job } = data.orderCancel;
+
+    // Check for user errors
+    if (userErrors && userErrors.length > 0) {
+      const errorMessages = userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
+      throw new Error(`Shopify orderCancel userErrors: ${errorMessages}`);
+    }
+
+    console.log(`[CANCEL ORDER] ✅ Successfully cancelled order ${existingOrderId} for deal ${dealId}. Restock: YES (+1 to Inventory)`);
+    if (job?.id) {
+      console.log(`[CANCEL ORDER] Job ID: ${job.id}`);
+    }
+
+    return {
+      success: true,
+      orderId: existingOrderId,
+      orderName: `Order ${existingOrderId}`,
+      jobId: job?.id,
+      restocked: true
+    };
+  } catch (error) {
+    console.error(`[CANCEL ORDER] Error cancelling order ${existingOrderId} for deal ${dealId}:`, error);
+    return {
+      success: false,
+      error: 'ORDER_CANCEL_ERROR',
+      message: error.message,
+      orderId: existingOrderId
+    };
+  }
+}
+
+/**
  * Create order in Shopify from Bitrix deal
  * @param {Array<{sku?: string, variantId?: string|number, qty: number}>} items - Array of items with SKU or variantId and quantity
  * @param {string} dealId - Bitrix deal ID
