@@ -1443,6 +1443,7 @@ export default function ShopifyPage() {
             </div>
           )}
         </div>
+        </LockedSection>
 
         {/* Events Lists - Three fixed-width columns: Shopify → Bitrix, Bitrix → Shopify, Success Operations */}
         <div style={{
