@@ -288,23 +288,34 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
     options: options_input
   };
 
-  // ✅ CRITICAL: Final duplicate check right before creation
-  // Check if order already exists by BITRIX:{dealId} tag
-  const existingOrderId = await findExistingOrderByDealId(dealId);
-  if (existingOrderId) {
-    console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Order already exists for deal ${dealId}: ${existingOrderId}. Skipping creation to prevent duplicate.`);
-    releaseLock(dealId); // Release lock before returning
-    // Return success with existing order ID
-    return {
-      success: true,
-      orderId: existingOrderId,
-      orderName: `Existing order ${existingOrderId}`,
-      wasDuplicate: true,
-      lineItems: [],
-      tags: tags,
-      note: note
-    };
+  // ✅ CRITICAL STEP 3: Final duplicate checks with delays before creation
+  console.log(`[CREATE ORDER FROM BITRIX] Performing final duplicate checks before creating order for deal ${dealId}...`);
+  
+  // Wait 1.5 seconds to allow any concurrent requests to finish creating their orders
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  
+  // Check 3 more times with delays
+  for (let finalCheck = 1; finalCheck <= 3; finalCheck++) {
+    const existingOrderId = await findExistingOrderByDealId(dealId);
+    if (existingOrderId) {
+      console.log(`[CREATE ORDER FROM BITRIX] ⚠️⚠️⚠️ CRITICAL: Existing order ${existingOrderId} found for deal ${dealId} on final check ${finalCheck}. Aborting creation!`);
+      releaseLock(dealId);
+      return {
+        success: true,
+        orderId: existingOrderId,
+        orderName: `Existing order ${existingOrderId}`,
+        wasDuplicate: true,
+        lineItems: [],
+        tags: tags,
+        note: note
+      };
+    }
+    if (finalCheck < 3) {
+      await new Promise(resolve => setTimeout(resolve, 400)); // Wait 400ms between final checks
+    }
   }
+  
+  console.log(`[CREATE ORDER FROM BITRIX] ✅ All duplicate checks passed. Proceeding with order creation for deal ${dealId}`);
 
   try {
     const data = await callShopifyGraphQL(mutation, variables);
