@@ -321,7 +321,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
   }
 
   // Build note with technical order information
-  const note = `Технический ордер из Bitrix. Сделка: ${dealId}${correlationId ? `. CorrelationId: ${correlationId}` : ''}`;
+  const note = `Технический ордер из Bitrix. Сделка: ${dealId}`;
 
   const mutation = `
     mutation orderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
