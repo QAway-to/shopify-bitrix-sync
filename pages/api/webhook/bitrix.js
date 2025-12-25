@@ -7,7 +7,7 @@ import { setProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
 import { createHoldOrder } from '../../../src/lib/shopify/hold.js';
 import { createRefund } from '../../../src/lib/shopify/refund.js';
 import { updateShippingAddress } from '../../../src/lib/shopify/address.js';
-import { createOrderFromBitrix, findExistingOrderByDealId } from '../../../src/lib/shopify/order.js';
+import { createOrderFromBitrix, findExistingOrderByDealId, cancelOrderByDealId } from '../../../src/lib/shopify/order.js';
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 
@@ -609,6 +609,73 @@ async function handleDealUpdate(dealId, requestId) {
     shopifyOrderId,
     timestamp: new Date().toISOString()
   }));
+
+  // ✅ STEP A: Check if deal is cancelled (LOSE stage) and cancel technical order if exists
+  if (stageId === 'LOSE' || stageId === BITRIX_CONFIG.STAGES.CANCELLED || stageId === BITRIX_CONFIG.STAGES.REFUNDED) {
+    console.log(JSON.stringify({
+      event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_CHECK',
+      requestId,
+      dealId,
+      stageId,
+      timestamp: new Date().toISOString()
+    }));
+
+    try {
+      const cancelResult = await cancelOrderByDealId(dealId);
+      
+      if (cancelResult.success) {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SUCCESS',
+          requestId,
+          dealId,
+          stageId,
+          shopifyOrderId: cancelResult.orderId,
+          orderName: cancelResult.orderName,
+          timestamp: new Date().toISOString()
+        }));
+        
+        // Return success - cancellation was handled
+        return { 
+          success: true, 
+          triggerMatch: true, 
+          action: 'order_cancelled',
+          shopifyOrderId: cancelResult.orderId
+        };
+      } else if (cancelResult.error === 'ORDER_NOT_FOUND') {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SKIP',
+          requestId,
+          dealId,
+          stageId,
+          skip_reason: 'no_technical_order_found',
+          timestamp: new Date().toISOString()
+        }));
+        // Continue with normal flow - no technical order to cancel
+      } else {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_ERROR',
+          requestId,
+          dealId,
+          stageId,
+          error: cancelResult.error,
+          message: cancelResult.message,
+          timestamp: new Date().toISOString()
+        }));
+        // Continue with normal flow even if cancellation failed
+      }
+    } catch (cancelError) {
+      console.error(`[BITRIX TO SHOPIFY] Error cancelling order for deal ${dealId}:`, cancelError);
+      console.log(JSON.stringify({
+        event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_EXCEPTION',
+        requestId,
+        dealId,
+        stageId,
+        error: cancelError.message,
+        timestamp: new Date().toISOString()
+      }));
+      // Continue with normal flow even if cancellation failed
+    }
+  }
 
   // Store event in adapter for UI display (will be updated with fulfillment state later if needed)
   let storedEvent = null;

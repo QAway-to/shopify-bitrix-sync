@@ -1,6 +1,6 @@
 /**
  * Shopify Order Operations
- * Handles creation of orders from Bitrix deals
+ * Handles creation and cancellation of orders from Bitrix deals
  */
 
 import { callShopifyGraphQL } from './adminClient.js';
