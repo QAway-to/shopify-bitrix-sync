@@ -7,7 +7,8 @@ import { setProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
 import { createHoldOrder } from '../../../src/lib/shopify/hold.js';
 import { createRefund } from '../../../src/lib/shopify/refund.js';
 import { updateShippingAddress } from '../../../src/lib/shopify/address.js';
-import { createOrderFromBitrix, findExistingOrderByDealId, cancelOrderByDealId } from '../../../src/lib/shopify/order.js';
+import { createOrderFromBitrix, findExistingOrderByDealId, cancelOrderByDealId, cancelOrderById, addTagToOrder } from '../../../src/lib/shopify/order.js';
+import { addPositionToOrder, incrementLineItemQuantity, decrementLineItemQuantity } from '../../../src/lib/shopify/orderEdit.js';
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 
@@ -232,6 +233,49 @@ function normalizePayload(action, rawPayload) {
       return normalized;
     }
 
+    case 'order_cancel': {
+      // Normalize: {action, refund: boolean}
+      return {
+        action: 'order_cancel',
+        refund: Boolean(rawPayload.refund !== undefined ? rawPayload.refund : false)
+      };
+    }
+
+    case 'order_position_add': {
+      // Normalize: {action, variant_id: string|number, sku: string, quantity: number}
+      const normalized = {
+        action: 'order_position_add',
+        quantity: Number(rawPayload.quantity || 1)
+      };
+      
+      if (rawPayload.variant_id) {
+        normalized.variant_id = String(rawPayload.variant_id);
+      }
+      if (rawPayload.sku) {
+        normalized.sku = String(rawPayload.sku);
+      }
+      
+      return normalized;
+    }
+
+    case 'order_position_increment': {
+      // Normalize: {action, sku: string, quantity: number}
+      return {
+        action: 'order_position_increment',
+        sku: String(rawPayload.sku || ''),
+        quantity: Number(rawPayload.quantity || 1)
+      };
+    }
+
+    case 'order_position_decrement': {
+      // Normalize: {action, sku: string, new_quantity: number}
+      return {
+        action: 'order_position_decrement',
+        sku: String(rawPayload.sku || ''),
+        new_quantity: Number(rawPayload.new_quantity !== undefined ? rawPayload.new_quantity : 0)
+      };
+    }
+
     default:
       return null;
   }
@@ -267,7 +311,15 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
 
   // Validate action
   const action = actionData.action;
-  const supportedActions = ['hold_create', 'refund_create', 'address_update'];
+  const supportedActions = [
+    'hold_create',
+    'refund_create',
+    'address_update',
+    'order_cancel',
+    'order_position_add',
+    'order_position_increment',
+    'order_position_decrement'
+  ];
   
   if (!action || !supportedActions.includes(action)) {
     console.log(JSON.stringify({
@@ -696,6 +748,556 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
         correlationId,
         error: 'ADDRESS_UPDATE_EXCEPTION',
         message: addressError.message
+      };
+    }
+  }
+
+  // ✅ Write operation for order_cancel
+  if (action === 'order_cancel' && shopifyOrderId) {
+    try {
+      console.log(JSON.stringify({
+        event: 'ORDER_CANCEL_ATTEMPT',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        correlationId,
+        payloadHash: hash,
+        refund: normalizedPayload.refund,
+        timestamp: new Date().toISOString()
+      }));
+
+      const cancelResult = await cancelOrderById(shopifyOrderId, normalizedPayload.refund);
+
+      if (cancelResult.success) {
+        // Set provenance marker
+        const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'order_cancel', hash);
+        
+        if (provenanceResult.success) {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_PROVENANCE_SET',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            payloadHash: hash,
+            httpStatus: provenanceResult.httpStatus,
+            timestamp: new Date().toISOString()
+          }));
+        }
+
+        // Add BitrixUpdated tag
+        try {
+          const tagResult = await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+          if (tagResult.success) {
+            console.log(JSON.stringify({
+              event: 'BITRIX_UPDATED_TAG_ADDED',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              action: 'order_cancel',
+              timestamp: new Date().toISOString()
+            }));
+          }
+        } catch (tagError) {
+          console.warn(JSON.stringify({
+            event: 'BITRIX_UPDATED_TAG_ADD_EXCEPTION',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            error: tagError.message,
+            timestamp: new Date().toISOString()
+          }));
+        }
+
+        console.log(JSON.stringify({
+          event: 'ORDER_CANCEL_SUCCESS',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          jobId: cancelResult.jobId,
+          refunded: cancelResult.refunded,
+          correlationId,
+          payloadHash: hash,
+          timestamp: new Date().toISOString()
+        }));
+
+        return {
+          success: true,
+          action,
+          payloadHash: hash,
+          correlationId,
+          jobId: cancelResult.jobId,
+          refunded: cancelResult.refunded
+        };
+      } else {
+        console.log(JSON.stringify({
+          event: 'ORDER_CANCEL_ERROR',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          correlationId,
+          payloadHash: hash,
+          error: cancelResult.error,
+          message: cancelResult.message,
+          timestamp: new Date().toISOString()
+        }));
+
+        return {
+          success: false,
+          action,
+          payloadHash: hash,
+          correlationId,
+          error: cancelResult.error,
+          message: cancelResult.message
+        };
+      }
+    } catch (cancelError) {
+      console.log(JSON.stringify({
+        event: 'ORDER_CANCEL_ERROR',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        correlationId,
+        payloadHash: hash,
+        error: 'ORDER_CANCEL_EXCEPTION',
+        message: cancelError.message,
+        stack: cancelError.stack,
+        timestamp: new Date().toISOString()
+      }));
+
+      return {
+        success: false,
+        action,
+        payloadHash: hash,
+        correlationId,
+        error: 'ORDER_CANCEL_EXCEPTION',
+        message: cancelError.message
+      };
+    }
+  }
+
+  // ✅ Write operation for order_position_add
+  if (action === 'order_position_add' && shopifyOrderId) {
+    try {
+      console.log(JSON.stringify({
+        event: 'ORDER_POSITION_ADD_ATTEMPT',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        correlationId,
+        payloadHash: hash,
+        variantId: normalizedPayload.variant_id,
+        sku: normalizedPayload.sku,
+        quantity: normalizedPayload.quantity,
+        timestamp: new Date().toISOString()
+      }));
+
+      const variantId = normalizedPayload.variant_id || normalizedPayload.sku;
+      if (!variantId) {
+        return {
+          success: false,
+          action,
+          payloadHash: hash,
+          correlationId,
+          error: 'MISSING_VARIANT_ID',
+          message: 'variant_id or sku is required'
+        };
+      }
+
+      const addResult = await addPositionToOrder(shopifyOrderId, variantId, normalizedPayload.quantity);
+
+      if (addResult.success) {
+        // Set provenance marker
+        const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'order_position_add', hash);
+        
+        if (provenanceResult.success) {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_PROVENANCE_SET',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            payloadHash: hash,
+            httpStatus: provenanceResult.httpStatus,
+            timestamp: new Date().toISOString()
+          }));
+        }
+
+        // Add BitrixUpdated tag
+        try {
+          const tagResult = await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+          if (tagResult.success) {
+            console.log(JSON.stringify({
+              event: 'BITRIX_UPDATED_TAG_ADDED',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              action: 'order_position_add',
+              timestamp: new Date().toISOString()
+            }));
+          }
+        } catch (tagError) {
+          console.warn(JSON.stringify({
+            event: 'BITRIX_UPDATED_TAG_ADD_EXCEPTION',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            error: tagError.message,
+            timestamp: new Date().toISOString()
+          }));
+        }
+
+        console.log(JSON.stringify({
+          event: 'ORDER_POSITION_ADD_SUCCESS',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          orderName: addResult.orderName,
+          totalPrice: addResult.totalPrice,
+          correlationId,
+          payloadHash: hash,
+          timestamp: new Date().toISOString()
+        }));
+
+        return {
+          success: true,
+          action,
+          payloadHash: hash,
+          correlationId,
+          orderName: addResult.orderName,
+          totalPrice: addResult.totalPrice
+        };
+      } else {
+        console.log(JSON.stringify({
+          event: 'ORDER_POSITION_ADD_ERROR',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          correlationId,
+          payloadHash: hash,
+          error: addResult.error,
+          message: addResult.message,
+          timestamp: new Date().toISOString()
+        }));
+
+        return {
+          success: false,
+          action,
+          payloadHash: hash,
+          correlationId,
+          error: addResult.error,
+          message: addResult.message
+        };
+      }
+    } catch (addError) {
+      console.log(JSON.stringify({
+        event: 'ORDER_POSITION_ADD_ERROR',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        correlationId,
+        payloadHash: hash,
+        error: 'ORDER_POSITION_ADD_EXCEPTION',
+        message: addError.message,
+        stack: addError.stack,
+        timestamp: new Date().toISOString()
+      }));
+
+      return {
+        success: false,
+        action,
+        payloadHash: hash,
+        correlationId,
+        error: 'ORDER_POSITION_ADD_EXCEPTION',
+        message: addError.message
+      };
+    }
+  }
+
+  // ✅ Write operation for order_position_increment
+  if (action === 'order_position_increment' && shopifyOrderId) {
+    try {
+      console.log(JSON.stringify({
+        event: 'ORDER_POSITION_INCREMENT_ATTEMPT',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        correlationId,
+        payloadHash: hash,
+        sku: normalizedPayload.sku,
+        quantity: normalizedPayload.quantity,
+        timestamp: new Date().toISOString()
+      }));
+
+      if (!normalizedPayload.sku) {
+        return {
+          success: false,
+          action,
+          payloadHash: hash,
+          correlationId,
+          error: 'MISSING_SKU',
+          message: 'sku is required'
+        };
+      }
+
+      const incrementResult = await incrementLineItemQuantity(
+        shopifyOrderId,
+        normalizedPayload.sku,
+        normalizedPayload.quantity
+      );
+
+      if (incrementResult.success) {
+        // Set provenance marker
+        const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'order_position_increment', hash);
+        
+        if (provenanceResult.success) {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_PROVENANCE_SET',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            payloadHash: hash,
+            httpStatus: provenanceResult.httpStatus,
+            timestamp: new Date().toISOString()
+          }));
+        }
+
+        // Add BitrixUpdated tag
+        try {
+          const tagResult = await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+          if (tagResult.success) {
+            console.log(JSON.stringify({
+              event: 'BITRIX_UPDATED_TAG_ADDED',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              action: 'order_position_increment',
+              timestamp: new Date().toISOString()
+            }));
+          }
+        } catch (tagError) {
+          console.warn(JSON.stringify({
+            event: 'BITRIX_UPDATED_TAG_ADD_EXCEPTION',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            error: tagError.message,
+            timestamp: new Date().toISOString()
+          }));
+        }
+
+        console.log(JSON.stringify({
+          event: 'ORDER_POSITION_INCREMENT_SUCCESS',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          sku: normalizedPayload.sku,
+          previousQuantity: incrementResult.previousQuantity,
+          newQuantity: incrementResult.newQuantity,
+          totalPrice: incrementResult.totalPrice,
+          correlationId,
+          payloadHash: hash,
+          timestamp: new Date().toISOString()
+        }));
+
+        return {
+          success: true,
+          action,
+          payloadHash: hash,
+          correlationId,
+          previousQuantity: incrementResult.previousQuantity,
+          newQuantity: incrementResult.newQuantity,
+          totalPrice: incrementResult.totalPrice
+        };
+      } else {
+        console.log(JSON.stringify({
+          event: 'ORDER_POSITION_INCREMENT_ERROR',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          correlationId,
+          payloadHash: hash,
+          error: incrementResult.error,
+          message: incrementResult.message,
+          timestamp: new Date().toISOString()
+        }));
+
+        return {
+          success: false,
+          action,
+          payloadHash: hash,
+          correlationId,
+          error: incrementResult.error,
+          message: incrementResult.message
+        };
+      }
+    } catch (incrementError) {
+      console.log(JSON.stringify({
+        event: 'ORDER_POSITION_INCREMENT_ERROR',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        correlationId,
+        payloadHash: hash,
+        error: 'ORDER_POSITION_INCREMENT_EXCEPTION',
+        message: incrementError.message,
+        stack: incrementError.stack,
+        timestamp: new Date().toISOString()
+      }));
+
+      return {
+        success: false,
+        action,
+        payloadHash: hash,
+        correlationId,
+        error: 'ORDER_POSITION_INCREMENT_EXCEPTION',
+        message: incrementError.message
+      };
+    }
+  }
+
+  // ✅ Write operation for order_position_decrement
+  if (action === 'order_position_decrement' && shopifyOrderId) {
+    try {
+      console.log(JSON.stringify({
+        event: 'ORDER_POSITION_DECREMENT_ATTEMPT',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        correlationId,
+        payloadHash: hash,
+        sku: normalizedPayload.sku,
+        newQuantity: normalizedPayload.new_quantity,
+        timestamp: new Date().toISOString()
+      }));
+
+      if (!normalizedPayload.sku) {
+        return {
+          success: false,
+          action,
+          payloadHash: hash,
+          correlationId,
+          error: 'MISSING_SKU',
+          message: 'sku is required'
+        };
+      }
+
+      const decrementResult = await decrementLineItemQuantity(
+        shopifyOrderId,
+        normalizedPayload.sku,
+        normalizedPayload.new_quantity
+      );
+
+      if (decrementResult.success) {
+        // Set provenance marker
+        const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'order_position_decrement', hash);
+        
+        if (provenanceResult.success) {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_PROVENANCE_SET',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            payloadHash: hash,
+            httpStatus: provenanceResult.httpStatus,
+            timestamp: new Date().toISOString()
+          }));
+        }
+
+        // Add BitrixUpdated tag
+        try {
+          const tagResult = await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+          if (tagResult.success) {
+            console.log(JSON.stringify({
+              event: 'BITRIX_UPDATED_TAG_ADDED',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              action: 'order_position_decrement',
+              timestamp: new Date().toISOString()
+            }));
+          }
+        } catch (tagError) {
+          console.warn(JSON.stringify({
+            event: 'BITRIX_UPDATED_TAG_ADD_EXCEPTION',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            error: tagError.message,
+            timestamp: new Date().toISOString()
+          }));
+        }
+
+        console.log(JSON.stringify({
+          event: 'ORDER_POSITION_DECREMENT_SUCCESS',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          sku: normalizedPayload.sku,
+          previousQuantity: decrementResult.previousQuantity,
+          newQuantity: decrementResult.newQuantity,
+          totalPrice: decrementResult.totalPrice,
+          totalReceived: decrementResult.totalReceived,
+          correlationId,
+          payloadHash: hash,
+          timestamp: new Date().toISOString()
+        }));
+
+        return {
+          success: true,
+          action,
+          payloadHash: hash,
+          correlationId,
+          previousQuantity: decrementResult.previousQuantity,
+          newQuantity: decrementResult.newQuantity,
+          totalPrice: decrementResult.totalPrice,
+          totalReceived: decrementResult.totalReceived
+        };
+      } else {
+        console.log(JSON.stringify({
+          event: 'ORDER_POSITION_DECREMENT_ERROR',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          correlationId,
+          payloadHash: hash,
+          error: decrementResult.error,
+          message: decrementResult.message,
+          timestamp: new Date().toISOString()
+        }));
+
+        return {
+          success: false,
+          action,
+          payloadHash: hash,
+          correlationId,
+          error: decrementResult.error,
+          message: decrementResult.message
+        };
+      }
+    } catch (decrementError) {
+      console.log(JSON.stringify({
+        event: 'ORDER_POSITION_DECREMENT_ERROR',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        correlationId,
+        payloadHash: hash,
+        error: 'ORDER_POSITION_DECREMENT_EXCEPTION',
+        message: decrementError.message,
+        stack: decrementError.stack,
+        timestamp: new Date().toISOString()
+      }));
+
+      return {
+        success: false,
+        action,
+        payloadHash: hash,
+        correlationId,
+        error: 'ORDER_POSITION_DECREMENT_EXCEPTION',
+        message: decrementError.message
       };
     }
   }

@@ -85,6 +85,78 @@ export async function findExistingOrderByDealId(dealId) {
 }
 
 /**
+ * Cancel order in Shopify by orderId with optional refund
+ * @param {string|number} orderId - Shopify order ID
+ * @param {boolean} refund - Whether to refund (default: false)
+ * @returns {Promise<Object>} Cancellation result
+ */
+export async function cancelOrderById(orderId, refund = false) {
+  if (!orderId) {
+    throw new Error('Order ID is required');
+  }
+
+  const orderGid = `gid://shopify/Order/${orderId}`;
+
+  const mutation = `
+    mutation orderCancel($orderId: ID!) {
+      orderCancel(
+        orderId: $orderId,
+        reason: OTHER,
+        restock: true,
+        refund: ${refund ? 'true' : 'false'}
+      ) {
+        userErrors {
+          field
+          message
+        }
+        job {
+          id
+        }
+      }
+    }
+  `;
+
+  try {
+    const data = await callShopifyGraphQL(mutation, {
+      orderId: orderGid
+    });
+
+    if (!data?.orderCancel) {
+      throw new Error('Invalid GraphQL response: orderCancel is missing');
+    }
+
+    const { userErrors, job } = data.orderCancel;
+
+    if (userErrors && userErrors.length > 0) {
+      const errorMessages = userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
+      throw new Error(`Shopify orderCancel userErrors: ${errorMessages}`);
+    }
+
+    console.log(`[CANCEL ORDER] ✅ Successfully cancelled order ${orderId}. Restock: YES, Refund: ${refund ? 'YES' : 'NO'}`);
+    if (job?.id) {
+      console.log(`[CANCEL ORDER] Job ID: ${job.id}`);
+    }
+
+    return {
+      success: true,
+      orderId: String(orderId),
+      orderName: `Order ${orderId}`,
+      jobId: job?.id,
+      restocked: true,
+      refunded: refund
+    };
+  } catch (error) {
+    console.error(`[CANCEL ORDER] Error cancelling order ${orderId}:`, error);
+    return {
+      success: false,
+      error: 'ORDER_CANCEL_ERROR',
+      message: error.message,
+      orderId: String(orderId)
+    };
+  }
+}
+
+/**
  * Cancel technical order in Shopify by dealId
  * @param {string} dealId - Bitrix deal ID
  * @returns {Promise<Object>} Cancellation result
