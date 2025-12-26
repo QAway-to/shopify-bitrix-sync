@@ -1274,12 +1274,52 @@ async function handleDealUpdate(dealId, requestId) {
           if (orderResult.success) {
             // Save shopifyOrderId back to Bitrix deal
             const createdOrderId = String(orderResult.orderId);
+            const orderName = orderResult.orderName; // e.g., "#2491"
+            
             try {
+              // Get current deal title to check if order number is already added
+              const currentTitle = dealData.TITLE || '';
+              
+              // Check if title already contains order number (prevent duplicate updates)
+              const orderNumberPattern = /#\d+/;
+              const alreadyContainsOrderNumber = orderNumberPattern.test(currentTitle);
+              
+              // Prepare update fields
+              const updateFields = {
+                UF_CRM_1742556489: createdOrderId // Shopify Order ID field
+              };
+              
+              // Update TITLE only if order number is not already present and orderName is available
+              // This ensures we update TITLE only ONCE when the technical order is first created
+              if (!alreadyContainsOrderNumber && orderName && orderName.trim() !== '') {
+                // Add order number to title (e.g., "#2486" -> "#2486 #2491")
+                const updatedTitle = `${currentTitle} ${orderName}`.trim();
+                updateFields.TITLE = updatedTitle;
+                
+                console.log(JSON.stringify({
+                  event: 'BITRIX_DEAL_TITLE_UPDATE_PLANNED',
+                  requestId,
+                  dealId,
+                  currentTitle,
+                  updatedTitle,
+                  orderName,
+                  timestamp: new Date().toISOString()
+                }));
+              } else if (alreadyContainsOrderNumber) {
+                console.log(JSON.stringify({
+                  event: 'BITRIX_DEAL_TITLE_UPDATE_SKIPPED',
+                  requestId,
+                  dealId,
+                  reason: 'order_number_already_in_title',
+                  currentTitle,
+                  orderName,
+                  timestamp: new Date().toISOString()
+                }));
+              }
+              
               await callBitrix('/crm.deal.update.json', {
                 id: dealId,
-                fields: {
-                  UF_CRM_1742556489: createdOrderId // Shopify Order ID field
-                }
+                fields: updateFields
               });
 
               console.log(JSON.stringify({
@@ -1288,6 +1328,7 @@ async function handleDealUpdate(dealId, requestId) {
                 dealId,
                 shopifyOrderId: createdOrderId,
                 orderName: orderResult.orderName,
+                titleUpdated: !!updateFields.TITLE,
                 lineItemsCount: orderResult.lineItems?.length || 0,
                 tags: orderResult.tags || [],
                 note: orderResult.note || '',
@@ -1298,6 +1339,14 @@ async function handleDealUpdate(dealId, requestId) {
               shopifyOrderId = createdOrderId;
             } catch (updateError) {
               console.error(`[BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
+              console.log(JSON.stringify({
+                event: 'BITRIX_DEAL_UPDATE_ERROR',
+                requestId,
+                dealId,
+                shopifyOrderId: createdOrderId,
+                error: updateError.message,
+                timestamp: new Date().toISOString()
+              }));
             }
           } else {
             console.log(JSON.stringify({
@@ -1661,6 +1710,7 @@ async function handleDealUpdate(dealId, requestId) {
           timestamp: new Date().toISOString()
         }));
       }
+      } // Close else block for fulfillment creation
       
       // Step 7: Add tags to prevent webhook loop and mark as in delivery (for both update and create)
       try {
