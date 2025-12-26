@@ -408,3 +408,135 @@ export async function getPostFulfillmentState(orderId) {
   }
 }
 
+/**
+ * Update fulfillment with tracking information
+ * Used when order is in delivery stage to mark it as "in transit"
+ * @param {string|number} orderId - Shopify order ID
+ * @param {string|number} fulfillmentId - Fulfillment ID to update
+ * @param {Object} options - Update options
+ * @param {string} options.tracking_number - Tracking number (optional)
+ * @param {Array<string>} options.tracking_urls - Tracking URLs (optional)
+ * @param {boolean} options.notify_customer - Whether to notify customer (default: true)
+ * @returns {Promise<Object>} Update result
+ */
+export async function updateFulfillmentTracking(orderId, fulfillmentId, options = {}) {
+  if (!orderId) {
+    return {
+      success: false,
+      error: 'MISSING_ORDER_ID',
+      message: 'Shopify order ID is required'
+    };
+  }
+
+  if (!fulfillmentId) {
+    return {
+      success: false,
+      error: 'MISSING_FULFILLMENT_ID',
+      message: 'Fulfillment ID is required'
+    };
+  }
+
+  try {
+    // Get current fulfillment to check if it exists
+    const fulfillmentsResponse = await callShopifyAdmin(`/orders/${orderId}/fulfillments.json`);
+    const fulfillments = fulfillmentsResponse.fulfillments || [];
+    const fulfillment = fulfillments.find(f => String(f.id) === String(fulfillmentId));
+
+    if (!fulfillment) {
+      return {
+        success: false,
+        error: 'FULFILLMENT_NOT_FOUND',
+        message: `Fulfillment ${fulfillmentId} not found for order ${orderId}`
+      };
+    }
+
+    // Build update payload
+    const updatePayload = {
+      fulfillment: {
+        id: fulfillmentId,
+        notify_customer: options.notify_customer !== false // Default true
+      }
+    };
+
+    // Add tracking_number if provided
+    if (options.tracking_number) {
+      updatePayload.fulfillment.tracking_number = String(options.tracking_number);
+    }
+
+    // Add tracking_urls if provided
+    if (options.tracking_urls && Array.isArray(options.tracking_urls)) {
+      updatePayload.fulfillment.tracking_urls = options.tracking_urls.map(url => String(url));
+    }
+
+    // Update fulfillment
+    const response = await callShopifyAdmin(`/orders/${orderId}/fulfillments/${fulfillmentId}.json`, {
+      method: 'PUT',
+      body: JSON.stringify(updatePayload)
+    });
+
+    return {
+      success: true,
+      httpStatus: 200,
+      fulfillment: response.fulfillment,
+      fulfillmentId: response.fulfillment?.id,
+      trackingNumber: response.fulfillment?.tracking_number,
+      trackingUrls: response.fulfillment?.tracking_urls || []
+    };
+  } catch (error) {
+    const statusMatch = error.message.match(/\((\d+)\)/);
+    const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : null;
+
+    return {
+      success: false,
+      httpStatus: httpStatus || 500,
+      error: 'SHOPIFY_FULFILLMENT_UPDATE_ERROR',
+      message: error.message
+    };
+  }
+}
+
+/**
+ * Update fulfillment for order when it goes to delivery stage
+ * Finds the first fulfillment and updates it with tracking if needed
+ * @param {string|number} orderId - Shopify order ID
+ * @param {Object} options - Update options
+ * @param {string} options.tracking_number - Tracking number (optional)
+ * @param {Array<string>} options.tracking_urls - Tracking URLs (optional)
+ * @param {boolean} options.notify_customer - Whether to notify customer (default: true)
+ * @returns {Promise<Object>} Update result
+ */
+export async function updateOrderFulfillmentForDelivery(orderId, options = {}) {
+  if (!orderId) {
+    return {
+      success: false,
+      error: 'MISSING_ORDER_ID',
+      message: 'Shopify order ID is required'
+    };
+  }
+
+  try {
+    // Get fulfillments for order
+    const fulfillmentsResponse = await getFulfillmentOrders(orderId);
+    
+    if (!fulfillmentsResponse.success || !fulfillmentsResponse.fulfillments || fulfillmentsResponse.fulfillments.length === 0) {
+      return {
+        success: false,
+        error: 'NO_FULFILLMENTS_FOUND',
+        message: `No fulfillments found for order ${orderId}`
+      };
+    }
+
+    // Find the most recent fulfillment (usually the first one)
+    const fulfillment = fulfillmentsResponse.fulfillments[0];
+    
+    // Update fulfillment with tracking
+    return await updateFulfillmentTracking(orderId, fulfillment.id, options);
+  } catch (error) {
+    return {
+      success: false,
+      error: 'SHOPIFY_FULFILLMENT_UPDATE_ERROR',
+      message: error.message
+    };
+  }
+}
+
