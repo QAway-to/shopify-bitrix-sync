@@ -1274,26 +1274,59 @@ async function handleDealUpdate(dealId, requestId) {
           if (orderResult.success) {
             // Save shopifyOrderId back to Bitrix deal
             const createdOrderId = String(orderResult.orderId);
-            const orderName = orderResult.orderName; // e.g., "#2491"
+            let orderName = orderResult.orderName; // e.g., "#2491" or "Existing order 1234"
+            
+            // If order was duplicate, try to get real order name from Shopify
+            if (orderResult.wasDuplicate && orderName && !orderName.startsWith('#')) {
+              try {
+                const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
+                const existingOrder = await getOrder(createdOrderId);
+                if (existingOrder && existingOrder.name) {
+                  orderName = existingOrder.name; // Get real order name like "#2491"
+                  console.log(JSON.stringify({
+                    event: 'BITRIX_ORDER_NAME_FETCHED',
+                    requestId,
+                    dealId,
+                    shopifyOrderId: createdOrderId,
+                    fetchedOrderName: orderName,
+                    timestamp: new Date().toISOString()
+                  }));
+                }
+              } catch (fetchError) {
+                console.warn(`[BITRIX TO SHOPIFY] Failed to fetch order name: ${fetchError.message}`);
+              }
+            }
             
             try {
               // Get current deal title to check if order number is already added
               const currentTitle = dealData.TITLE || '';
               
-              // Check if title already contains order number (prevent duplicate updates)
-              const orderNumberPattern = /#\d+/;
-              const alreadyContainsOrderNumber = orderNumberPattern.test(currentTitle);
+              // Check if title already contains THIS specific order number (prevent duplicate updates)
+              // Check for both formats: "#2491" and just "2491"
+              const orderNumberFromName = orderName ? orderName.replace('#', '') : null;
+              const orderNumberPattern = orderNumberFromName ? new RegExp(`#?${orderNumberFromName}\\b`) : /#\d+/;
+              const alreadyContainsThisOrderNumber = orderNumberFromName && orderNumberPattern.test(currentTitle);
               
               // Prepare update fields
               const updateFields = {
                 UF_CRM_1742556489: createdOrderId // Shopify Order ID field
               };
               
-              // Update TITLE only if order number is not already present and orderName is available
-              // This ensures we update TITLE only ONCE when the technical order is first created
-              if (!alreadyContainsOrderNumber && orderName && orderName.trim() !== '') {
+              // Update TITLE only if:
+              // 1. orderName is available and contains "#" (real Shopify order name format)
+              // 2. This specific order number is not already in title
+              // 3. orderName is not in format "Existing order X" or "Order X"
+              const isValidOrderName = orderName && 
+                                      orderName.trim() !== '' && 
+                                      (orderName.startsWith('#') || /^#?\d+$/.test(orderName.replace('#', '')));
+              const isNotPlaceholderName = !orderName.includes('Existing order') && !orderName.includes('Order ');
+              
+              if (!alreadyContainsThisOrderNumber && isValidOrderName && isNotPlaceholderName) {
+                // Ensure orderName starts with "#"
+                const formattedOrderName = orderName.startsWith('#') ? orderName : `#${orderName}`;
+                
                 // Add order number to title (e.g., "#2486" -> "#2486 #2491")
-                const updatedTitle = `${currentTitle} ${orderName}`.trim();
+                const updatedTitle = `${currentTitle} ${formattedOrderName}`.trim();
                 updateFields.TITLE = updatedTitle;
                 
                 console.log(JSON.stringify({
@@ -1302,17 +1335,31 @@ async function handleDealUpdate(dealId, requestId) {
                   dealId,
                   currentTitle,
                   updatedTitle,
-                  orderName,
+                  orderName: formattedOrderName,
+                  shopifyOrderId: createdOrderId,
+                  wasDuplicate: orderResult.wasDuplicate || false,
                   timestamp: new Date().toISOString()
                 }));
-              } else if (alreadyContainsOrderNumber) {
+              } else {
+                const skipReason = alreadyContainsThisOrderNumber 
+                  ? 'order_number_already_in_title' 
+                  : !isValidOrderName 
+                    ? 'invalid_order_name_format' 
+                    : !isNotPlaceholderName
+                      ? 'placeholder_order_name'
+                      : 'unknown';
+                
                 console.log(JSON.stringify({
                   event: 'BITRIX_DEAL_TITLE_UPDATE_SKIPPED',
                   requestId,
                   dealId,
-                  reason: 'order_number_already_in_title',
+                  reason: skipReason,
                   currentTitle,
                   orderName,
+                  shopifyOrderId: createdOrderId,
+                  alreadyContainsThisOrderNumber,
+                  isValidOrderName,
+                  isNotPlaceholderName,
                   timestamp: new Date().toISOString()
                 }));
               }
