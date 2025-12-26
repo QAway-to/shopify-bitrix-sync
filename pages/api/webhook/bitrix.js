@@ -1751,56 +1751,54 @@ async function handleDealUpdate(dealId, requestId) {
         const wasAddressUpdated = addressChanged && parsedAddress && Object.keys(parsedAddress).length > 0;
         
         if (deliveryPriceChanged && !wasAddressUpdated) {
-              console.log(JSON.stringify({
-                event: 'AUTO_DELIVERY_PRICE_UPDATE_DETECTED',
-                requestId,
-                dealId,
-                shopifyOrderId,
-                newDeliveryPrice: deliveryPrice,
-                currentDeliveryPrice: currentShippingPrice,
-                timestamp: new Date().toISOString()
-              }));
-              
-              // Update only shipping price
-              const { updateShippingAddress } = await import('../../../src/lib/shopify/address.js');
-              const correlationId = `${dealId}:${Date.now()}`;
-              
-              // Get current shipping line title or use default
-              const currentShippingTitle = currentShippingLines.length > 0 
-                ? currentShippingLines[0].title 
-                : 'Standard Shipping';
-              
-              const addressResult = await updateShippingAddress(shopifyOrderId, {
-                shipping_lines: [{
-                  title: currentShippingTitle,
-                  price: deliveryPrice.toFixed(2),
-                  code: currentShippingLines.length > 0 && currentShippingLines[0].code 
-                    ? currentShippingLines[0].code 
-                    : 'CUSTOM_EDIT'
-                }]
-              }, correlationId, null);
-              
-              if (addressResult.success) {
-                console.log(JSON.stringify({
-                  event: 'AUTO_DELIVERY_PRICE_UPDATE_SUCCESS',
-                  requestId,
-                  dealId,
-                  shopifyOrderId,
-                  newDeliveryPrice: deliveryPrice,
-                  timestamp: new Date().toISOString()
-                }));
-              } else {
-                console.log(JSON.stringify({
-                  event: 'AUTO_DELIVERY_PRICE_UPDATE_ERROR',
-                  requestId,
-                  dealId,
-                  shopifyOrderId,
-                  error: addressResult.error,
-                  message: addressResult.message,
-                  timestamp: new Date().toISOString()
-                }));
-              }
-            }
+          console.log(JSON.stringify({
+            event: 'AUTO_DELIVERY_PRICE_UPDATE_DETECTED',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            newDeliveryPrice: deliveryPrice,
+            currentDeliveryPrice: currentShippingPrice,
+            timestamp: new Date().toISOString()
+          }));
+          
+          // Update only shipping price
+          const { updateShippingAddress } = await import('../../../src/lib/shopify/address.js');
+          const correlationId = `${dealId}:${Date.now()}`;
+          
+          // Get current shipping line title or use default
+          const currentShippingTitle = currentShippingLines.length > 0 
+            ? currentShippingLines[0].title 
+            : 'Standard Shipping';
+          
+          const addressResult = await updateShippingAddress(shopifyOrderId, {
+            shipping_lines: [{
+              title: currentShippingTitle,
+              price: deliveryPrice.toFixed(2),
+              code: currentShippingLines.length > 0 && currentShippingLines[0].code 
+                ? currentShippingLines[0].code 
+                : 'CUSTOM_EDIT'
+            }]
+          }, correlationId, null);
+          
+          if (addressResult.success) {
+            console.log(JSON.stringify({
+              event: 'AUTO_DELIVERY_PRICE_UPDATE_SUCCESS',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              newDeliveryPrice: deliveryPrice,
+              timestamp: new Date().toISOString()
+            }));
+          } else {
+            console.log(JSON.stringify({
+              event: 'AUTO_DELIVERY_PRICE_UPDATE_ERROR',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              error: addressResult.error,
+              message: addressResult.message,
+              timestamp: new Date().toISOString()
+            }));
           }
         }
       }
