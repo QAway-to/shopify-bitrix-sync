@@ -2183,17 +2183,9 @@ async function handleDealUpdate(dealId, requestId) {
                 // Ensure orderName starts with "#"
                 const formattedOrderName = orderName.startsWith('#') ? orderName : `#${orderName}`;
                 
-                // Remove "D_XXXX" pattern from title if present, then add order number
-                // Example: "D_6704 #2494" -> "#2494" (remove "D_6704", keep "#2494")
-                // Example: "D_6704" -> "#2494" (replace "D_6704" with "#2494")
-                let updatedTitle = currentTitle;
-                
-                // Remove "D_XXXX" pattern (e.g., "D_6704")
-                updatedTitle = updatedTitle.replace(/D_\d+\s*/g, '').trim();
-                
-                // Add order number
-                updatedTitle = `${updatedTitle} ${formattedOrderName}`.trim();
-                
+                // Replace TITLE completely with order number (not append)
+                // Example: "D_6704" -> "#2494" (not "D_6704 #2494")
+                const updatedTitle = formattedOrderName;
                 updateFields.TITLE = updatedTitle;
                 
                 console.log(JSON.stringify({
