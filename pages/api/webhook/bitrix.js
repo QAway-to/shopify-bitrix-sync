@@ -1734,10 +1734,11 @@ async function handleDealUpdate(dealId, requestId) {
                 try {
                   const productResp = await callBitrix('/crm.product.get.json', { id: productId });
                   if (productResp.result) {
-                    const sku = productResp.result.SKU || productResp.result.sku;
-                    if (sku) {
+                    // In Bitrix, SKU is stored in CODE field, not SKU field
+                    const sku = productResp.result.CODE || productResp.result.code || productResp.result.SKU || productResp.result.sku;
+                    if (sku && sku.trim() !== '') {
                       const quantity = parseFloat(row.QUANTITY || row.quantity || 0);
-                      bitrixQuantities.set(sku, quantity);
+                      bitrixQuantities.set(sku.trim(), quantity);
                     }
                   }
                 } catch (productError) {
