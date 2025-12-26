@@ -185,12 +185,37 @@ export async function updateShippingAddress(orderId, addressPayload, correlation
       timestamp: new Date().toISOString()
     }));
 
+    // Log the exact payload being sent (for debugging)
+    console.log(JSON.stringify({
+      event: 'ADDRESS_UPDATE_PAYLOAD_SENT',
+      orderId,
+      payload: updatePayload,
+      payloadString: JSON.stringify(updatePayload),
+      timestamp: new Date().toISOString()
+    }));
+
     const updateResponse = await callShopifyAdmin(`/orders/${orderId}.json`, {
       method: 'PUT',
       body: JSON.stringify(updatePayload)
     });
 
     const updatedOrder = updateResponse.order;
+    
+    // Log the response from Shopify (for debugging)
+    console.log(JSON.stringify({
+      event: 'ADDRESS_UPDATE_RESPONSE',
+      orderId,
+      responseOrderId: updatedOrder?.id,
+      responseShippingAddress: updatedOrder?.shipping_address ? {
+        address1: updatedOrder.shipping_address.address1,
+        city: updatedOrder.shipping_address.city,
+        zip: updatedOrder.shipping_address.zip,
+        country: updatedOrder.shipping_address.country,
+        country_code: updatedOrder.shipping_address.country_code
+      } : null,
+      responseShippingLines: updatedOrder?.shipping_lines?.length || 0,
+      timestamp: new Date().toISOString()
+    }));
     
     console.log(JSON.stringify({
       event: 'ADDRESS_UPDATE_SUCCESS',
