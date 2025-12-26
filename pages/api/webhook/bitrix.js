@@ -14,6 +14,111 @@ import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = process.env.BITRIX_AUTH_TOKEN || '9gxukpkc7i1y4gms906jvm0t51npv0vb';
 
+/**
+ * Parse Bitrix address string into Shopify address format
+ * Format: "Street, ZIP City Region, Country | coordinate"
+ * Example: "Rue de l'Église Sainte-Anne - Sint-Annakerkstraat 78, 1081 Koekelberg Brussels-Capital, Belgium | 50.859"
+ * @param {string} addressString - Address string from Bitrix
+ * @returns {Object|null} Parsed address object or null if parsing fails
+ */
+function parseBitrixAddressString(addressString) {
+  if (!addressString || typeof addressString !== 'string') {
+    return null;
+  }
+
+  try {
+    // Remove coordinate part if present (everything after |)
+    const addressPart = addressString.split('|')[0].trim();
+    
+    // Split by commas
+    const parts = addressPart.split(',').map(p => p.trim()).filter(p => p);
+    
+    if (parts.length < 2) {
+      // Not enough parts, return as address1
+      return {
+        address1: addressPart
+      };
+    }
+
+    // Last part should be country
+    const country = parts[parts.length - 1];
+    
+    // Second to last part should be "ZIP City Region"
+    let zip = '';
+    let city = '';
+    let province = '';
+    
+    if (parts.length >= 2) {
+      const locationPart = parts[parts.length - 2];
+      // Try to extract ZIP (usually at the start, 4-5 digits)
+      const zipMatch = locationPart.match(/^(\d{4,5})\s+(.+)/);
+      if (zipMatch) {
+        zip = zipMatch[1];
+        const cityRegion = zipMatch[2];
+        // Try to split city and region (region usually comes after city)
+        const cityRegionParts = cityRegion.split(/\s+/);
+        if (cityRegionParts.length > 1) {
+          // Last word might be region
+          city = cityRegionParts.slice(0, -1).join(' ');
+          province = cityRegionParts[cityRegionParts.length - 1];
+        } else {
+          city = cityRegion;
+        }
+      } else {
+        // No ZIP found, treat whole part as city
+        city = locationPart;
+      }
+    }
+    
+    // First part(s) should be street address
+    const streetParts = parts.slice(0, parts.length - 2);
+    const address1 = streetParts.join(', ');
+
+    const parsed = {
+      address1: address1 || addressPart
+    };
+    
+    if (city) parsed.city = city;
+    if (zip) parsed.zip = zip;
+    if (province) parsed.province = province;
+    if (country) parsed.country = country;
+
+    return parsed;
+  } catch (error) {
+    console.warn(`[BITRIX ADDRESS PARSE] Failed to parse address string: ${error.message}`);
+    // Fallback: return as address1
+    return {
+      address1: addressString.split('|')[0].trim()
+    };
+  }
+}
+
+/**
+ * Check if address has changed by comparing key fields
+ * @param {Object} newAddress - New address from Bitrix
+ * @param {Object} currentAddress - Current address from Shopify
+ * @returns {boolean} True if address changed
+ */
+function hasAddressChanged(newAddress, currentAddress) {
+  if (!newAddress || !currentAddress) {
+    return !!newAddress;
+  }
+
+  // Compare key fields
+  const fieldsToCompare = ['address1', 'city', 'zip', 'country', 'province'];
+  
+  for (const field of fieldsToCompare) {
+    const newValue = (newAddress[field] || '').trim().toLowerCase();
+    const currentValue = (currentAddress[field] || '').trim().toLowerCase();
+    
+    if (newValue && newValue !== currentValue) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // Configure body parser - support both JSON and form-urlencoded
 // Next.js automatically parses form-urlencoded when bodyParser is enabled
 export const config = {
@@ -733,7 +838,7 @@ async function handleDealUpdate(dealId, requestId) {
   }
 
   // ✅ STEP C.1: Check if we need to update address for existing Shopify order (not technical order)
-  // Only update if order exists in Shopify and is not a technical order
+  // Extract address from UF_CRM_1742037435676 field and update if changed
   if (shopifyOrderId && shopifyOrderId.trim() !== '') {
     try {
       // Check if order is technical order by getting it from Shopify
@@ -748,10 +853,118 @@ async function handleDealUpdate(dealId, requestId) {
         
         // Only update address for non-technical orders (orders that came from Shopify originally)
         if (!isTechnicalOrder) {
-          // TODO: Add logic to detect address changes in Bitrix deal
-          // For now, address updates are handled via MW action (UF_MW_SHOPIFY_ACTION)
-          // This section can be extended to automatically detect address changes
-          // by comparing deal fields with current Shopify order address
+          // Extract address from Bitrix field UF_CRM_1742037435676
+          const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
+          
+          if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
+            // Parse address string: "Street, ZIP City Region, Country | coordinate"
+            // Example: "Rue de l'Église Sainte-Anne - Sint-Annakerkstraat 78, 1081 Koekelberg Brussels-Capital, Belgium | 50.859"
+            const parsedAddress = parseBitrixAddressString(bitrixAddressField);
+            
+            if (parsedAddress && Object.keys(parsedAddress).length > 0) {
+              // Try to get country code from country name
+              if (parsedAddress.country && !parsedAddress.country_code) {
+                try {
+                  const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
+                  const countriesResponse = await callShopifyAdmin('/countries.json');
+                  const countries = countriesResponse.countries || [];
+                  const countryMatch = countries.find(c => 
+                    c.name.toLowerCase() === parsedAddress.country.toLowerCase()
+                  );
+                  if (countryMatch) {
+                    parsedAddress.country_code = countryMatch.code;
+                    parsedAddress.country = countryMatch.name; // Use exact name from Shopify
+                  }
+                } catch (countryError) {
+                  console.warn(`[BITRIX ADDRESS] Failed to resolve country code: ${countryError.message}`);
+                }
+              }
+              
+              // Compare with current Shopify address
+              const currentAddress = shopifyOrder.shipping_address || {};
+              const addressChanged = hasAddressChanged(parsedAddress, currentAddress);
+              
+              console.log(JSON.stringify({
+                event: 'AUTO_ADDRESS_CHECK',
+                requestId,
+                dealId,
+                shopifyOrderId,
+                bitrixAddress: bitrixAddressField,
+                parsedAddress,
+                currentShopifyAddress: {
+                  address1: currentAddress.address1,
+                  city: currentAddress.city,
+                  zip: currentAddress.zip,
+                  country: currentAddress.country,
+                  country_code: currentAddress.country_code
+                },
+                addressChanged,
+                timestamp: new Date().toISOString()
+              }));
+              
+              if (addressChanged) {
+                console.log(JSON.stringify({
+                  event: 'AUTO_ADDRESS_UPDATE_DETECTED',
+                  requestId,
+                  dealId,
+                  shopifyOrderId,
+                  bitrixAddress: bitrixAddressField,
+                  parsedAddress,
+                  currentShopifyAddress: {
+                    address1: currentAddress.address1,
+                    city: currentAddress.city,
+                    zip: currentAddress.zip,
+                    country: currentAddress.country
+                  },
+                  timestamp: new Date().toISOString()
+                }));
+                
+                // Update address in Shopify
+                const { updateShippingAddress } = await import('../../../src/lib/shopify/address.js');
+                const correlationId = `${dealId}:${Date.now()}`;
+                const addressResult = await updateShippingAddress(shopifyOrderId, {
+                  shipping_address: parsedAddress
+                }, correlationId, null);
+                
+                if (addressResult.success) {
+                  console.log(JSON.stringify({
+                    event: 'AUTO_ADDRESS_UPDATE_SUCCESS',
+                    requestId,
+                    dealId,
+                    shopifyOrderId,
+                    timestamp: new Date().toISOString()
+                  }));
+                } else {
+                  console.log(JSON.stringify({
+                    event: 'AUTO_ADDRESS_UPDATE_ERROR',
+                    requestId,
+                    dealId,
+                    shopifyOrderId,
+                    error: addressResult.error,
+                    message: addressResult.message,
+                    timestamp: new Date().toISOString()
+                  }));
+                }
+              } else {
+                console.log(JSON.stringify({
+                  event: 'AUTO_ADDRESS_NO_CHANGE',
+                  requestId,
+                  dealId,
+                  shopifyOrderId,
+                  timestamp: new Date().toISOString()
+                }));
+              }
+            } else {
+              console.log(JSON.stringify({
+                event: 'AUTO_ADDRESS_PARSE_FAILED',
+                requestId,
+                dealId,
+                shopifyOrderId,
+                bitrixAddress: bitrixAddressField,
+                timestamp: new Date().toISOString()
+              }));
+            }
+          }
         }
       }
     } catch (orderCheckError) {
