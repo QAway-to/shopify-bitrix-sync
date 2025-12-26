@@ -707,6 +707,34 @@ async function handleDealUpdate(dealId, requestId) {
     return mwActionResult;
   }
 
+  // ✅ STEP C.1: Check if we need to update address for existing Shopify order (not technical order)
+  // Only update if order exists in Shopify and is not a technical order
+  if (shopifyOrderId && shopifyOrderId.trim() !== '') {
+    try {
+      // Check if order is technical order by getting it from Shopify
+      const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
+      const shopifyOrder = await getOrder(shopifyOrderId);
+      
+      if (shopifyOrder) {
+        const orderTags = Array.isArray(shopifyOrder.tags) 
+          ? shopifyOrder.tags 
+          : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
+        const isTechnicalOrder = orderTags.includes('TECH');
+        
+        // Only update address for non-technical orders (orders that came from Shopify originally)
+        if (!isTechnicalOrder) {
+          // TODO: Add logic to detect address changes in Bitrix deal
+          // For now, address updates are handled via MW action (UF_MW_SHOPIFY_ACTION)
+          // This section can be extended to automatically detect address changes
+          // by comparing deal fields with current Shopify order address
+        }
+      }
+    } catch (orderCheckError) {
+      // Non-blocking: if we can't check order, continue with normal flow
+      console.warn(`[BITRIX TO SHOPIFY] Could not check order ${shopifyOrderId} for address update:`, orderCheckError.message);
+    }
+  }
+
   // ✅ STEP D: Check if we need to create order in Shopify from Bitrix deal
   // Condition: No shopifyOrderId but deal has product rows
   console.log(JSON.stringify({

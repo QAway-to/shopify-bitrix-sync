@@ -4,6 +4,7 @@
  */
 
 import { callShopifyAdmin, getOrder } from './adminClient.js';
+import { addTagToOrder } from './order.js';
 
 /**
  * Get country name from ISO2 code
@@ -114,6 +115,18 @@ export async function updateShippingAddress(orderId, addressPayload, correlation
     });
 
     const updatedOrder = updateResponse.order;
+
+    // Step 4: Add BitrixUpdated tag for loop guard (prevent webhook from sending back to Bitrix)
+    try {
+      const tagResult = await addTagToOrder(orderId, 'BitrixUpdated');
+      if (tagResult.success) {
+        console.log(`[SHOPIFY ADDRESS] ✅ Added BitrixUpdated tag to order ${orderId} for loop guard`);
+      } else {
+        console.warn(`[SHOPIFY ADDRESS] ⚠️ Failed to add BitrixUpdated tag: ${tagResult.message}`);
+      }
+    } catch (tagError) {
+      console.warn(`[SHOPIFY ADDRESS] ⚠️ Error adding BitrixUpdated tag (non-blocking):`, tagError.message);
+    }
 
     return {
       success: true,

@@ -446,3 +446,87 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
   }
 }
 
+/**
+ * Add tag to Shopify order
+ * @param {string|number} orderId - Shopify order ID
+ * @param {string} tag - Tag to add
+ * @returns {Promise<Object>} Result with success status
+ */
+export async function addTagToOrder(orderId, tag) {
+  if (!orderId) {
+    return {
+      success: false,
+      error: 'MISSING_ORDER_ID',
+      message: 'Shopify order ID is required'
+    };
+  }
+
+  if (!tag) {
+    return {
+      success: false,
+      error: 'MISSING_TAG',
+      message: 'Tag is required'
+    };
+  }
+
+  try {
+    // Get current order to get existing tags
+    const { callShopifyAdmin, getOrder } = await import('./adminClient.js');
+    const order = await getOrder(orderId);
+    
+    if (!order) {
+      return {
+        success: false,
+        error: 'ORDER_NOT_FOUND',
+        message: `Order ${orderId} not found in Shopify`
+      };
+    }
+
+    // Get existing tags (handle both array and comma-separated string)
+    const existingTags = Array.isArray(order.tags)
+      ? order.tags
+      : (order.tags ? String(order.tags).split(',').map(t => t.trim()) : []);
+
+    // Check if tag already exists
+    if (existingTags.includes(tag)) {
+      return {
+        success: true,
+        orderId: String(orderId),
+        orderName: order.name,
+        tag,
+        message: 'Tag already exists',
+        tags: existingTags
+      };
+    }
+
+    // Add new tag
+    const updatedTags = [...existingTags, tag];
+
+    // Update order with new tags
+    const updateResponse = await callShopifyAdmin(`/orders/${orderId}.json`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        order: {
+          id: orderId,
+          tags: updatedTags.join(', ') // Shopify REST API expects comma-separated string
+        }
+      })
+    });
+
+    return {
+      success: true,
+      orderId: String(orderId),
+      orderName: updateResponse.order.name,
+      tag,
+      tags: updatedTags
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: 'TAG_ADD_ERROR',
+      message: error.message,
+      httpStatus: error.status || 500
+    };
+  }
+}
+
