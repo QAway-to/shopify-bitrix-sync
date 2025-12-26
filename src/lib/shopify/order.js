@@ -501,10 +501,42 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
   console.log(`[CREATE ORDER FROM BITRIX] ✅ All duplicate checks passed. Proceeding with order creation for deal ${dealId}`);
 
   try {
+    console.log(JSON.stringify({
+      event: 'CREATE_ORDER_FROM_BITRIX_GRAPHQL_ATTEMPT',
+      dealId,
+      correlationId,
+      lineItemsCount: lineItems.length,
+      hasShippingAddress: !!options.shippingAddress,
+      hasShippingLines: !!(options.shippingLines && options.shippingLines.length > 0),
+      timestamp: new Date().toISOString()
+    }));
+
     const data = await callShopifyGraphQL(mutation, variables);
 
+    console.log(JSON.stringify({
+      event: 'CREATE_ORDER_FROM_BITRIX_GRAPHQL_RESPONSE',
+      dealId,
+      correlationId,
+      hasData: !!data,
+      hasOrderCreate: !!data?.orderCreate,
+      hasUserErrors: !!(data?.orderCreate?.userErrors && data.orderCreate.userErrors.length > 0),
+      userErrorsCount: data?.orderCreate?.userErrors?.length || 0,
+      hasOrder: !!data?.orderCreate?.order,
+      timestamp: new Date().toISOString()
+    }));
+
     if (!data?.orderCreate) {
-      throw new Error('Invalid GraphQL response: orderCreate is missing');
+      const errorMsg = 'Invalid GraphQL response: orderCreate is missing';
+      console.error(JSON.stringify({
+        event: 'CREATE_ORDER_FROM_BITRIX_GRAPHQL_ERROR',
+        dealId,
+        correlationId,
+        error: 'INVALID_RESPONSE',
+        message: errorMsg,
+        responseData: JSON.stringify(data).substring(0, 500),
+        timestamp: new Date().toISOString()
+      }));
+      throw new Error(errorMsg);
     }
 
     const { order, userErrors } = data.orderCreate;
@@ -512,15 +544,45 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     // Check for user errors (business logic errors from Shopify)
     if (userErrors && userErrors.length > 0) {
       const errorMessages = userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
-      throw new Error(`Shopify orderCreate userErrors: ${errorMessages}`);
+      const errorMsg = `Shopify orderCreate userErrors: ${errorMessages}`;
+      console.error(JSON.stringify({
+        event: 'CREATE_ORDER_FROM_BITRIX_USER_ERRORS',
+        dealId,
+        correlationId,
+        error: 'SHOPIFY_USER_ERRORS',
+        message: errorMsg,
+        userErrors: userErrors,
+        timestamp: new Date().toISOString()
+      }));
+      throw new Error(errorMsg);
     }
 
     if (!order) {
-      throw new Error('Order creation failed: order is null');
+      const errorMsg = 'Order creation failed: order is null';
+      console.error(JSON.stringify({
+        event: 'CREATE_ORDER_FROM_BITRIX_NULL_ORDER',
+        dealId,
+        correlationId,
+        error: 'NULL_ORDER',
+        message: errorMsg,
+        timestamp: new Date().toISOString()
+      }));
+      throw new Error(errorMsg);
     }
 
     // Extract numeric order ID from GraphQL ID
     const orderId = order.legacyResourceId || order.id.split('/').pop();
+
+    console.log(JSON.stringify({
+      event: 'CREATE_ORDER_FROM_BITRIX_SUCCESS',
+      dealId,
+      correlationId,
+      orderId,
+      orderName: order.name,
+      lineItemsCount: order.lineItems?.edges?.length || 0,
+      tags: order.tags || [],
+      timestamp: new Date().toISOString()
+    }));
 
     return {
       success: true,
@@ -532,6 +594,16 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       note: order.note || ''
     };
   } catch (error) {
+    console.error(JSON.stringify({
+      event: 'CREATE_ORDER_FROM_BITRIX_EXCEPTION',
+      dealId,
+      correlationId,
+      error: 'ORDER_CREATE_EXCEPTION',
+      message: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    }));
+
     return {
       success: false,
       error: 'ORDER_CREATE_ERROR',

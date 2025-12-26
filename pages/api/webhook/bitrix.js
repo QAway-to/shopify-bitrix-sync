@@ -2896,10 +2896,31 @@ async function handleDealCreate(dealId, requestId) {
         productRowsExists: !!(productRowsResp && productRowsResp.result),
         productRowsIsArray: Array.isArray(productRowsResp?.result),
         productRowsCount: productRowsResp?.result?.length || 0,
+        productRowsRespKeys: productRowsResp ? Object.keys(productRowsResp) : [],
         timestamp: new Date().toISOString()
       }));
 
-      if (productRowsResp.result && Array.isArray(productRowsResp.result) && productRowsResp.result.length > 0) {
+      if (!productRowsResp || !productRowsResp.result) {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          skip_reason: 'no_product_rows_response',
+          productRowsRespExists: !!productRowsResp,
+          timestamp: new Date().toISOString()
+        }));
+      } else if (!Array.isArray(productRowsResp.result)) {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          skip_reason: 'product_rows_not_array',
+          productRowsType: typeof productRowsResp.result,
+          timestamp: new Date().toISOString()
+        }));
+      } else if (productRowsResp.result && Array.isArray(productRowsResp.result) && productRowsResp.result.length > 0) {
         console.log(JSON.stringify({
           event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_CHECK',
           requestId,
@@ -3242,7 +3263,16 @@ async function handleDealCreate(dealId, requestId) {
         }));
       }
     } catch (orderCreateError) {
-      console.error(`[BITRIX TO SHOPIFY] Error checking/creating order:`, orderCreateError);
+      console.error(JSON.stringify({
+        event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_EXCEPTION',
+        requestId,
+        dealId,
+        eventType: 'CREATE',
+        error: 'ORDER_CREATE_EXCEPTION',
+        message: orderCreateError.message,
+        stack: orderCreateError.stack,
+        timestamp: new Date().toISOString()
+      }));
       return { 
         success: false, 
         triggerMatch: false, 
