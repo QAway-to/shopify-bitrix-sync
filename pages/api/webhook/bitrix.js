@@ -1704,8 +1704,16 @@ async function handleDealUpdate(dealId, requestId) {
   }
 
   // ✅ STEP C2: Sync product quantities from Bitrix to Shopify (if order exists)
+  // NOTE: This only runs if shopifyOrderId exists, so it won't block order creation
   if (shopifyOrderId && shopifyOrderId.trim() !== '') {
     try {
+      console.log(JSON.stringify({
+        event: 'QUANTITY_SYNC_START',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        timestamp: new Date().toISOString()
+      }));
       const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
       const shopifyOrder = await getOrder(shopifyOrderId);
       
@@ -1935,9 +1943,20 @@ async function handleDealUpdate(dealId, requestId) {
         dealId,
         shopifyOrderId,
         error: quantitySyncError.message,
+        stack: quantitySyncError.stack,
         timestamp: new Date().toISOString()
       }));
+      // Continue with normal flow - don't block order creation
     }
+  } else {
+    console.log(JSON.stringify({
+      event: 'QUANTITY_SYNC_SKIP',
+      requestId,
+      dealId,
+      shopifyOrderId: shopifyOrderId || 'empty',
+      reason: 'no_shopify_order_id',
+      timestamp: new Date().toISOString()
+    }));
   }
 
   // ✅ STEP D: Check if we need to create order in Shopify from Bitrix deal
