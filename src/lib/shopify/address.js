@@ -30,6 +30,45 @@ async function getCountryNameFromISO2(iso2Code) {
   }
 }
 
+let countriesCache = null;
+let countriesCacheFetchedAt = 0;
+const COUNTRIES_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+async function getCountriesCached() {
+  const now = Date.now();
+  if (countriesCache && now - countriesCacheFetchedAt < COUNTRIES_CACHE_TTL_MS) {
+    return countriesCache;
+  }
+
+  try {
+    const response = await callShopifyAdmin('/countries.json?fields=id,name,code');
+    const countries = response.countries || [];
+    countriesCache = countries;
+    countriesCacheFetchedAt = now;
+    return countries;
+  } catch (error) {
+    console.warn(`[SHOPIFY ADDRESS] Failed to fetch countries for reverse lookup: ${error.message}`);
+    return countriesCache || [];
+  }
+}
+
+async function getCountryByName(countryName) {
+  const name = String(countryName || '').trim();
+  if (!name) return null;
+
+  const countries = await getCountriesCached();
+  if (!Array.isArray(countries) || countries.length === 0) return null;
+
+  const needle = name.toLowerCase();
+  // Exact match first
+  let match = countries.find(c => String(c.name || '').trim().toLowerCase() === needle);
+  if (match) return match;
+
+  // Fallback: contains match (handles minor differences like extra whitespace)
+  match = countries.find(c => String(c.name || '').trim().toLowerCase().includes(needle));
+  return match || null;
+}
+
 /**
  * Normalize address data for Shopify
  * @param {Object} addressData - Raw address data
@@ -70,10 +109,15 @@ async function normalizeAddress(addressData) {
       const resolvedName = await getCountryNameFromISO2(countryValue);
       normalized.country = resolvedName || countryValue;
     } else {
-      // Full country name - try to find code
-      normalized.country = countryValue;
-      // Note: We can't easily reverse lookup country code from name without API call
-      // If country_code is needed, it should be provided in addressData
+      // Full country name - reverse lookup country_code from Shopify countries settings (like user's script does)
+      const match = await getCountryByName(countryValue);
+      if (match?.code) {
+        normalized.country_code = String(match.code).toUpperCase();
+        normalized.country = match.name || countryValue;
+      } else {
+        // Fallback: keep only country name (Shopify may reject without country_code depending on validation rules)
+        normalized.country = countryValue;
+      }
     }
   }
 
