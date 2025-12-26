@@ -1630,6 +1630,35 @@ async function handleDealUpdate(dealId, requestId) {
             const currentAddress = shopifyOrder.shipping_address || {};
             addressChanged = hasAddressChanged(parsedAddress, currentAddress);
             
+            // Debug: Log detailed comparison
+            const addressComparison = {
+              address1: {
+                new: parsedAddress.address1,
+                current: currentAddress.address1,
+                changed: (parsedAddress.address1 || '').trim().toLowerCase() !== (currentAddress.address1 || '').trim().toLowerCase()
+              },
+              city: {
+                new: parsedAddress.city,
+                current: currentAddress.city,
+                changed: (parsedAddress.city || '').trim().toLowerCase() !== (currentAddress.city || '').trim().toLowerCase()
+              },
+              zip: {
+                new: parsedAddress.zip,
+                current: currentAddress.zip,
+                changed: (parsedAddress.zip || '').trim().toLowerCase() !== (currentAddress.zip || '').trim().toLowerCase()
+              },
+              country: {
+                new: parsedAddress.country,
+                current: currentAddress.country,
+                changed: (parsedAddress.country || '').trim().toLowerCase() !== (currentAddress.country || '').trim().toLowerCase()
+              },
+              province: {
+                new: parsedAddress.province,
+                current: currentAddress.province,
+                changed: (parsedAddress.province || '').trim().toLowerCase() !== (currentAddress.province || '').trim().toLowerCase()
+              }
+            };
+            
             console.log(JSON.stringify({
               event: 'AUTO_ADDRESS_CHECK',
               requestId,
@@ -1642,8 +1671,10 @@ async function handleDealUpdate(dealId, requestId) {
                 city: currentAddress.city,
                 zip: currentAddress.zip,
                 country: currentAddress.country,
-                country_code: currentAddress.country_code
+                country_code: currentAddress.country_code,
+                province: currentAddress.province
               },
+              addressComparison,
               addressChanged,
               deliveryPrice: deliveryPrice,
               currentShippingPrice: currentShippingPrice,
@@ -1651,7 +1682,11 @@ async function handleDealUpdate(dealId, requestId) {
               timestamp: new Date().toISOString()
             }));
             
-            if (addressChanged || deliveryPriceChanged) {
+            // Always update if address is provided (even if comparison says no change)
+            // This ensures address is synced even if comparison logic has issues
+            const shouldUpdateAddress = addressChanged || (parsedAddress && Object.keys(parsedAddress).length > 0);
+            
+            if (shouldUpdateAddress || deliveryPriceChanged) {
               console.log(JSON.stringify({
                 event: 'AUTO_ADDRESS_UPDATE_DETECTED',
                 requestId,
@@ -1674,9 +1709,12 @@ async function handleDealUpdate(dealId, requestId) {
               
               // Prepare update payload with address and shipping lines
               // Always include shipping_lines (like in the example script) to ensure they are preserved/updated
-              const updatePayload = {
-                shipping_address: parsedAddress
-              };
+              const updatePayload = {};
+              
+              // Always include shipping_address if we have parsed address (match example script behavior)
+              if (parsedAddress && Object.keys(parsedAddress).length > 0) {
+                updatePayload.shipping_address = parsedAddress;
+              }
               
               // Always include shipping_lines - update price if changed, otherwise keep current
               if (deliveryPriceChanged && deliveryPrice !== null) {
@@ -1700,6 +1738,20 @@ async function handleDealUpdate(dealId, requestId) {
                   code: line.code || 'CUSTOM_EDIT'
                 }));
               }
+              
+              // Log what we're about to send (for debugging)
+              console.log(JSON.stringify({
+                event: 'AUTO_ADDRESS_UPDATE_PAYLOAD',
+                requestId,
+                dealId,
+                shopifyOrderId,
+                updatePayloadKeys: Object.keys(updatePayload),
+                hasShippingAddress: !!(updatePayload.shipping_address),
+                hasShippingLines: !!(updatePayload.shipping_lines),
+                shippingAddressFields: updatePayload.shipping_address ? Object.keys(updatePayload.shipping_address) : [],
+                shippingLinesCount: updatePayload.shipping_lines ? updatePayload.shipping_lines.length : 0,
+                timestamp: new Date().toISOString()
+              }));
               
               // Update address and shipping in Shopify
               const { updateShippingAddress } = await import('../../../src/lib/shopify/address.js');
