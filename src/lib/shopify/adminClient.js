@@ -1,19 +1,46 @@
 /**
  * Shopify Admin API Client
- * Uses SHOPIFY_24_ADMIN token for authenticated requests
+ * Uses Shopify Admin API token for authenticated requests
  */
 
 const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_24_DOMAIN || process.env.SHOPIFY_STORE_DOMAIN || '83bfa8-c4.myshopify.com';
-const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_24_ADMIN;
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-01';
+
+const SHOPIFY_ADMIN_TOKEN_ENV_KEYS = [
+  'SHOPIFY_24_ADMIN',
+  'SHOPIFY_ADMIN_TOKEN',
+  'SHOPIFY_ADMIN_API_ACCESS_TOKEN',
+  'SHOPIFY_ACCESS_TOKEN',
+  'SHOPIFY_TOKEN',
+];
+
+/**
+ * Resolve Shopify Admin token from environment.
+ * This intentionally supports multiple env var names because different deploy setups use different conventions.
+ */
+export function getShopifyAdminToken() {
+  for (const key of SHOPIFY_ADMIN_TOKEN_ENV_KEYS) {
+    const v = process.env[key];
+    if (typeof v === 'string' && v.trim() !== '') return v.trim();
+  }
+  return null;
+}
+
+function requireShopifyAdminToken() {
+  const token = getShopifyAdminToken();
+  if (!token) {
+    throw new Error(
+      `Shopify Admin token is not configured. Set one of: ${SHOPIFY_ADMIN_TOKEN_ENV_KEYS.join(', ')}`
+    );
+  }
+  return token;
+}
 
 /**
  * Get Shopify Admin API base URL
  */
 export function getShopifyAdminBase() {
-  if (!SHOPIFY_ADMIN_TOKEN) {
-    throw new Error('SHOPIFY_24_ADMIN token is not configured');
-  }
+  requireShopifyAdminToken();
   
   // Remove protocol if present, ensure it's just the domain
   const domain = SHOPIFY_STORE_DOMAIN.replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -30,10 +57,11 @@ export function getShopifyAdminBase() {
 export async function callShopifyAdmin(endpoint, options = {}) {
   const baseUrl = getShopifyAdminBase();
   const url = `${baseUrl}${endpoint}`;
+  const token = requireShopifyAdminToken();
   
   const headers = {
     'Content-Type': 'application/json',
-    'X-Shopify-Access-Token': SHOPIFY_ADMIN_TOKEN,
+    'X-Shopify-Access-Token': token,
     ...options.headers,
   };
 
@@ -81,9 +109,7 @@ export async function updateOrder(orderId, orderData) {
  * @returns {Promise<object>} GraphQL response data
  */
 export async function callShopifyGraphQL(query, variables = {}) {
-  if (!SHOPIFY_ADMIN_TOKEN) {
-    throw new Error('SHOPIFY_24_ADMIN token is not configured');
-  }
+  const token = requireShopifyAdminToken();
 
   // GraphQL endpoint: https://{domain}/admin/api/{version}/graphql.json
   const domain = SHOPIFY_STORE_DOMAIN.replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -91,7 +117,7 @@ export async function callShopifyGraphQL(query, variables = {}) {
 
   const headers = {
     'Content-Type': 'application/json',
-    'X-Shopify-Access-Token': SHOPIFY_ADMIN_TOKEN,
+    'X-Shopify-Access-Token': token,
   };
 
   const response = await fetch(url, {
