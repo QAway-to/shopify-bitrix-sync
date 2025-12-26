@@ -96,10 +96,35 @@ function normalizePayload(action, rawPayload) {
       const shippingAddress = rawPayload.shipping_address || {};
       const cleanedAddress = cleanEmptyFields(shippingAddress);
       
-      return {
+      // Log raw payload for debugging
+      console.log(JSON.stringify({
+        event: 'ADDRESS_UPDATE_NORMALIZE',
+        rawPayloadKeys: Object.keys(rawPayload),
+        shippingAddressKeys: Object.keys(shippingAddress),
+        cleanedAddressKeys: Object.keys(cleanedAddress),
+        hasShippingLines: !!(rawPayload.shipping_lines),
+        hasDeliveryTitle: !!(rawPayload.delivery_title),
+        timestamp: new Date().toISOString()
+      }));
+      
+      const normalized = {
         action: 'address_update',
         shipping_address: cleanedAddress || {}
       };
+      
+      // Include shipping_lines if provided
+      if (rawPayload.shipping_lines && Array.isArray(rawPayload.shipping_lines)) {
+        normalized.shipping_lines = rawPayload.shipping_lines;
+      }
+      
+      // Support simplified format: delivery_title, delivery_price, delivery_code
+      if (rawPayload.delivery_title || rawPayload.delivery_price) {
+        normalized.delivery_title = rawPayload.delivery_title;
+        normalized.delivery_price = rawPayload.delivery_price;
+        normalized.delivery_code = rawPayload.delivery_code || 'CUSTOM_EDIT';
+      }
+      
+      return normalized;
     }
 
     default:

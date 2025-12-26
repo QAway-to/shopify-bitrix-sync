@@ -49,15 +49,31 @@ async function normalizeAddress(addressData) {
   if (addressData.zip) normalized.zip = String(addressData.zip);
   if (addressData.phone) normalized.phone = String(addressData.phone);
 
-  // Handle country: convert ISO2 to country name if needed
-  if (addressData.country) {
-    const countryValue = String(addressData.country);
-    // If it's a 2-letter code, try to get country name
+  // Handle country: Shopify requires both country_code (ISO2) and country (full name)
+  // Priority: if country_code is provided, use it; otherwise try to extract from country
+  let countryCode = addressData.country_code || null;
+  let countryName = addressData.country || null;
+
+  if (countryCode && countryCode.length === 2) {
+    // country_code provided - get full country name
+    normalized.country_code = countryCode.toUpperCase();
+    if (!countryName) {
+      countryName = await getCountryNameFromISO2(countryCode);
+    }
+    normalized.country = countryName || countryCode;
+  } else if (countryName) {
+    // Only country name provided - try to extract code or use as-is
+    const countryValue = String(countryName);
     if (countryValue.length === 2) {
-      const countryName = await getCountryNameFromISO2(countryValue);
-      normalized.country = countryName || countryValue;
+      // Looks like ISO2 code
+      normalized.country_code = countryValue.toUpperCase();
+      const resolvedName = await getCountryNameFromISO2(countryValue);
+      normalized.country = resolvedName || countryValue;
     } else {
+      // Full country name - try to find code
       normalized.country = countryValue;
+      // Note: We can't easily reverse lookup country code from name without API call
+      // If country_code is needed, it should be provided in addressData
     }
   }
 
@@ -90,6 +106,18 @@ export async function updateShippingAddress(orderId, addressPayload, correlation
   }
 
   try {
+    // Log incoming payload for debugging
+    console.log(JSON.stringify({
+      event: 'ADDRESS_UPDATE_PAYLOAD_RECEIVED',
+      orderId,
+      correlationId,
+      payloadHash,
+      addressFields: Object.keys(addressPayload.shipping_address || {}),
+      hasShippingLines: !!(addressPayload.shipping_lines),
+      hasDeliveryTitle: !!(addressPayload.delivery_title),
+      timestamp: new Date().toISOString()
+    }));
+
     // Step 1: Get order to verify it exists
     const order = await getOrder(orderId);
     if (!order) {
@@ -102,19 +130,69 @@ export async function updateShippingAddress(orderId, addressPayload, correlation
 
     // Step 2: Normalize address data
     const normalizedAddress = await normalizeAddress(addressPayload.shipping_address);
+    
+    console.log(JSON.stringify({
+      event: 'ADDRESS_NORMALIZED',
+      orderId,
+      normalizedAddressFields: Object.keys(normalizedAddress),
+      countryCode: normalizedAddress.country_code,
+      country: normalizedAddress.country,
+      timestamp: new Date().toISOString()
+    }));
 
-    // Step 3: Update order shipping address
+    // Step 3: Prepare update payload
+    const updatePayload = {
+      order: {
+        id: orderId,
+        shipping_address: normalizedAddress
+      }
+    };
+
+    // Step 4: Add shipping_lines if provided (delivery method update)
+    if (addressPayload.shipping_lines && Array.isArray(addressPayload.shipping_lines) && addressPayload.shipping_lines.length > 0) {
+      updatePayload.order.shipping_lines = addressPayload.shipping_lines.map(line => ({
+        title: line.title || '',
+        price: String(line.price || '0.00'),
+        code: line.code || 'CUSTOM_EDIT'
+      }));
+    } else if (addressPayload.delivery_title || addressPayload.delivery_price) {
+      // Support simplified format: delivery_title and delivery_price
+      updatePayload.order.shipping_lines = [{
+        title: addressPayload.delivery_title || 'Custom Delivery',
+        price: String(addressPayload.delivery_price || '0.00'),
+        code: addressPayload.delivery_code || 'CUSTOM_EDIT'
+      }];
+    }
+
+    // Step 5: Update order (address and optionally shipping_lines)
+    console.log(JSON.stringify({
+      event: 'ADDRESS_UPDATE_REQUEST',
+      orderId,
+      updatePayloadKeys: Object.keys(updatePayload.order),
+      hasShippingLines: !!(updatePayload.order.shipping_lines),
+      timestamp: new Date().toISOString()
+    }));
+
     const updateResponse = await callShopifyAdmin(`/orders/${orderId}.json`, {
       method: 'PUT',
-      body: JSON.stringify({
-        order: {
-          id: orderId,
-          shipping_address: normalizedAddress
-        }
-      })
+      body: JSON.stringify(updatePayload)
     });
 
     const updatedOrder = updateResponse.order;
+    
+    console.log(JSON.stringify({
+      event: 'ADDRESS_UPDATE_SUCCESS',
+      orderId,
+      orderName: updatedOrder.name,
+      updatedAddress: updatedOrder.shipping_address ? {
+        address1: updatedOrder.shipping_address.address1,
+        city: updatedOrder.shipping_address.city,
+        country: updatedOrder.shipping_address.country,
+        country_code: updatedOrder.shipping_address.country_code
+      } : null,
+      updatedShippingLines: updatedOrder.shipping_lines?.length || 0,
+      timestamp: new Date().toISOString()
+    }));
 
     // Step 4: Add BitrixUpdated tag for loop guard (prevent webhook from sending back to Bitrix)
     try {
