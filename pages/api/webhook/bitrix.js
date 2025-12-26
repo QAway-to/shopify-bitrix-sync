@@ -1619,6 +1619,13 @@ async function handleDealUpdate(dealId, requestId) {
             const currentAddress = shopifyOrder.shipping_address || {};
             const addressChanged = hasAddressChanged(parsedAddress, currentAddress);
             
+            // Check if delivery price changed (UF_CRM_67BEF8B2AA721)
+            const deliveryPriceField = dealData.UF_CRM_67BEF8B2AA721 || dealData.uf_crm_67bef8b2aa721 || '';
+            const deliveryPrice = deliveryPriceField ? parseFloat(deliveryPriceField) : null;
+            const currentShippingLines = shopifyOrder.shipping_lines || [];
+            const currentShippingPrice = currentShippingLines.length > 0 ? parseFloat(currentShippingLines[0].price || '0') : 0;
+            const deliveryPriceChanged = deliveryPrice !== null && Math.abs(deliveryPrice - currentShippingPrice) > 0.01;
+            
             console.log(JSON.stringify({
               event: 'AUTO_ADDRESS_CHECK',
               requestId,
@@ -1634,10 +1641,13 @@ async function handleDealUpdate(dealId, requestId) {
                 country_code: currentAddress.country_code
               },
               addressChanged,
+              deliveryPrice: deliveryPrice,
+              currentShippingPrice: currentShippingPrice,
+              deliveryPriceChanged: deliveryPriceChanged,
               timestamp: new Date().toISOString()
             }));
             
-            if (addressChanged) {
+            if (addressChanged || deliveryPriceChanged) {
               console.log(JSON.stringify({
                 event: 'AUTO_ADDRESS_UPDATE_DETECTED',
                 requestId,
@@ -1651,15 +1661,45 @@ async function handleDealUpdate(dealId, requestId) {
                   zip: currentAddress.zip,
                   country: currentAddress.country
                 },
+                addressChanged: addressChanged,
+                deliveryPriceChanged: deliveryPriceChanged,
+                newDeliveryPrice: deliveryPrice,
+                currentDeliveryPrice: currentShippingPrice,
                 timestamp: new Date().toISOString()
               }));
               
-              // Update address in Shopify
+              // Prepare update payload with address and shipping lines
+              const updatePayload = {
+                shipping_address: parsedAddress
+              };
+              
+              // Add shipping_lines if delivery price changed or if we need to update
+              if (deliveryPriceChanged && deliveryPrice !== null) {
+                // Get current shipping line title or use default
+                const currentShippingTitle = currentShippingLines.length > 0 
+                  ? currentShippingLines[0].title 
+                  : 'Standard Shipping';
+                
+                updatePayload.shipping_lines = [{
+                  title: currentShippingTitle,
+                  price: deliveryPrice.toFixed(2),
+                  code: currentShippingLines.length > 0 && currentShippingLines[0].code 
+                    ? currentShippingLines[0].code 
+                    : 'CUSTOM_EDIT'
+                }];
+              } else if (addressChanged && currentShippingLines.length > 0) {
+                // Keep existing shipping lines if only address changed
+                updatePayload.shipping_lines = currentShippingLines.map(line => ({
+                  title: line.title || '',
+                  price: String(line.price || '0.00'),
+                  code: line.code || 'CUSTOM_EDIT'
+                }));
+              }
+              
+              // Update address and shipping in Shopify
               const { updateShippingAddress } = await import('../../../src/lib/shopify/address.js');
               const correlationId = `${dealId}:${Date.now()}`;
-              const addressResult = await updateShippingAddress(shopifyOrderId, {
-                shipping_address: parsedAddress
-              }, correlationId, null);
+              const addressResult = await updateShippingAddress(shopifyOrderId, updatePayload, correlationId, null);
               
               if (addressResult.success) {
                 console.log(JSON.stringify({
@@ -1698,6 +1738,69 @@ async function handleDealUpdate(dealId, requestId) {
               bitrixAddress: bitrixAddressField,
               timestamp: new Date().toISOString()
             }));
+          }
+        }
+        
+        // Check if delivery price needs to be updated even if address didn't change
+        const deliveryPriceField = dealData.UF_CRM_67BEF8B2AA721 || dealData.uf_crm_67bef8b2aa721 || '';
+        if (deliveryPriceField && shopifyOrder) {
+          const deliveryPrice = parseFloat(deliveryPriceField);
+          if (!isNaN(deliveryPrice)) {
+            const currentShippingLines = shopifyOrder.shipping_lines || [];
+            const currentShippingPrice = currentShippingLines.length > 0 ? parseFloat(currentShippingLines[0].price || '0') : 0;
+            const deliveryPriceChanged = Math.abs(deliveryPrice - currentShippingPrice) > 0.01;
+            
+            if (deliveryPriceChanged) {
+              console.log(JSON.stringify({
+                event: 'AUTO_DELIVERY_PRICE_UPDATE_DETECTED',
+                requestId,
+                dealId,
+                shopifyOrderId,
+                newDeliveryPrice: deliveryPrice,
+                currentDeliveryPrice: currentShippingPrice,
+                timestamp: new Date().toISOString()
+              }));
+              
+              // Update only shipping price
+              const { updateShippingAddress } = await import('../../../src/lib/shopify/address.js');
+              const correlationId = `${dealId}:${Date.now()}`;
+              
+              // Get current shipping line title or use default
+              const currentShippingTitle = currentShippingLines.length > 0 
+                ? currentShippingLines[0].title 
+                : 'Standard Shipping';
+              
+              const addressResult = await updateShippingAddress(shopifyOrderId, {
+                shipping_lines: [{
+                  title: currentShippingTitle,
+                  price: deliveryPrice.toFixed(2),
+                  code: currentShippingLines.length > 0 && currentShippingLines[0].code 
+                    ? currentShippingLines[0].code 
+                    : 'CUSTOM_EDIT'
+                }]
+              }, correlationId, null);
+              
+              if (addressResult.success) {
+                console.log(JSON.stringify({
+                  event: 'AUTO_DELIVERY_PRICE_UPDATE_SUCCESS',
+                  requestId,
+                  dealId,
+                  shopifyOrderId,
+                  newDeliveryPrice: deliveryPrice,
+                  timestamp: new Date().toISOString()
+                }));
+              } else {
+                console.log(JSON.stringify({
+                  event: 'AUTO_DELIVERY_PRICE_UPDATE_ERROR',
+                  requestId,
+                  dealId,
+                  shopifyOrderId,
+                  error: addressResult.error,
+                  message: addressResult.message,
+                  timestamp: new Date().toISOString()
+                }));
+              }
+            }
           }
         }
       }

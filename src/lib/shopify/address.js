@@ -97,11 +97,16 @@ export async function updateShippingAddress(orderId, addressPayload, correlation
     };
   }
 
-  if (!addressPayload || !addressPayload.shipping_address || Object.keys(addressPayload.shipping_address).length === 0) {
+  // Allow update if either shipping_address or shipping_lines is provided
+  const hasAddress = addressPayload?.shipping_address && Object.keys(addressPayload.shipping_address).length > 0;
+  const hasShippingLines = addressPayload?.shipping_lines && Array.isArray(addressPayload.shipping_lines) && addressPayload.shipping_lines.length > 0;
+  const hasDeliveryPrice = addressPayload?.delivery_title || addressPayload?.delivery_price;
+  
+  if (!hasAddress && !hasShippingLines && !hasDeliveryPrice) {
     return {
       success: false,
       error: 'MISSING_ADDRESS_DATA',
-      message: 'Shipping address data is required'
+      message: 'Shipping address data or shipping lines is required'
     };
   }
 
@@ -128,25 +133,32 @@ export async function updateShippingAddress(orderId, addressPayload, correlation
       };
     }
 
-    // Step 2: Normalize address data
-    const normalizedAddress = await normalizeAddress(addressPayload.shipping_address);
-    
-    console.log(JSON.stringify({
-      event: 'ADDRESS_NORMALIZED',
-      orderId,
-      normalizedAddressFields: Object.keys(normalizedAddress),
-      countryCode: normalizedAddress.country_code,
-      country: normalizedAddress.country,
-      timestamp: new Date().toISOString()
-    }));
+    // Step 2: Normalize address data (if provided)
+    let normalizedAddress = null;
+    if (hasAddress) {
+      normalizedAddress = await normalizeAddress(addressPayload.shipping_address);
+      
+      console.log(JSON.stringify({
+        event: 'ADDRESS_NORMALIZED',
+        orderId,
+        normalizedAddressFields: Object.keys(normalizedAddress),
+        countryCode: normalizedAddress.country_code,
+        country: normalizedAddress.country,
+        timestamp: new Date().toISOString()
+      }));
+    }
 
     // Step 3: Prepare update payload
     const updatePayload = {
       order: {
-        id: orderId,
-        shipping_address: normalizedAddress
+        id: orderId
       }
     };
+    
+    // Add shipping_address only if provided
+    if (normalizedAddress) {
+      updatePayload.order.shipping_address = normalizedAddress;
+    }
 
     // Step 4: Add shipping_lines if provided (delivery method update)
     if (addressPayload.shipping_lines && Array.isArray(addressPayload.shipping_lines) && addressPayload.shipping_lines.length > 0) {
