@@ -711,7 +711,37 @@ async function handleOrderUpdated(order) {
 
   // ✅ CRITICAL: Convert dealId to number (Bitrix API returns string, but we need number for API calls)
   const dealId = Number(deal.ID);
-  console.log(`[SHOPIFY WEBHOOK] Found deal ${dealId} (converted to number) for order ${shopifyOrderId}`);
+  const currentStageId = deal.STAGE_ID;
+  
+  // ✅ PROTECTION: Skip update if deal is already in LOSE stage (prevents unnecessary updates)
+  const isLoseStage = currentStageId === 'LOSE' || 
+                      (typeof currentStageId === 'string' && currentStageId.endsWith(':LOSE'));
+  
+  if (isLoseStage) {
+    console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal ${dealId} is already in LOSE stage (${currentStageId}). Skipping update to prevent unnecessary changes.`);
+    console.log(`[SHOPIFY WEBHOOK] Order ${shopifyOrderId} status: ${order?.financial_status || 'N/A'}`);
+    
+    // Store event for monitoring (non-blocking) even though we skip update
+    try {
+      const storedEvent = shopifyAdapter.storeEvent(order, topic);
+      console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped update). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
+    } catch (storeError) {
+      console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
+    }
+    
+    // Return 200 to prevent Shopify from retrying
+    return res.status(200).json({ 
+      success: true, 
+      skipped: true,
+      reason: 'Deal already in LOSE stage - no update needed',
+      dealId: dealId,
+      currentStageId: currentStageId,
+      orderId: order?.id,
+      orderName: order?.name
+    });
+  }
+  
+  console.log(`[SHOPIFY WEBHOOK] Found deal ${dealId} (converted to number) for order ${shopifyOrderId}, current stage: ${currentStageId}`);
 
   // ✅ Use mapShopifyOrderToBitrixDeal to get ALL fields AND productRows consistently (same as create)
   // This ensures OPPORTUNITY, payment status, stage, productRows with PRODUCT_ID are all calculated correctly

@@ -1316,148 +1316,9 @@ async function handleDealUpdate(dealId, requestId) {
     }
   }
 
-  // ✅ STEP E: Check if stage is Delivery (C2:EXECUTING) and update fulfillment tracking
-  // C2:EXECUTING = "Delivery" stage - order is being delivered (in transit)
-  // This is different from fulfillment creation - here we update existing fulfillment with tracking
-  const isDeliveryStage = shopifyOrderId && String(stageId) === 'C2:EXECUTING';
-
-  if (isDeliveryStage) {
-    try {
-      console.log(JSON.stringify({
-        event: 'DELIVERY_STAGE_DETECTED',
-        requestId,
-        dealId,
-        shopifyOrderId,
-        stageId,
-        timestamp: new Date().toISOString()
-      }));
-
-      // Check if order is technical order
-      const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
-      const shopifyOrder = await getOrder(shopifyOrderId);
-      
-      if (shopifyOrder) {
-        const orderTags = Array.isArray(shopifyOrder.tags) 
-          ? shopifyOrder.tags 
-          : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
-        const isTechnicalOrder = orderTags.includes('TECH');
-        
-        // Only update fulfillment for non-technical orders
-        if (!isTechnicalOrder) {
-          const { updateOrderFulfillmentForDelivery, getFulfillmentOrders } = await import('../../../src/lib/shopify/fulfillment.js');
-          const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
-          const { updateOrder } = await import('../../../src/lib/shopify/adminClient.js');
-          
-          // Check if tracking info is provided in deal fields
-          const trackingNumber = dealData.UF_CRM_TRACKING_NUMBER || dealData.uf_crm_tracking_number || 
-                                 dealData.UF_CRM_1742556489_TRACKING || dealData.uf_crm_1742556489_tracking || null;
-          const trackingUrl = dealData.UF_CRM_TRACKING_URL || dealData.uf_crm_tracking_url || null;
-          
-          const trackingUrls = trackingUrl ? [trackingUrl] : [];
-          
-          // Check if fulfillment exists
-          const fulfillmentsResponse = await getFulfillmentOrders(shopifyOrderId);
-          const hasFulfillment = fulfillmentsResponse.success && fulfillmentsResponse.fulfillments && fulfillmentsResponse.fulfillments.length > 0;
-          
-          // Update fulfillment if exists, or it will be created below
-          let fulfillmentResult = null;
-          if (hasFulfillment) {
-            // Update existing fulfillment with tracking
-            fulfillmentResult = await updateOrderFulfillmentForDelivery(shopifyOrderId, {
-              notify_customer: true,
-              tracking_number: trackingNumber,
-              tracking_urls: trackingUrls.length > 0 ? trackingUrls : undefined
-            });
-          }
-          
-          // Update order note to show "в доставке" / "in delivery" status
-          try {
-            const currentNote = shopifyOrder.note || '';
-            const deliveryNote = `[Bitrix: C2:EXECUTING] Заказ в доставке / Order in delivery${trackingNumber ? ` | Tracking: ${trackingNumber}` : ''}`;
-            
-            // Only update note if it doesn't already contain delivery status
-            let updatedNote = currentNote;
-            if (!currentNote.includes('в доставке') && !currentNote.includes('in delivery')) {
-              updatedNote = currentNote ? `${currentNote}\n\n${deliveryNote}` : deliveryNote;
-            } else if (trackingNumber && !currentNote.includes(trackingNumber)) {
-              // Update note with tracking if not present
-              updatedNote = currentNote.replace(/Tracking:.*/, `Tracking: ${trackingNumber}`);
-            }
-            
-            // Update order with note
-            await updateOrder(shopifyOrderId, {
-              id: shopifyOrderId,
-              note: updatedNote
-            });
-            
-            console.log(JSON.stringify({
-              event: 'DELIVERY_ORDER_NOTE_UPDATED',
-              requestId,
-              dealId,
-              shopifyOrderId,
-              stageId,
-              noteUpdated: true,
-              timestamp: new Date().toISOString()
-            }));
-          } catch (noteError) {
-            console.warn(`[BITRIX TO SHOPIFY] Failed to update order note: ${noteError.message}`);
-          }
-          
-          if (fulfillmentResult && fulfillmentResult.success) {
-            // Add BitrixUpdated tag to prevent webhook loop
-            await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
-            
-            console.log(JSON.stringify({
-              event: 'DELIVERY_FULFILLMENT_UPDATE_SUCCESS',
-              requestId,
-              dealId,
-              shopifyOrderId,
-              stageId,
-              fulfillmentId: fulfillmentResult.fulfillmentId,
-              timestamp: new Date().toISOString()
-            }));
-          } else if (fulfillmentResult && !fulfillmentResult.success) {
-            console.log(JSON.stringify({
-              event: 'DELIVERY_FULFILLMENT_UPDATE_ERROR',
-              requestId,
-              dealId,
-              shopifyOrderId,
-              stageId,
-              error: fulfillmentResult.error,
-              message: fulfillmentResult.message,
-              timestamp: new Date().toISOString()
-            }));
-          } else {
-            // Fulfillment doesn't exist yet - will be created below
-            console.log(JSON.stringify({
-              event: 'DELIVERY_FULFILLMENT_NOT_EXISTS',
-              requestId,
-              dealId,
-              shopifyOrderId,
-              stageId,
-              message: 'Fulfillment will be created below',
-              timestamp: new Date().toISOString()
-            }));
-          }
-          
-          // Add tags to prevent webhook loop and mark as in delivery
-          try {
-            await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
-            // Optionally add delivery tag for visual identification
-            await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
-          } catch (tagError) {
-            console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
-          }
-        }
-      }
-    } catch (deliveryError) {
-      console.warn(`[BITRIX TO SHOPIFY] Error updating fulfillment for delivery stage:`, deliveryError.message);
-    }
-  }
-
   // No MW action found, continue with DELIVERY_EXECUTING trigger (existing logic)
   // Check Delivery trigger conditions (C2:EXECUTING = "Delivery" stage)
-  // Note: If fulfillment already exists, it was updated above. If not, we create it here.
+  // Unified fulfillment logic: check existence first, then update or create
   const correlationId = `${dealId}:${shopifyOrderId || 'no-shopify-id'}`;
   const decision = {
     categoryMatch: String(categoryId) === String(BITRIX_CONFIG.CATEGORY_STOCK) || String(categoryId) === '2',
@@ -1494,9 +1355,41 @@ async function handleDealUpdate(dealId, requestId) {
       timestamp: new Date().toISOString()
     }));
 
-    // ✅ MICROSTEP A2.1: Create fulfillment + set provenance marker
+    // ✅ UNIFIED FULFILLMENT LOGIC: Check existence first, then update or create
     try {
-      // Step 1: Set provenance marker first
+      // Step 1: Check if order is technical order
+      const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
+      const shopifyOrder = await getOrder(shopifyOrderId);
+      
+      if (!shopifyOrder) {
+        console.log(JSON.stringify({
+          event: 'DELIVERY_ORDER_NOT_FOUND',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          timestamp: new Date().toISOString()
+        }));
+        return { success: true, triggerMatch: true, correlationId };
+      }
+      
+      const orderTags = Array.isArray(shopifyOrder.tags) 
+        ? shopifyOrder.tags 
+        : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
+      const isTechnicalOrder = orderTags.includes('TECH');
+      
+      // Only process fulfillment for non-technical orders
+      if (isTechnicalOrder) {
+        console.log(JSON.stringify({
+          event: 'DELIVERY_SKIP_TECHNICAL_ORDER',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          timestamp: new Date().toISOString()
+        }));
+        return { success: true, triggerMatch: true, correlationId };
+      }
+      
+      // Step 2: Set provenance marker first
       const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId);
       
       if (provenanceResult.success) {
@@ -1523,72 +1416,180 @@ async function handleDealUpdate(dealId, requestId) {
         }));
       }
 
-      // Step 2: Check if fulfillment is needed
-      const orderData = await getOrderForFulfillment(shopifyOrderId);
+      // Step 3: Check if tracking info is provided in deal fields
+      const trackingNumber = dealData.UF_CRM_TRACKING_NUMBER || dealData.uf_crm_tracking_number || 
+                             dealData.UF_CRM_1742556489_TRACKING || dealData.uf_crm_1742556489_tracking || null;
+      const trackingUrl = dealData.UF_CRM_TRACKING_URL || dealData.uf_crm_tracking_url || null;
+      const trackingUrls = trackingUrl ? [trackingUrl] : [];
       
-      if (!orderData.success) {
+      // Step 4: Check if fulfillment exists
+      const { getFulfillmentOrders, updateOrderFulfillmentForDelivery } = await import('../../../src/lib/shopify/fulfillment.js');
+      const fulfillmentsResponse = await getFulfillmentOrders(shopifyOrderId);
+      const hasFulfillment = fulfillmentsResponse.success && fulfillmentsResponse.fulfillments && fulfillmentsResponse.fulfillments.length > 0;
+      
+      // Step 5: Update order note to show "в доставке" / "in delivery" status
+      const { updateOrder } = await import('../../../src/lib/shopify/adminClient.js');
+      const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
+      
+      try {
+        const currentNote = shopifyOrder.note || '';
+        const deliveryNote = `[Bitrix: C2:EXECUTING] Заказ в доставке / Order in delivery${trackingNumber ? ` | Tracking: ${trackingNumber}` : ''}`;
+        
+        // Only update note if it doesn't already contain delivery status
+        let updatedNote = currentNote;
+        if (!currentNote.includes('в доставке') && !currentNote.includes('in delivery')) {
+          updatedNote = currentNote ? `${currentNote}\n\n${deliveryNote}` : deliveryNote;
+        } else if (trackingNumber && !currentNote.includes(trackingNumber)) {
+          // Update note with tracking if not present
+          updatedNote = currentNote.replace(/Tracking:.*/, `Tracking: ${trackingNumber}`);
+        }
+        
+        // Update order with note
+        await updateOrder(shopifyOrderId, {
+          id: shopifyOrderId,
+          note: updatedNote
+        });
+        
         console.log(JSON.stringify({
-          event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
+          event: 'DELIVERY_ORDER_NOTE_UPDATED',
           requestId,
           dealId,
-          correlationId,
           shopifyOrderId,
-          skip_reason: 'order_fetch_error',
-          error: orderData.error,
-          message: orderData.message,
+          stageId,
+          noteUpdated: true,
           timestamp: new Date().toISOString()
         }));
-        return { success: true, triggerMatch: true, correlationId };
+      } catch (noteError) {
+        console.warn(`[BITRIX TO SHOPIFY] Failed to update order note: ${noteError.message}`);
       }
-
-      // Check if already fulfilled - if fulfillment exists, it was updated above with tracking
-      // But we still need to ensure fulfillment status shows "in delivery"
-      if (orderData.isFullyFulfilled) {
+      
+      // Step 6: Update existing fulfillment OR create new one
+      let fulfillmentResult = null;
+      
+      if (hasFulfillment) {
+        // Update existing fulfillment with tracking
         console.log(JSON.stringify({
-          event: 'SHOPIFY_FULFILLMENT_ALREADY_EXISTS',
+          event: 'DELIVERY_FULFILLMENT_UPDATE_ATTEMPT',
           requestId,
           dealId,
-          correlationId,
           shopifyOrderId,
-          message: 'Fulfillment already exists - was updated with tracking info above if provided. Order status is "fulfilled" (в доставке)',
+          trackingNumber,
           timestamp: new Date().toISOString()
         }));
         
-        // Fulfillment exists and is fulfilled - order status is already "fulfilled" (в доставке)
-        // Note was updated above, fulfillment was updated with tracking if provided
-        return { success: true, triggerMatch: true, correlationId };
-      }
+        fulfillmentResult = await updateOrderFulfillmentForDelivery(shopifyOrderId, {
+          notify_customer: true,
+          tracking_number: trackingNumber,
+          tracking_urls: trackingUrls.length > 0 ? trackingUrls : undefined
+        });
+        
+        if (fulfillmentResult && fulfillmentResult.success) {
+          console.log(JSON.stringify({
+            event: 'DELIVERY_FULFILLMENT_UPDATE_SUCCESS',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            stageId,
+            fulfillmentId: fulfillmentResult.fulfillmentId,
+            timestamp: new Date().toISOString()
+          }));
+        } else if (fulfillmentResult && !fulfillmentResult.success) {
+          console.log(JSON.stringify({
+            event: 'DELIVERY_FULFILLMENT_UPDATE_ERROR',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            stageId,
+            error: fulfillmentResult.error,
+            message: fulfillmentResult.message,
+            timestamp: new Date().toISOString()
+          }));
+        }
+      } else {
+        // Fulfillment doesn't exist - check if we need to create it
+        const orderData = await getOrderForFulfillment(shopifyOrderId);
+        
+        if (!orderData.success) {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            skip_reason: 'order_fetch_error',
+            error: orderData.error,
+            message: orderData.message,
+            timestamp: new Date().toISOString()
+          }));
+          // Add tags even if fulfillment creation skipped
+          try {
+            await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+            await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
+          } catch (tagError) {
+            console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
+          }
+          return { success: true, triggerMatch: true, correlationId };
+        }
 
-      // Check if fulfillment is needed
-      if (!orderData.needsFulfillment) {
+        // Check if already fulfilled
+        if (orderData.isFullyFulfilled) {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_FULFILLMENT_ALREADY_FULFILLED',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            message: 'Order is already fulfilled - no action needed',
+            timestamp: new Date().toISOString()
+          }));
+          // Add tags
+          try {
+            await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+            await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
+          } catch (tagError) {
+            console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
+          }
+          return { success: true, triggerMatch: true, correlationId };
+        }
+
+        // Check if fulfillment is needed
+        if (!orderData.needsFulfillment) {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            skip_reason: 'nothing_to_fulfill',
+            totalFulfillableQuantity: orderData.totalFulfillableQuantity,
+            timestamp: new Date().toISOString()
+          }));
+          // Add tags even if fulfillment creation skipped
+          try {
+            await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+            await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
+          } catch (tagError) {
+            console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
+          }
+          return { success: true, triggerMatch: true, correlationId };
+        }
+
+        // Create fulfillment
         console.log(JSON.stringify({
-          event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
+          event: 'SHOPIFY_FULFILLMENT_CREATE_ATTEMPT',
           requestId,
           dealId,
           correlationId,
           shopifyOrderId,
-          skip_reason: 'nothing_to_fulfill',
           totalFulfillableQuantity: orderData.totalFulfillableQuantity,
+          itemsToFulfill: orderData.itemsToFulfill.length,
           timestamp: new Date().toISOString()
         }));
-        return { success: true, triggerMatch: true, correlationId };
-      }
 
-      // Step 3: Create fulfillment
-      console.log(JSON.stringify({
-        event: 'SHOPIFY_FULFILLMENT_CREATE_ATTEMPT',
-        requestId,
-        dealId,
-        correlationId,
-        shopifyOrderId,
-        totalFulfillableQuantity: orderData.totalFulfillableQuantity,
-        itemsToFulfill: orderData.itemsToFulfill.length,
-        timestamp: new Date().toISOString()
-      }));
-
-      const fulfillmentResult = await createFulfillment(shopifyOrderId, orderData.itemsToFulfill, {
-        notify_customer: true
-      });
+        const { createFulfillment } = await import('../../../src/lib/shopify/fulfillment.js');
+        fulfillmentResult = await createFulfillment(shopifyOrderId, orderData.itemsToFulfill, {
+          notify_customer: true
+        });
 
       if (fulfillmentResult.success) {
         console.log(JSON.stringify({
@@ -1635,7 +1636,7 @@ async function handleDealUpdate(dealId, requestId) {
             timestamp: new Date().toISOString()
           }));
         }
-      } else if (fulfillmentResult.error === 'SHOPIFY_FULFILLMENT_CREATE_SKIP') {
+      } else if (fulfillmentResult && fulfillmentResult.error === 'SHOPIFY_FULFILLMENT_CREATE_SKIP') {
         console.log(JSON.stringify({
           event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
           requestId,
@@ -1646,7 +1647,7 @@ async function handleDealUpdate(dealId, requestId) {
           message: fulfillmentResult.message,
           timestamp: new Date().toISOString()
         }));
-      } else {
+      } else if (fulfillmentResult && !fulfillmentResult.success) {
         console.log(JSON.stringify({
           event: 'SHOPIFY_FULFILLMENT_CREATE_ERROR',
           requestId,
@@ -1659,6 +1660,14 @@ async function handleDealUpdate(dealId, requestId) {
           responseSnippet: fulfillmentResult.responseSnippet,
           timestamp: new Date().toISOString()
         }));
+      }
+      
+      // Step 7: Add tags to prevent webhook loop and mark as in delivery (for both update and create)
+      try {
+        await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+        await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
+      } catch (tagError) {
+        console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
       }
     } catch (error) {
       // Log any unexpected errors during fulfillment creation
