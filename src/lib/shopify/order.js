@@ -444,21 +444,10 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     order_input.shippingAddress = options.shippingAddress;
   }
 
-  // Add shipping lines if provided
-  if (options.shippingLines && Array.isArray(options.shippingLines) && options.shippingLines.length > 0) {
-    order_input.shippingLines = options.shippingLines.map(line => ({
-      title: line.title || 'Standard Shipping',
-      price: line.price || '0.00',
-      code: line.code || 'CUSTOM_EDIT'
-    }));
-  } else if (!options.shippingLines) {
-    // Default shipping line (0.00 to not change Total)
-    order_input.shippingLines = [{
-      title: 'Standard Shipping',
-      price: '0.00',
-      code: 'Free'
-    }];
-  }
+  // NOTE: shippingLines is NOT supported in GraphQL orderCreate mutation
+  // GraphQL OrderCreateOrderInput does not support shippingLines field
+  // Shipping lines must be added via REST API after order creation if needed
+  // Removing shippingLines from order_input to prevent GraphQL errors
 
   const options_input = {
     inventoryBehaviour: 'DECREMENT_OBEYING_POLICY', // Reserve inventory (British spelling as per Shopify API)
