@@ -497,6 +497,40 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
           }));
         }
 
+        // Add BitrixUpdated tag to prevent webhook loop
+        try {
+          const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
+          const tagResult = await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+          if (tagResult.success) {
+            console.log(JSON.stringify({
+              event: 'BITRIX_UPDATED_TAG_ADDED',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              action: 'refund_create',
+              timestamp: new Date().toISOString()
+            }));
+          } else {
+            console.warn(JSON.stringify({
+              event: 'BITRIX_UPDATED_TAG_ADD_ERROR',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              error: tagResult.message,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        } catch (tagError) {
+          console.warn(JSON.stringify({
+            event: 'BITRIX_UPDATED_TAG_ADD_EXCEPTION',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            error: tagError.message,
+            timestamp: new Date().toISOString()
+          }));
+        }
+
         console.log(JSON.stringify({
           event: 'REFUND_CREATE_SUCCESS',
           requestId,

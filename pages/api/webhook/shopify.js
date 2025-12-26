@@ -5,6 +5,7 @@ import { callBitrix, getBitrixWebhookBase, classifyBitrixError } from '../../../
 import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
 import { upsertBitrixContact } from '../../../src/lib/bitrix/contact.js';
 import { BITRIX_CONFIG } from '../../../src/lib/bitrix/config.js';
+import { getProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
 
 // Configure body parser to accept raw JSON
 export const config = {
@@ -1121,8 +1122,8 @@ export default async function handler(req, res) {
       : 'Bitrix-updated order (BitrixUpdated tag) - loop guard, not sent to Bitrix';
     
     console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: ${isTechnicalOrder ? 'Technical' : 'Bitrix-updated'} order detected (tags: ${orderTags.join(', ')}). Order ${order?.name || order?.id} will NOT be sent to Bitrix.`);
-    if (isTechnicalOrder) {
-      console.log(`[SHOPIFY WEBHOOK] This is a technical order created from Bitrix to reserve inventory. It should not create a deal in Bitrix.`);
+  if (isTechnicalOrder) {
+    console.log(`[SHOPIFY WEBHOOK] This is a technical order created from Bitrix to reserve inventory. It should not create a deal in Bitrix.`);
     } else {
       console.log(`[SHOPIFY WEBHOOK] This order was updated from Bitrix. Webhook from this update should not go back to Bitrix to prevent loop.`);
     }
@@ -1144,6 +1145,52 @@ export default async function handler(req, res) {
       orderName: order?.name,
       tags: orderTags
     });
+  }
+
+  // ✅ CRITICAL: Check provenance marker (middleware.last_write) to prevent loop
+  // If order was last updated by Bitrix (source: 'bitrix'), skip sending webhook back to Bitrix
+  try {
+    const shopifyOrderId = String(order.id);
+    const provenanceResult = await getProvenanceMarker(shopifyOrderId);
+    
+    if (provenanceResult.success && provenanceResult.exists && provenanceResult.value) {
+      const provenanceValue = provenanceResult.value;
+      const lastSource = provenanceValue.source;
+      
+      // If last write was from Bitrix, skip to prevent loop
+      if (lastSource === 'bitrix') {
+        const skipReason = `Provenance marker indicates last update was from Bitrix (source: ${lastSource}, action: ${provenanceValue.action || 'unknown'}) - loop guard, not sent to Bitrix`;
+        
+        console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: Provenance marker detected. Order ${order?.name || order?.id} was last updated by Bitrix. Will NOT be sent to Bitrix.`);
+        console.log(`[SHOPIFY WEBHOOK] Provenance details:`, {
+          source: lastSource,
+          action: provenanceValue.action,
+          correlationId: provenanceValue.correlationId,
+          timestamp: provenanceValue.ts
+        });
+        
+        // Store event for monitoring (non-blocking) even though we skip Bitrix
+        try {
+          const storedEvent = shopifyAdapter.storeEvent(order, topic);
+          console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
+        } catch (storeError) {
+          console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
+        }
+        
+        // Return 200 to prevent Shopify from retrying
+        return res.status(200).json({ 
+          success: true, 
+          skipped: true,
+          reason: skipReason,
+          orderId: order?.id,
+          orderName: order?.name,
+          provenance: provenanceValue
+        });
+      }
+    }
+  } catch (provenanceError) {
+    // Non-blocking: if provenance check fails, continue with normal flow
+    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Provenance marker check failed (non-blocking):`, provenanceError.message);
   }
   
   // ✅ CRITICAL: Log financial_status and cancellation/refund status for debugging
