@@ -740,7 +740,7 @@ async function handleDealUpdate(dealId, requestId) {
     timestamp: new Date().toISOString()
   }));
 
-  // ✅ STEP A: Check if deal is cancelled (LOSE stage) and cancel technical order if exists
+  // ✅ STEP A: Check if deal is cancelled (LOSE stage) and cancel order in Shopify
   // Check if stage ends with :LOSE or is exactly LOSE (handles both C6:LOSE and LOSE formats)
   const isLoseStage = stageId === 'LOSE' || 
                       stageId === BITRIX_CONFIG.STAGES.CANCELLED || 
@@ -753,51 +753,145 @@ async function handleDealUpdate(dealId, requestId) {
       requestId,
       dealId,
       stageId,
+      shopifyOrderId: shopifyOrderId || 'not_set',
       timestamp: new Date().toISOString()
     }));
 
     try {
-      const cancelResult = await cancelOrderByDealId(dealId);
-      
-      if (cancelResult.success) {
-        console.log(JSON.stringify({
-          event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SUCCESS',
-          requestId,
-          dealId,
-          stageId,
-          shopifyOrderId: cancelResult.orderId,
-          orderName: cancelResult.orderName,
-          timestamp: new Date().toISOString()
-        }));
+      // ✅ STEP A1: Cancel regular order (from Shopify) if shopifyOrderId exists
+      if (shopifyOrderId && shopifyOrderId.trim() !== '') {
+        const { callShopifyGraphQL, getOrder } = await import('../../../src/lib/shopify/adminClient.js');
+        const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
         
-        // Return success - cancellation was handled
-        return { 
-          success: true, 
-          triggerMatch: true, 
-          action: 'order_cancelled',
-          shopifyOrderId: cancelResult.orderId
-        };
-      } else if (cancelResult.error === 'ORDER_NOT_FOUND') {
+        try {
+          // Check if order is technical order
+          const shopifyOrder = await getOrder(shopifyOrderId);
+          if (shopifyOrder) {
+            const orderTags = Array.isArray(shopifyOrder.tags) 
+              ? shopifyOrder.tags 
+              : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
+            const isTechnicalOrder = orderTags.includes('TECH');
+            
+            // Cancel both technical and regular orders
+            const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
+            const mutation = `
+              mutation orderCancel($orderId: ID!) {
+                orderCancel(
+                  orderId: $orderId,
+                  reason: OTHER,
+                  restock: true,
+                  refund: false
+                ) {
+                  userErrors {
+                    field
+                    message
+                  }
+                  job {
+                    id
+                  }
+                }
+              }
+            `;
+            
+            const cancelData = await callShopifyGraphQL(mutation, { orderId: orderGid });
+            
+            if (cancelData?.orderCancel?.userErrors && cancelData.orderCancel.userErrors.length > 0) {
+              const errorMessages = cancelData.orderCancel.userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
+              throw new Error(`Shopify orderCancel userErrors: ${errorMessages}`);
+            }
+            
+            // Add BitrixUpdated tag to prevent webhook loop (for regular orders)
+            if (!isTechnicalOrder) {
+              await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+            }
+            
+            console.log(JSON.stringify({
+              event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SUCCESS',
+              requestId,
+              dealId,
+              stageId,
+              shopifyOrderId,
+              orderName: shopifyOrder.name,
+              isTechnicalOrder,
+              jobId: cancelData?.orderCancel?.job?.id,
+              timestamp: new Date().toISOString()
+            }));
+            
+            // Return success - cancellation was handled
+            return { 
+              success: true, 
+              triggerMatch: true, 
+              action: 'order_cancelled',
+              shopifyOrderId
+            };
+          }
+        } catch (regularCancelError) {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_ERROR',
+            requestId,
+            dealId,
+            stageId,
+            shopifyOrderId,
+            error: regularCancelError.message,
+            timestamp: new Date().toISOString()
+          }));
+          // Continue to try technical order cancellation as fallback
+        }
+      }
+      
+      // ✅ STEP A2: Cancel technical order if exists (fallback for orders without shopifyOrderId in deal)
+      // This handles cases where technical order exists but shopifyOrderId is not set in deal
+      try {
+        const cancelResult = await cancelOrderByDealId(dealId);
+        
+        if (cancelResult.success) {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_TECHNICAL_ORDER_CANCEL_SUCCESS',
+            requestId,
+            dealId,
+            stageId,
+            shopifyOrderId: cancelResult.orderId,
+            orderName: cancelResult.orderName,
+            timestamp: new Date().toISOString()
+          }));
+          
+          return { 
+            success: true, 
+            triggerMatch: true, 
+            action: 'technical_order_cancelled',
+            shopifyOrderId: cancelResult.orderId
+          };
+        } else if (cancelResult.error === 'ORDER_NOT_FOUND') {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SKIP',
+            requestId,
+            dealId,
+            stageId,
+            skip_reason: 'no_order_found',
+            timestamp: new Date().toISOString()
+          }));
+          // Continue with normal flow - no order to cancel
+        } else {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_ERROR',
+            requestId,
+            dealId,
+            stageId,
+            error: cancelResult.error,
+            message: cancelResult.message,
+            timestamp: new Date().toISOString()
+          }));
+          // Continue with normal flow even if cancellation failed
+        }
+      } catch (techCancelError) {
         console.log(JSON.stringify({
-          event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SKIP',
+          event: 'BITRIX_TO_SHOPIFY_TECHNICAL_ORDER_CANCEL_ERROR',
           requestId,
           dealId,
           stageId,
-          skip_reason: 'no_technical_order_found',
+          error: techCancelError.message,
           timestamp: new Date().toISOString()
         }));
-        // Continue with normal flow - no technical order to cancel
-      } else {
-        console.log(JSON.stringify({
-          event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_ERROR',
-          requestId,
-          dealId,
-          stageId,
-          error: cancelResult.error,
-          message: cancelResult.message,
-          timestamp: new Date().toISOString()
-        }));
-        // Continue with normal flow even if cancellation failed
       }
     } catch (cancelError) {
       console.error(`[BITRIX TO SHOPIFY] Error cancelling order for deal ${dealId}:`, cancelError);
@@ -1216,8 +1310,9 @@ async function handleDealUpdate(dealId, requestId) {
         
         // Only update fulfillment for non-technical orders
         if (!isTechnicalOrder) {
-          const { updateOrderFulfillmentForDelivery } = await import('../../../src/lib/shopify/fulfillment.js');
+          const { updateOrderFulfillmentForDelivery, getFulfillmentOrders } = await import('../../../src/lib/shopify/fulfillment.js');
           const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
+          const { updateOrder } = await import('../../../src/lib/shopify/adminClient.js');
           
           // Check if tracking info is provided in deal fields
           const trackingNumber = dealData.UF_CRM_TRACKING_NUMBER || dealData.uf_crm_tracking_number || 
@@ -1226,14 +1321,55 @@ async function handleDealUpdate(dealId, requestId) {
           
           const trackingUrls = trackingUrl ? [trackingUrl] : [];
           
-          // Update fulfillment to mark as "in transit" (delivery)
-          const fulfillmentResult = await updateOrderFulfillmentForDelivery(shopifyOrderId, {
-            notify_customer: true,
-            tracking_number: trackingNumber,
-            tracking_urls: trackingUrls.length > 0 ? trackingUrls : undefined
-          });
+          // Check if fulfillment exists
+          const fulfillmentsResponse = await getFulfillmentOrders(shopifyOrderId);
+          const hasFulfillment = fulfillmentsResponse.success && fulfillmentsResponse.fulfillments && fulfillmentsResponse.fulfillments.length > 0;
           
-          if (fulfillmentResult.success) {
+          // Update fulfillment if exists, or it will be created below
+          let fulfillmentResult = null;
+          if (hasFulfillment) {
+            // Update existing fulfillment with tracking
+            fulfillmentResult = await updateOrderFulfillmentForDelivery(shopifyOrderId, {
+              notify_customer: true,
+              tracking_number: trackingNumber,
+              tracking_urls: trackingUrls.length > 0 ? trackingUrls : undefined
+            });
+          }
+          
+          // Update order note to show "в доставке" / "in delivery" status
+          try {
+            const currentNote = shopifyOrder.note || '';
+            const deliveryNote = `[Bitrix: C2:EXECUTING] Заказ в доставке / Order in delivery${trackingNumber ? ` | Tracking: ${trackingNumber}` : ''}`;
+            
+            // Only update note if it doesn't already contain delivery status
+            let updatedNote = currentNote;
+            if (!currentNote.includes('в доставке') && !currentNote.includes('in delivery')) {
+              updatedNote = currentNote ? `${currentNote}\n\n${deliveryNote}` : deliveryNote;
+            } else if (trackingNumber && !currentNote.includes(trackingNumber)) {
+              // Update note with tracking if not present
+              updatedNote = currentNote.replace(/Tracking:.*/, `Tracking: ${trackingNumber}`);
+            }
+            
+            // Update order with note
+            await updateOrder(shopifyOrderId, {
+              id: shopifyOrderId,
+              note: updatedNote
+            });
+            
+            console.log(JSON.stringify({
+              event: 'DELIVERY_ORDER_NOTE_UPDATED',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              stageId,
+              noteUpdated: true,
+              timestamp: new Date().toISOString()
+            }));
+          } catch (noteError) {
+            console.warn(`[BITRIX TO SHOPIFY] Failed to update order note: ${noteError.message}`);
+          }
+          
+          if (fulfillmentResult && fulfillmentResult.success) {
             // Add BitrixUpdated tag to prevent webhook loop
             await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
             
@@ -1246,7 +1382,7 @@ async function handleDealUpdate(dealId, requestId) {
               fulfillmentId: fulfillmentResult.fulfillmentId,
               timestamp: new Date().toISOString()
             }));
-          } else {
+          } else if (fulfillmentResult && !fulfillmentResult.success) {
             console.log(JSON.stringify({
               event: 'DELIVERY_FULFILLMENT_UPDATE_ERROR',
               requestId,
@@ -1257,6 +1393,26 @@ async function handleDealUpdate(dealId, requestId) {
               message: fulfillmentResult.message,
               timestamp: new Date().toISOString()
             }));
+          } else {
+            // Fulfillment doesn't exist yet - will be created below
+            console.log(JSON.stringify({
+              event: 'DELIVERY_FULFILLMENT_NOT_EXISTS',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              stageId,
+              message: 'Fulfillment will be created below',
+              timestamp: new Date().toISOString()
+            }));
+          }
+          
+          // Add tags to prevent webhook loop and mark as in delivery
+          try {
+            await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+            // Optionally add delivery tag for visual identification
+            await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
+          } catch (tagError) {
+            console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
           }
         }
       }
@@ -1352,6 +1508,7 @@ async function handleDealUpdate(dealId, requestId) {
       }
 
       // Check if already fulfilled - if fulfillment exists, it was updated above with tracking
+      // But we still need to ensure fulfillment status shows "in delivery"
       if (orderData.isFullyFulfilled) {
         console.log(JSON.stringify({
           event: 'SHOPIFY_FULFILLMENT_ALREADY_EXISTS',
@@ -1359,9 +1516,12 @@ async function handleDealUpdate(dealId, requestId) {
           dealId,
           correlationId,
           shopifyOrderId,
-          message: 'Fulfillment already exists - was updated with tracking info above if provided',
+          message: 'Fulfillment already exists - was updated with tracking info above if provided. Order status is "fulfilled" (в доставке)',
           timestamp: new Date().toISOString()
         }));
+        
+        // Fulfillment exists and is fulfilled - order status is already "fulfilled" (в доставке)
+        // Note was updated above, fulfillment was updated with tracking if provided
         return { success: true, triggerMatch: true, correlationId };
       }
 
