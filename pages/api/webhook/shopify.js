@@ -713,34 +713,6 @@ async function handleOrderUpdated(order) {
   const dealId = Number(deal.ID);
   const currentStageId = deal.STAGE_ID;
   
-  // ✅ PROTECTION: Skip update if deal is already in LOSE stage (prevents unnecessary updates)
-  const isLoseStage = currentStageId === 'LOSE' || 
-                      (typeof currentStageId === 'string' && currentStageId.endsWith(':LOSE'));
-  
-  if (isLoseStage) {
-    console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal ${dealId} is already in LOSE stage (${currentStageId}). Skipping update to prevent unnecessary changes.`);
-    console.log(`[SHOPIFY WEBHOOK] Order ${shopifyOrderId} status: ${order?.financial_status || 'N/A'}`);
-    
-    // Store event for monitoring (non-blocking) even though we skip update
-    try {
-      const storedEvent = shopifyAdapter.storeEvent(order, topic);
-      console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped update). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
-    } catch (storeError) {
-      console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
-    }
-    
-    // Return 200 to prevent Shopify from retrying
-    return res.status(200).json({ 
-      success: true, 
-      skipped: true,
-      reason: 'Deal already in LOSE stage - no update needed',
-      dealId: dealId,
-      currentStageId: currentStageId,
-      orderId: order?.id,
-      orderName: order?.name
-    });
-  }
-  
   console.log(`[SHOPIFY WEBHOOK] Found deal ${dealId} (converted to number) for order ${shopifyOrderId}, current stage: ${currentStageId}`);
 
   // ✅ Use mapShopifyOrderToBitrixDeal to get ALL fields AND productRows consistently (same as create)
@@ -888,14 +860,13 @@ async function handleOrderUpdated(order) {
   console.log(`[SHOPIFY WEBHOOK] 🔍 Status checks: isCancelled=${isCancelled}, isFullRefund=${isFullRefund}, isPartialRefund=${isPartialRefund}`);
   console.log(`[SHOPIFY WEBHOOK] 🔍 Mapped STAGE_ID from orderMapper: "${mappedFields.STAGE_ID}"`);
   
+  // ✅ CRITICAL: Force update STAGE_ID based on refund/cancel status
+  // Priority: cancelled_at (HIGHEST) > cancelled > full refund > partial refund
   if (hasCancelledAt) {
     correctStageId = 'LOSE';
     correctPaymentStatus = '58'; // Unpaid
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED (cancelled_at is set) → FORCING STAGE_ID to LOSE for order ${shopifyOrderId}`);
-  }
-  // ✅ CRITICAL: Force update STAGE_ID based on refund/cancel status
-  // Priority: cancelled > full refund > partial refund (matching backup repository)
-  else if (isCancelled) {
+  } else if (isCancelled) {
     correctStageId = 'LOSE';
     correctPaymentStatus = '58'; // Unpaid
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to LOSE for cancelled order ${shopifyOrderId}`);
@@ -911,6 +882,8 @@ async function handleOrderUpdated(order) {
   
   console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctStageId: "${correctStageId}"`);
   console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctPaymentStatus: "${correctPaymentStatus}"`);
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Current deal stage: "${currentStageId}"`);
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Will update to stage: "${correctStageId}" (${correctStageId !== currentStageId ? 'CHANGE' : 'NO CHANGE'})`);
 
   // 2. Prepare update fields - always update to ensure sync
   // ✅ Use mapped fields to ensure consistency with create logic, BUT override STAGE_ID with correct value
