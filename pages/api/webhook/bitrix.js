@@ -1587,9 +1587,20 @@ async function handleDealUpdate(dealId, requestId) {
       const shopifyOrder = await getOrder(shopifyOrderId);
       
       if (shopifyOrder) {
+        // Get current shipping lines for potential update
+        const currentShippingLines = shopifyOrder.shipping_lines || [];
+        
+        // Check delivery price first (UF_CRM_67BEF8B2AA721)
+        const deliveryPriceField = dealData.UF_CRM_67BEF8B2AA721 || dealData.uf_crm_67bef8b2aa721 || '';
+        const deliveryPrice = deliveryPriceField ? parseFloat(deliveryPriceField) : null;
+        const currentShippingPrice = currentShippingLines.length > 0 ? parseFloat(currentShippingLines[0].price || '0') : 0;
+        const deliveryPriceChanged = deliveryPrice !== null && !isNaN(deliveryPrice) && Math.abs(deliveryPrice - currentShippingPrice) > 0.01;
+        
         // Update address for all orders (both technical and regular)
         // Extract address from Bitrix field UF_CRM_1742037435676
         const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
+        let addressChanged = false;
+        let parsedAddress = null;
         
         if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
           // Parse address string: "Street, ZIP City Region, Country | coordinate"
@@ -1617,14 +1628,7 @@ async function handleDealUpdate(dealId, requestId) {
             
             // Compare with current Shopify address
             const currentAddress = shopifyOrder.shipping_address || {};
-            const addressChanged = hasAddressChanged(parsedAddress, currentAddress);
-            
-            // Check if delivery price changed (UF_CRM_67BEF8B2AA721)
-            const deliveryPriceField = dealData.UF_CRM_67BEF8B2AA721 || dealData.uf_crm_67bef8b2aa721 || '';
-            const deliveryPrice = deliveryPriceField ? parseFloat(deliveryPriceField) : null;
-            const currentShippingLines = shopifyOrder.shipping_lines || [];
-            const currentShippingPrice = currentShippingLines.length > 0 ? parseFloat(currentShippingLines[0].price || '0') : 0;
-            const deliveryPriceChanged = deliveryPrice !== null && Math.abs(deliveryPrice - currentShippingPrice) > 0.01;
+            addressChanged = hasAddressChanged(parsedAddress, currentAddress);
             
             console.log(JSON.stringify({
               event: 'AUTO_ADDRESS_CHECK',
@@ -1669,13 +1673,14 @@ async function handleDealUpdate(dealId, requestId) {
               }));
               
               // Prepare update payload with address and shipping lines
+              // Always include shipping_lines (like in the example script) to ensure they are preserved/updated
               const updatePayload = {
                 shipping_address: parsedAddress
               };
               
-              // Add shipping_lines if delivery price changed or if we need to update
+              // Always include shipping_lines - update price if changed, otherwise keep current
               if (deliveryPriceChanged && deliveryPrice !== null) {
-                // Get current shipping line title or use default
+                // Update with new price
                 const currentShippingTitle = currentShippingLines.length > 0 
                   ? currentShippingLines[0].title 
                   : 'Standard Shipping';
@@ -1687,8 +1692,8 @@ async function handleDealUpdate(dealId, requestId) {
                     ? currentShippingLines[0].code 
                     : 'CUSTOM_EDIT'
                 }];
-              } else if (addressChanged && currentShippingLines.length > 0) {
-                // Keep existing shipping lines if only address changed
+              } else if (currentShippingLines.length > 0) {
+                // Keep existing shipping lines when updating address (preserve them)
                 updatePayload.shipping_lines = currentShippingLines.map(line => ({
                   title: line.title || '',
                   price: String(line.price || '0.00'),
@@ -1720,37 +1725,32 @@ async function handleDealUpdate(dealId, requestId) {
                   timestamp: new Date().toISOString()
                 }));
               }
+              } else {
+                console.log(JSON.stringify({
+                  event: 'AUTO_ADDRESS_NO_CHANGE',
+                  requestId,
+                  dealId,
+                  shopifyOrderId,
+                  timestamp: new Date().toISOString()
+                }));
+              }
             } else {
               console.log(JSON.stringify({
-                event: 'AUTO_ADDRESS_NO_CHANGE',
+                event: 'AUTO_ADDRESS_PARSE_FAILED',
                 requestId,
                 dealId,
                 shopifyOrderId,
+                bitrixAddress: bitrixAddressField,
                 timestamp: new Date().toISOString()
               }));
             }
-          } else {
-            console.log(JSON.stringify({
-              event: 'AUTO_ADDRESS_PARSE_FAILED',
-              requestId,
-              dealId,
-              shopifyOrderId,
-              bitrixAddress: bitrixAddressField,
-              timestamp: new Date().toISOString()
-            }));
-          }
         }
         
-        // Check if delivery price needs to be updated even if address didn't change
-        const deliveryPriceField = dealData.UF_CRM_67BEF8B2AA721 || dealData.uf_crm_67bef8b2aa721 || '';
-        if (deliveryPriceField && shopifyOrder) {
-          const deliveryPrice = parseFloat(deliveryPriceField);
-          if (!isNaN(deliveryPrice)) {
-            const currentShippingLines = shopifyOrder.shipping_lines || [];
-            const currentShippingPrice = currentShippingLines.length > 0 ? parseFloat(currentShippingLines[0].price || '0') : 0;
-            const deliveryPriceChanged = Math.abs(deliveryPrice - currentShippingPrice) > 0.01;
-            
-            if (deliveryPriceChanged) {
+        // Check if delivery price needs to be updated (only if address wasn't updated above)
+        // If address was updated, shipping_lines were already included in that update
+        const wasAddressUpdated = addressChanged && parsedAddress && Object.keys(parsedAddress).length > 0;
+        
+        if (deliveryPriceChanged && !wasAddressUpdated) {
               console.log(JSON.stringify({
                 event: 'AUTO_DELIVERY_PRICE_UPDATE_DETECTED',
                 requestId,
