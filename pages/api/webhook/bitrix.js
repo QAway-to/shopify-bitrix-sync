@@ -1605,7 +1605,7 @@ async function handleDealUpdate(dealId, requestId) {
         if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
           // Parse address string: "Street, ZIP City Region, Country | coordinate"
           // Example: "Rue Verwée - Verwéestraat 8, 1030 Schaerbeek - Schaarbeek Brussels-Capital, Belgium | 50.866888495699;4.3742416799068|190"
-          const parsedAddress = parseBitrixAddressString(bitrixAddressField);
+          parsedAddress = parseBitrixAddressString(bitrixAddressField);
           
           if (parsedAddress && Object.keys(parsedAddress).length > 0) {
             // Try to get country code from country name
