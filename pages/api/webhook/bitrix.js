@@ -1323,6 +1323,7 @@ async function handleDealUpdate(dealId, requestId) {
     event: 'BITRIX_WEBHOOK_RECEIVED',
     requestId,
     dealId,
+    eventType: 'UPDATE',
     timestamp: new Date().toISOString()
   }));
 
@@ -3374,12 +3375,38 @@ export default async function handler(req, res) {
   const event = body;
   const eventType = event.event || event.EVENT || event['event'] || 'unknown';
 
+  // ✅ Log event type detection for debugging
+  console.log(JSON.stringify({
+    event: 'BITRIX_WEBHOOK_EVENT_TYPE_DETECTED',
+    requestId,
+    dealId,
+    eventType,
+    eventKeys: Object.keys(event),
+    eventEvent: event.event,
+    eventEVENT: event.EVENT,
+    timestamp: new Date().toISOString()
+  }));
+
   try {
     // Route based on event type
     let result = null;
     if (eventType === 'ONCRMDEALUPDATE' || eventType.includes('UPDATE')) {
+      console.log(JSON.stringify({
+        event: 'BITRIX_WEBHOOK_ROUTING_TO_UPDATE',
+        requestId,
+        dealId,
+        eventType,
+        timestamp: new Date().toISOString()
+      }));
       result = await handleDealUpdate(dealId, requestId);
     } else if (eventType === 'ONCRMDEALADD' || eventType.includes('ADD')) {
+      console.log(JSON.stringify({
+        event: 'BITRIX_WEBHOOK_ROUTING_TO_CREATE',
+        requestId,
+        dealId,
+        eventType,
+        timestamp: new Date().toISOString()
+      }));
       result = await handleDealCreate(dealId, requestId);
     } else {
       // ✅ Structured logging: [BITRIX_WEBHOOK_UNHANDLED_EVENT]
