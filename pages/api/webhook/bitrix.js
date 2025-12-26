@@ -2125,9 +2125,50 @@ async function handleDealUpdate(dealId, requestId) {
             timestamp: new Date().toISOString()
           }));
 
+          // Extract shipping address and delivery info from Bitrix deal
+          let shippingAddress = null;
+          let shippingLines = null;
+
+          // Parse shipping address from UF_CRM_1742037435676
+          const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
+          if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
+            const parsedAddress = parseBitrixAddressString(bitrixAddressField);
+            if (parsedAddress && Object.keys(parsedAddress).length > 0) {
+              // Try to get country code from country name if needed
+              if (parsedAddress.country && !parsedAddress.country_code) {
+                try {
+                  const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
+                  const countriesResponse = await callShopifyAdmin('/countries.json');
+                  const countries = countriesResponse.countries || [];
+                  const countryMatch = countries.find(c => 
+                    c.name.toLowerCase() === parsedAddress.country.toLowerCase()
+                  );
+                  if (countryMatch) {
+                    parsedAddress.country_code = countryMatch.code;
+                    parsedAddress.country = countryMatch.name; // Use exact name from Shopify
+                  }
+                } catch (countryError) {
+                  console.warn(`[BITRIX TO SHOPIFY] Failed to resolve country code: ${countryError.message}`);
+                }
+              }
+              shippingAddress = parsedAddress;
+            }
+          }
+
+          // Extract delivery info (if available in deal fields)
+          // Default shipping line (0.00 to not change Total)
+          shippingLines = [{
+            title: 'Standard Shipping',
+            price: '0.00',
+            code: 'Free'
+          }];
+
           // Create order in Shopify
           const correlationId = `${dealId}:${Date.now()}`;
-          const orderResult = await createOrderFromBitrix(items, dealId, correlationId);
+          const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
+            shippingAddress,
+            shippingLines
+          });
 
           if (orderResult.success) {
             // Save shopifyOrderId back to Bitrix deal
@@ -2937,9 +2978,50 @@ async function handleDealCreate(dealId, requestId) {
             timestamp: new Date().toISOString()
           }));
 
+          // Extract shipping address and delivery info from Bitrix deal
+          let shippingAddress = null;
+          let shippingLines = null;
+
+          // Parse shipping address from UF_CRM_1742037435676
+          const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
+          if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
+            const parsedAddress = parseBitrixAddressString(bitrixAddressField);
+            if (parsedAddress && Object.keys(parsedAddress).length > 0) {
+              // Try to get country code from country name if needed
+              if (parsedAddress.country && !parsedAddress.country_code) {
+                try {
+                  const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
+                  const countriesResponse = await callShopifyAdmin('/countries.json');
+                  const countries = countriesResponse.countries || [];
+                  const countryMatch = countries.find(c => 
+                    c.name.toLowerCase() === parsedAddress.country.toLowerCase()
+                  );
+                  if (countryMatch) {
+                    parsedAddress.country_code = countryMatch.code;
+                    parsedAddress.country = countryMatch.name; // Use exact name from Shopify
+                  }
+                } catch (countryError) {
+                  console.warn(`[BITRIX TO SHOPIFY] Failed to resolve country code: ${countryError.message}`);
+                }
+              }
+              shippingAddress = parsedAddress;
+            }
+          }
+
+          // Extract delivery info (if available in deal fields)
+          // Default shipping line (0.00 to not change Total)
+          shippingLines = [{
+            title: 'Standard Shipping',
+            price: '0.00',
+            code: 'Free'
+          }];
+
           // Create order in Shopify
           const correlationId = `${dealId}:${Date.now()}`;
-          const orderResult = await createOrderFromBitrix(items, dealId, correlationId);
+          const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
+            shippingAddress,
+            shippingLines
+          });
 
           if (orderResult.success) {
             // Handle duplicate case

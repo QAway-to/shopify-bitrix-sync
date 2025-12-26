@@ -245,9 +245,12 @@ export async function cancelOrderByDealId(dealId) {
  * @param {Array<{sku?: string, variantId?: string|number, qty: number}>} items - Array of items with SKU or variantId and quantity
  * @param {string} dealId - Bitrix deal ID
  * @param {string} correlationId - Correlation ID for tracking (optional)
+ * @param {Object} options - Additional options (optional)
+ * @param {Object} options.shippingAddress - Shipping address object (optional)
+ * @param {Array<Object>} options.shippingLines - Shipping lines array (optional)
  * @returns {Promise<Object>} Created order data
  */
-export async function createOrderFromBitrix(items, dealId, correlationId = null) {
+export async function createOrderFromBitrix(items, dealId, correlationId = null, options = {}) {
   if (!items || items.length === 0) {
     throw new Error('Items array is required and cannot be empty');
   }
@@ -432,8 +435,30 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null)
     lineItems: lineItems,
     tags: tags,
     note: note,
-    email: 'hold@bfcshoes.local'
+    email: 'hold@bfcshoes.local',
+    taxesIncluded: true // Tax is already included in price (to prevent +19% on top)
   };
+
+  // Add shipping address if provided
+  if (options.shippingAddress && typeof options.shippingAddress === 'object') {
+    order_input.shippingAddress = options.shippingAddress;
+  }
+
+  // Add shipping lines if provided
+  if (options.shippingLines && Array.isArray(options.shippingLines) && options.shippingLines.length > 0) {
+    order_input.shippingLines = options.shippingLines.map(line => ({
+      title: line.title || 'Standard Shipping',
+      price: line.price || '0.00',
+      code: line.code || 'CUSTOM_EDIT'
+    }));
+  } else if (!options.shippingLines) {
+    // Default shipping line (0.00 to not change Total)
+    order_input.shippingLines = [{
+      title: 'Standard Shipping',
+      price: '0.00',
+      code: 'Free'
+    }];
+  }
 
   const options_input = {
     inventoryBehaviour: 'DECREMENT_OBEYING_POLICY', // Reserve inventory (British spelling as per Shopify API)
