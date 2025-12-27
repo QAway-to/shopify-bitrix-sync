@@ -1,34 +1,52 @@
 import Head from 'next/head';
-import fs from 'fs';
-import path from 'path';
+import DocsLayout from '../src/components/docs/DocsLayout';
+import { readPublicDoc } from '../src/lib/docs/readPublicDoc';
 
-export default function ReportPage({ htmlContent }) {
+export default function ReportPage({ doc }) {
   return (
     <>
       <Head>
         <title>Отчёт для заказчика - Middleware сервис</title>
         <meta name="description" content="Отчёт о функциональности Middleware сервиса для заказчика" />
       </Head>
-      <div dangerouslySetInnerHTML={{ __html: htmlContent }} />
+      <DocsLayout
+        title={doc?.title || 'Отчёт'}
+        subtitle="Что реализовано, что работает частично, и известные ограничения."
+        active="report"
+      >
+        {doc?.introHtml ? (
+          <section className="card doc-card">
+            <div className="doc-prose" dangerouslySetInnerHTML={{ __html: doc.introHtml }} />
+          </section>
+        ) : null}
+
+        <div className="doc-sections">
+          {(doc?.sections || []).map((section, idx) => (
+            <section key={`${section.heading}-${idx}`} className="card doc-card">
+              <div className="card-header">
+                <h2>{section.heading}</h2>
+              </div>
+              <div className="doc-prose" dangerouslySetInnerHTML={{ __html: section.html }} />
+            </section>
+          ))}
+        </div>
+      </DocsLayout>
     </>
   );
 }
 
 export async function getServerSideProps({ res }) {
-  // Read from public/docs to match what is deployed as static assets.
-  const filePath = path.join(process.cwd(), 'public', 'docs', '01_OTCHET_DLYA_ZAKAZCHIKA.html');
-  let htmlContent = '';
-  
+  let doc;
+
   try {
-    htmlContent = fs.readFileSync(filePath, 'utf-8');
-    // Extract body content
-    const bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-    if (bodyMatch) {
-      htmlContent = bodyMatch[1];
-    }
+    doc = readPublicDoc('01_OTCHET_DLYA_ZAKAZCHIKA.html');
   } catch (error) {
     console.error('Error reading report HTML:', error);
-    htmlContent = '<p>Ошибка загрузки документа</p>';
+    doc = {
+      title: 'Отчёт',
+      introHtml: '<p>Ошибка загрузки документа</p>',
+      sections: []
+    };
   }
 
   // Avoid stale caching of docs pages
@@ -38,7 +56,7 @@ export async function getServerSideProps({ res }) {
 
   return {
     props: {
-      htmlContent
+      doc
     }
   };
 }
