@@ -61,7 +61,8 @@ function validateDealFields(dealFields) {
     errors.push('TITLE is required');
   }
 
-  if (!dealFields.CATEGORY_ID) {
+  // CATEGORY_ID can be 0 (default funnel), so only warn if it's truly missing
+  if (dealFields.CATEGORY_ID === null || dealFields.CATEGORY_ID === undefined || dealFields.CATEGORY_ID === '') {
     warnings.push('CATEGORY_ID is missing - may use default category');
   }
 
