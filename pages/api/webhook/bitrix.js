@@ -2500,9 +2500,10 @@ async function handleDealUpdate(dealId, requestId) {
   // Check Delivery trigger conditions (C2:EXECUTING = "Delivery" stage)
   // Unified fulfillment logic: check existence first, then update or create
   const correlationId = `${dealId}:${shopifyOrderId || 'no-shopify-id'}`;
+  const expectedExecutingStage = BITRIX_CONFIG?.STAGES_CAT_2?.EXECUTING;
   const decision = {
     categoryMatch: String(categoryId) === String(BITRIX_CONFIG.CATEGORY_STOCK) || String(categoryId) === '2',
-    stageMatch: String(stageId) === BITRIX_CONFIG.STAGES_CAT_2.EXECUTING || String(stageId) === 'C2:EXECUTING',
+    stageMatch: (expectedExecutingStage ? String(stageId) === String(expectedExecutingStage) : false) || String(stageId) === 'C2:EXECUTING',
     shopifyOrderIdPresent: shopifyOrderId && shopifyOrderId.trim() !== '',
   };
 
@@ -2517,7 +2518,7 @@ async function handleDealUpdate(dealId, requestId) {
     shopifyOrderId,
     decision,
     expectedCategoryId: BITRIX_CONFIG.CATEGORY_STOCK,
-    expectedStageId: BITRIX_CONFIG.STAGES_CAT_2.EXECUTING,
+    expectedStageId: expectedExecutingStage || 'C2:EXECUTING',
     timestamp: new Date().toISOString()
   }));
 
@@ -2872,7 +2873,7 @@ async function handleDealUpdate(dealId, requestId) {
       skipReasons.push(`categoryId=${categoryId} != ${BITRIX_CONFIG.CATEGORY_STOCK}`);
     }
     if (!decision.stageMatch) {
-      skipReasons.push(`stageId=${stageId} != ${BITRIX_CONFIG.STAGES_CAT_2.EXECUTING}`);
+      skipReasons.push(`stageId=${stageId} != ${(expectedExecutingStage || 'C2:EXECUTING')}`);
     }
     if (!decision.shopifyOrderIdPresent) {
       skipReasons.push('shopifyOrderId is missing or empty');

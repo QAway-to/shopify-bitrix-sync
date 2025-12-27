@@ -177,6 +177,35 @@ export async function updateShippingAddress(orderId, addressPayload, correlation
       };
     }
 
+    // Shopify validation often requires last_name and phone on shipping_address.
+    // The user's working script always provides them; ensure we do too by enriching from existing order data.
+    if (hasAddress) {
+      const billing = order.billing_address || {};
+      const shipping = order.shipping_address || {};
+      const customer = order.customer || {};
+
+      const pick = (...vals) => {
+        for (const v of vals) {
+          if (typeof v === 'string' && v.trim() !== '') return v.trim();
+        }
+        return null;
+      };
+
+      const enriched = { ...(addressPayload.shipping_address || {}) };
+
+      if (!enriched.first_name) {
+        enriched.first_name = pick(shipping.first_name, billing.first_name, customer.first_name) || 'Customer';
+      }
+      if (!enriched.last_name) {
+        enriched.last_name = pick(shipping.last_name, billing.last_name, customer.last_name) || 'Customer';
+      }
+      if (!enriched.phone) {
+        enriched.phone = pick(shipping.phone, billing.phone, customer.phone) || '+0000000000';
+      }
+
+      addressPayload = { ...addressPayload, shipping_address: enriched };
+    }
+
     // Step 2: Normalize address data (if provided)
     let normalizedAddress = null;
     if (hasAddress) {
