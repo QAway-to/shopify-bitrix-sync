@@ -39,7 +39,7 @@ export default function DocsLayout({
         {children}
 
         <footer className="page-footer">
-          Middleware docs • Updated automatically from repository
+          Middleware • Public pages
         </footer>
       </main>
     </>
