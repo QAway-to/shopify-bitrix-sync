@@ -597,7 +597,7 @@ async function getSizeValueId(sizeString) {
 
 **Причины:**
 1. **Size требует ID значения:** Bitrix24 хранит Size как список значений с ID, а не как текст
-2. **Поиск по тексту может не найти:** Если текст размера не совпадает точно с вариантами в Bitrix
+2. **Список размеров в Bitrix настроен не полностью:** сейчас в списке значений Size есть размеры только **до 32**, поэтому размеры выше не находятся и `getSizeValueId()` возвращает `null`
 3. **Массовые операции:** При обработке большого количества товаров некоторые запросы могут не успевать
 
 **Текущая реализация:**
@@ -663,7 +663,7 @@ if (variant_title) {
 3. Проверяется наличие товаров в сделке
 4. Для каждого товара извлекается SKU (CODE) или variant_id (XML_ID)
 5. Создаётся ордер в Shopify через GraphQL API (`orderCreate`)
-6. Ордер помечается тегами: **TECH**, **BITRIX:{dealId}**
+6. Ордер помечается тегом: **BITRIX:{dealId}**
 7. Shopify Order ID сохраняется обратно в Bitrix сделку
 
 **Файлы:**
@@ -688,18 +688,27 @@ if (variant_title) {
 
 ### Теги ордера
 
-Технические ордера используют два обязательных тега:
+Технические ордера используют один обязательный тег:
 
-1. **`TECH`** - указывает, что это технический ордер
-   - Используется в Shopify webhook для фильтрации (технические ордера не отправляются обратно в Bitrix)
-   - Файл: `pages/api/webhook/shopify.js`
-
-2. **`BITRIX:{dealId}`** - связывает ордер с конкретной сделкой в Bitrix
+1. **`BITRIX:{dealId}`** - связывает ордер с конкретной сделкой в Bitrix
    - Используется для поиска дубликатов (`findExistingOrderByDealId`)
    - Используется для отмены ордера при переводе сделки в LOSE
-   - Показывает принадлежность визуально
+   - Используется в Shopify webhook для фильтрации (ордера, созданные из Bitrix, не должны создавать сделки в Bitrix)
 
-**Пример тегов:** `TECH`, `BITRIX:6624`
+**Пример тега:** `BITRIX:6624`
+
+### Loop guard (защита от циклов)
+
+Чтобы избежать бесконечного цикла `Bitrix → Shopify → Bitrix → ...`, используются два маркера:
+
+1. **Тег `BitrixUpdated`** на Shopify‑заказе  
+   - Ставится после действий, инициированных из Bitrix (например: update адреса/доставки, отмена)
+   - Shopify webhook пропускает такие события по тегу
+
+2. **Provenance marker `middleware.last_write`** (metafield на Shopify‑заказе)  
+   - Если `source = "bitrix"`, Shopify webhook пропускает событие (даже если тега нет)
+
+Файл: `pages/api/webhook/shopify.js`
 
 ### Предотвращение дубликатов
 
@@ -737,8 +746,8 @@ mutation orderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOption
 
 **Параметры:**
 - `order.lineItems` - массив товаров с variantId и quantity
-- `order.tags` - теги: `["TECH", "BITRIX:{dealId}"]`
-- `order.note` - примечание: "Технический ордер из Bitrix. Сделка: {dealId}"
+- `order.tags` - теги: `["BITRIX:{dealId}"]`
+- `order.note` - примечание: "Ордер из Bitrix. Сделка: {dealId}"
 - `order.email` - email: "hold@bfcshoes.local"
 - `options.inventoryBehaviour` - "DECREMENT_OBEYING_POLICY" (резервирует товары)
 - `options.sendReceipt` - false
@@ -793,7 +802,7 @@ mutation orderCancel($orderId: ID!) {
 
 1. Создайте сделку в Bitrix24 с товарами
 2. Убедитесь, что у сделки нет Shopify Order ID
-3. Проверьте в Shopify - должен появиться новый ордер с тегами TECH и BITRIX:{dealId}
+3. Проверьте в Shopify - должен появиться новый ордер с тегом BITRIX:{dealId}
 4. Проверьте в Middleware UI - в разделе "Bitrix → Shopify Events" должно появиться событие
 
 #### Отмена технического ордера
@@ -823,6 +832,6 @@ mutation orderCancel($orderId: ID!) {
 
 ---
 
-*Документ подготовлен: 24.12.2025*
-*Обновлено: 25.12.2025 (добавлена информация о технических ордерах)*
+*Документ подготовлен: 24.12.2025*  
+*Обновлено: 27.12.2025*
 

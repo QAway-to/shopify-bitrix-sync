@@ -274,6 +274,7 @@ const [previewEvent, setPreviewEvent] = useState(null);</code></pre>
         
         <h3>4. Логирование и отладка</h3>
         <p><strong>API endpoint:</strong> <code>GET /api/logs/download</code> - скачивание объединённых логов</p>
+        <p><strong>Важно:</strong> файл логов включает секцию <code>SERVER CONSOLE OUTPUT (CAPTURED stdout/stderr)</code>, где видны серверные <code>console.log/warn/error</code> (для диагностики Shopify/Bitrix запросов).</p>
         
         <h2>API Endpoints (для UI)</h2>
         
@@ -435,6 +436,7 @@ const productsToProcess = isCreateAction
             <p><strong>Известная проблема:</strong></p>
             <ul>
                 <li><strong>PROPERTY_98 (Size)</strong> - требует поиска ID значения, а не текста</li>
+                <li><strong>Ограничение списка Size:</strong> в Bitrix список значений Size настроен не полностью (есть значения только до <strong>32</strong>), поэтому размеры выше могут не проставляться автоматически</li>
                 <li><strong>PROPERTY_106 (Color)</strong> - может не обновляться при массовых операциях</li>
                 <li>Другие пользовательские свойства могут требовать специальной обработки</li>
             </ul>
@@ -465,11 +467,20 @@ if (variant_title) {
                 <li>Массовые операции (батчинг, приоритизация)</li>
             </ul>
         </div>
+
+        <h2>Технические ордера (Technical Orders)</h2>
+        <div class="info">
+            <p><strong>Зачем:</strong> когда менеджер создаёт сделку в Bitrix с товарами, но Shopify‑заказа ещё нет, Middleware создаёт ордер в Shopify для резервирования товара.</p>
+            <p><strong>Теги:</strong> ордер помечается тегом <code>BITRIX:{dealId}</code> (для связки и поиска дубликатов).</p>
+            <p><strong>Отмена:</strong> если сделка переведена в <strong>LOSE</strong>, ордер отменяется и выполняется restock.</p>
+            <p><strong>Loop guard:</strong> при изменениях из Bitrix ордер получает тег <code>BitrixUpdated</code> и/или metafield <code>middleware.last_write=bitrix</code>; Shopify webhooks с такими маркерами пропускаются.</p>
+        </div>
         
         <hr>
         
         <div class="footer">
             <p>Документ подготовлен: 24.12.2025</p>
+            <p>Обновлено: 27.12.2025</p>
         </div>
     </div>
 </body>
