@@ -3,13 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Инструкция для менеджеров - Логика взаимодействия с Bitrix24</title>
+    <title>Инструкция для менеджеров - Bitrix → Shopify</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             line-height: 1.6;
@@ -29,107 +25,25 @@
             color: #2c3e50;
             border-bottom: 3px solid #3498db;
             padding-bottom: 10px;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             font-size: 2em;
         }
         h2 {
             color: #34495e;
-            margin-top: 40px;
-            margin-bottom: 20px;
-            font-size: 1.5em;
-            border-left: 4px solid #3498db;
-            padding-left: 15px;
-        }
-        h3 {
-            color: #555;
-            margin-top: 25px;
-            margin-bottom: 15px;
-            font-size: 1.2em;
-        }
-        p {
-            margin-bottom: 15px;
-            text-align: justify;
-        }
-        ul, ol {
-            margin-left: 30px;
-            margin-bottom: 20px;
-        }
-        li {
+            margin-top: 26px;
             margin-bottom: 10px;
+            font-size: 1.3em;
+            border-left: 4px solid #3498db;
+            padding-left: 12px;
         }
-        strong {
-            color: #2c3e50;
-        }
-        .emoji {
-            font-size: 1.2em;
-        }
-        .warning {
-            background: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 4px;
-        }
-        .success {
-            background: #d4edda;
-            border-left: 4px solid #28a745;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 4px;
-        }
-        .info {
-            background: #d1ecf1;
-            border-left: 4px solid #17a2b8;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 4px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-        }
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-        th {
-            background-color: #3498db;
-            color: white;
-        }
-        tr:hover {
-            background-color: #f5f5f5;
-        }
-        hr {
-            border: none;
-            border-top: 2px solid #eee;
-            margin: 30px 0;
-        }
-        .footer {
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 2px solid #eee;
-            color: #777;
-            font-size: 0.9em;
-            text-align: center;
-        }
-        code {
-            background: #f4f4f4;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
-        }
+        p { margin-bottom: 12px; }
+        ul, ol { margin-left: 26px; margin-bottom: 14px; }
+        li { margin-bottom: 8px; }
+        hr { margin: 18px 0; border: none; border-top: 1px solid #e5e7eb; }
+        .footer { margin-top: 24px; color: #6b7280; font-size: 0.9em; }
         @media print {
-            body {
-                background: white;
-                padding: 0;
-            }
-            .container {
-                box-shadow: none;
-                padding: 20px;
-            }
+            body { background: white; padding: 0; }
+            .container { box-shadow: none; padding: 20px; }
         }
     </style>
 </head>
@@ -137,9 +51,8 @@
     <div class="container">
         <h1>Инструкция для менеджеров</h1>
         <p><strong>Bitrix → Shopify</strong></p>
-        
         <hr>
-        
+
         <p>Middleware автоматически переносит ваши действия в Bitrix в Shopify. Ниже — что можно сделать в Bitrix, что вы увидите в Shopify, и как быстро проверить.</p>
 
         <h2>1) Создание заказа в Shopify из сделки Bitrix</h2>
@@ -187,396 +100,12 @@
             <li>Не меняйте одно и то же в двух местах одновременно (например: адрес и в Bitrix, и в Shopify)</li>
             <li>Не дублируйте вручную заказ в Shopify, если вы уже ведёте его через Bitrix</li>
         </ul>
-        
-        <h2>Работа с товарами в Bitrix24</h2>
-        
-        <h3>Как товары связываются между системами?</h3>
-        <p><strong>Основной способ связи:</strong></p>
-        <ul>
-            <li>Каждый товар в Bitrix24 имеет поле <strong>CODE</strong> (это SKU из Shopify)</li>
-            <li>Каждый товар имеет поле <strong>XML_ID</strong> (это уникальный ID варианта товара из Shopify - variant_id)</li>
-        </ul>
-        
-        <p><strong>Важно понимать:</strong></p>
-        <ul>
-            <li>Если товар не найден по SKU или variant_id, он не будет добавлен в сделку</li>
-            <li>Товары должны быть правильно настроены в обеих системах</li>
-        </ul>
-        
-        <h3>Что делать, если товар не добавился в сделку?</h3>
-        <ol>
-            <li><strong>Проверьте SKU товара</strong> в Bitrix24 (поле CODE)</li>
-            <li><strong>Проверьте XML_ID</strong> товара (должен совпадать с variant_id из Shopify)</li>
-            <li><strong>Проверьте логи</strong> в веб-интерфейсе Middleware</li>
-            <li>Если товар отсутствует в Bitrix24 - создайте его через UI Middleware</li>
-        </ol>
-        
-        <h2>Статусы заказов и их значение</h2>
-        
-        <h3>Статусы оплаты (Financial Status)</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Статус в Shopify</th>
-                    <th>Статус в Bitrix24</th>
-                    <th>Описание</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><strong>paid</strong></td>
-                    <td>WON</td>
-                    <td>Заказ полностью оплачен</td>
-                </tr>
-                <tr>
-                    <td><strong>pending</strong></td>
-                    <td>NEW</td>
-                    <td>Заказ ожидает оплаты</td>
-                </tr>
-                <tr>
-                    <td><strong>partially_paid</strong></td>
-                    <td>NEW</td>
-                    <td>Заказ частично оплачен, ожидает доплаты</td>
-                </tr>
-                <tr>
-                    <td><strong>refunded</strong></td>
-                    <td>LOSE</td>
-                    <td>Заказ полностью возвращён</td>
-                </tr>
-                <tr>
-                    <td><strong>partially_refunded</strong></td>
-                    <td>C2:PREPARATION</td>
-                    <td>Заказ частично возвращён, но ещё активен</td>
-                </tr>
-                <tr>
-                    <td><strong>cancelled</strong></td>
-                    <td>LOSE</td>
-                    <td>Заказ отменён</td>
-                </tr>
-                <tr>
-                    <td><strong>voided</strong></td>
-                    <td>LOSE</td>
-                    <td>Заказ аннулирован</td>
-                </tr>
-            </tbody>
-        </table>
-        
-        <h3>Статусы выполнения (Fulfillment Status)</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Статус в Shopify</th>
-                    <th>Что происходит в Bitrix24</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td><strong>fulfilled</strong></td>
-                    <td>Статус выполнения обновляется</td>
-                </tr>
-                <tr>
-                    <td><strong>partial</strong></td>
-                    <td>Частично выполнен, статус обновляется</td>
-                </tr>
-                <tr>
-                    <td><strong>unfulfilled</strong></td>
-                    <td>Ожидает выполнения</td>
-                </tr>
-            </tbody>
-        </table>
-        
-        <h2>Специальные случаи</h2>
-        
-        <h3>1. Технические заказы</h3>
-        <p><strong>Что это:</strong></p>
-        <ul>
-            <li>Заказы, созданные автоматически из Bitrix24 в Shopify</li>
-            <li>Помечены меткой: <strong>BITRIX:{ID сделки}</strong></li>
-        </ul>
-        
-        <p><strong>Когда создаются:</strong></p>
-        <ul>
-            <li>Когда менеджер создаёт сделку в Bitrix24 с товарами</li>
-            <li>Но у сделки ещё нет связанного заказа в Shopify</li>
-        </ul>
-        
-        <p><strong>Что делать:</strong></p>
-        <ul>
-            <li>Ничего! Это нормальная работа системы</li>
-            <li>Такие заказы нужны для учёта товаров</li>
-        </ul>
-        
-        <h3>2. Предзаказы (Pre-order)</h3>
-        <p><strong>Как определить:</strong></p>
-        <ul>
-            <li>Заказы с тегом <strong>"preorder"</strong> в Shopify</li>
-            <li>Попадают в воронку "Pre-order"</li>
-        </ul>
-        
-        <p><strong>Особенности:</strong></p>
-        <ul>
-            <li>Обрабатываются так же, как обычные заказы</li>
-            <li>Но попадают в отдельную воронку для отчётности</li>
-        </ul>
-        
-        <h3>3. Заказы из магазина (POS)</h3>
-        <p><strong>Как определить:</strong></p>
-        <ul>
-            <li>Заказы с <code>source_name = "pos"</code> в Shopify</li>
-            <li>Попадают в воронку "Stock (in the shop)"</li>
-        </ul>
-        
-        <p><strong>Особенности:</strong></p>
-        <ul>
-            <li>Отличаются от заказов с сайта</li>
-            <li>Нужны для правильной отчётности по каналам продаж</li>
-        </ul>
-        
-        <h3>4. Сертификаты</h3>
-        <p><strong>Особенности:</strong></p>
-        <ul>
-            <li>Подарочные сертификаты обрабатываются специальным образом</li>
-            <li>Имеют свою логику связывания (по variant_id, а не по SKU)</li>
-            <li>Автоматически создаются и обновляются в Bitrix24</li>
-        </ul>
-        
-        <h2>Что делать при проблемах?</h2>
-        
-        <h3>Проблема: Заказ не появился в Bitrix24</h3>
-        <p><strong>Проверьте:</strong></p>
-        <ol>
-            <li>Откройте веб-интерфейс Middleware</li>
-            <li>Посмотрите список событий из Shopify</li>
-            <li>Найдите ваш заказ</li>
-            <li>Проверьте, есть ли ошибки</li>
-        </ol>
-        
-        <p><strong>Решение:</strong></p>
-        <ul>
-            <li>Если заказ есть в списке, но не отправлен - выберите его и нажмите "Отправить в Bitrix"</li>
-            <li>Если есть ошибки - проверьте логи</li>
-        </ul>
-        
-        <h3>Проблема: Товары не добавились в сделку</h3>
-        <p><strong>Проверьте:</strong></p>
-        <ol>
-            <li>Есть ли товар в каталоге Bitrix24?</li>
-            <li>Правильно ли указан SKU (CODE) у товара?</li>
-            <li>Правильно ли указан XML_ID (variant_id)?</li>
-        </ol>
-        
-        <p><strong>Решение:</strong></p>
-        <ul>
-            <li>Если товара нет - создайте его через UI Middleware</li>
-            <li>Если товар есть, но не связывается - проверьте SKU и XML_ID</li>
-        </ul>
-        
-        <h3>Проблема: Статус не обновился</h3>
-        <p><strong>Проверьте:</strong></p>
-        <ol>
-            <li>Откройте веб-интерфейс Middleware</li>
-            <li>Посмотрите события из Bitrix24</li>
-            <li>Проверьте, отправлено ли событие в Shopify</li>
-        </ol>
-        
-        <p><strong>Решение:</strong></p>
-        <ul>
-            <li>Если событие есть, но не отправлено - выберите его и нажмите "Отправить в Shopify"</li>
-            <li>Если событие отсутствует - возможно, webhook из Bitrix24 не настроен</li>
-        </ul>
-        
-        <h2>Работа с веб-интерфейсом</h2>
-        
-        <h3>Основные разделы:</h3>
-        <ol>
-            <li><strong>Shopify → Bitrix Events</strong>
-                <ul>
-                    <li>Все заказы, которые пришли из Shopify</li>
-                    <li>Можно просмотреть детали каждого заказа</li>
-                    <li>Можно вручную отправить заказ в Bitrix24</li>
-                </ul>
-            </li>
-            <li><strong>Bitrix → Shopify Events</strong>
-                <ul>
-                    <li>Все события, которые пришли из Bitrix24</li>
-                    <li>Можно просмотреть детали каждого события</li>
-                    <li>Можно вручную отправить событие в Shopify</li>
-                </ul>
-            </li>
-            <li><strong>Success Operations</strong>
-                <ul>
-                    <li>Успешно выполненные операции</li>
-                    <li>История синхронизаций</li>
-                </ul>
-            </li>
-            <li><strong>Управление товарами</strong>
-                <ul>
-                    <li>Создание товаров по категориям</li>
-                    <li>Синхронизация остатков</li>
-                    <li>Обновление информации о товарах</li>
-                </ul>
-            </li>
-        </ol>
-        
-        <h3>Как использовать:</h3>
-        <ol>
-            <li><strong>Просмотр заказов:</strong>
-                <ul>
-                    <li>Откройте раздел "Shopify → Bitrix Events"</li>
-                    <li>Вы увидите список всех заказов</li>
-                    <li>Нажмите на заказ, чтобы увидеть детали</li>
-                </ul>
-            </li>
-            <li><strong>Ручная отправка:</strong>
-                <ul>
-                    <li>Выберите заказы чекбоксами</li>
-                    <li>Нажмите кнопку "Отправить в Bitrix"</li>
-                    <li>Дождитесь результата</li>
-                </ul>
-            </li>
-            <li><strong>Просмотр логов:</strong>
-                <ul>
-                    <li>Нажмите кнопку "Скачать логи"</li>
-                    <li>Откроется файл со всеми операциями</li>
-                    <li>Можно найти любую операцию по времени или ID</li>
-                </ul>
-            </li>
-        </ol>
-        
-        <h2>Важные моменты для менеджеров</h2>
-        
-        <div class="success">
-            <h3>✅ Что можно делать:</h3>
-            <ul>
-                <li>Создавать сделки в Bitrix24 - они автоматически синхронизируются</li>
-                <li>Менять статусы сделок - они обновляются в Shopify</li>
-                <li>Добавлять товары в сделки - они учитываются в Shopify</li>
-                <li>Просматривать логи для проверки операций</li>
-            </ul>
-        </div>
-        
-        <div class="warning">
-            <h3>❌ Чего не нужно делать:</h3>
-            <ul>
-                <li>Не нужно вручную создавать/дублировать заказы в Shopify, если сделка уже есть в Bitrix24</li>
-                <li>Не нужно дублировать данные - система сделает это автоматически</li>
-                <li>Не нужно менять технические поля (SKU, XML_ID) без необходимости</li>
-            </ul>
-        </div>
-        
-        <div class="info">
-            <h3>⚠️ На что обратить внимание:</h3>
-            <ul>
-                <li>Если товар не добавился в сделку - проверьте, есть ли он в каталоге Bitrix24</li>
-                <li>Если заказ не синхронизировался - проверьте логи в веб-интерфейсе</li>
-                <li>Если статус не обновился - возможно, нужно вручную отправить событие</li>
-            </ul>
-        </div>
 
-        <h2>Тест‑кейсы (как НУЖНО / как НЕ НУЖНО)</h2>
-
-        <div class="success">
-            <h3>✅ Как НУЖНО (основные проверки)</h3>
-            <ol>
-                <li><strong>POS продажа → Bitrix:</strong> создайте заказ в Shopify POS (source_name="pos", без preorder‑тегов). Ожидаемо: сделка создаётся в воронке <strong>Stock (in the shop)</strong> (category_id=0).</li>
-                <li><strong>Сайт заказ → Bitrix:</strong> создайте заказ на сайте. Ожидаемо: сделка создаётся в воронке <strong>Stock (site)</strong> (category_id=2).</li>
-                <li><strong>Адрес из Bitrix → Shopify:</strong> измените в сделке поле <code>UF_CRM_1742037435676</code> (и при необходимости цену доставки <code>UF_CRM_67BEF8B2AA721</code>). Ожидаемо: обновится <code>shipping_address</code> (и <code>shipping_lines</code> при изменении цены).</li>
-                <li><strong>LOSE → отмена в Shopify:</strong> переведите сделку в <strong>LOSE</strong>. Ожидаемо: заказ отменится в Shopify (restock), и Middleware поставит тег <strong>BitrixUpdated</strong> для loop guard.</li>
-            </ol>
-        </div>
-
-        <div class="warning">
-            <h3>❌ Как НЕ НУЖНО (чтобы не создавать путаницу)</h3>
-            <ul>
-                <li>Не меняйте вручную теги заказа в Shopify: <code>BITRIX:{dealId}</code> и <code>BitrixUpdated</code>.</li>
-                <li>Не меняйте вручную поле связи в Bitrix <code>UF_CRM_1742556489</code> (Shopify Order ID).</li>
-                <li>Не делайте параллельные правки одного и того же (например, адрес в Shopify и адрес в Bitrix одновременно) — выбирайте одну систему как источник правки.</li>
-            </ul>
-        </div>
-        
-        <h2>Контакты для поддержки</h2>
-        <p>При возникновении проблем:</p>
-        <ol>
-            <li>Проверьте логи в веб-интерфейсе</li>
-            <li>Попробуйте вручную отправить событие</li>
-            <li>Обратитесь к техническому специалисту с логами</li>
-        </ol>
-        
-        <h2>Важная информация об ограничениях</h2>
-        
-        <div class="warning">
-            <h3><span class="emoji">⚠️</span> Инвентаризация товаров</h3>
-            <p><strong>Текущее ограничение:</strong></p>
-            <ul>
-                <li>Система обрабатывает только товары с количеством на складе <strong>больше нуля</strong> (<code>qty > 0</code>)</li>
-                <li>Товары с нулевым остатком <strong>не синхронизируются</strong> автоматически</li>
-            </ul>
-            
-            <p><strong>Что это значит для вас:</strong></p>
-            <ul>
-                <li>Если товар закончился на складе (остаток = 0), он не будет автоматически обновляться в Bitrix24</li>
-                <li>При массовом создании товаров через UI Middleware обрабатываются только товары с остатком > 0</li>
-                <li>Это сделано для оптимизации и избежания обработки неактуальных товаров</li>
-            </ul>
-            
-            <p><strong>Что делать:</strong></p>
-            <ul>
-                <li>Если нужно обновить товары с нулевым остатком, это нужно делать вручную через Bitrix24</li>
-                <li>Или дождаться, когда товар появится на складе (qty > 0), тогда он автоматически синхронизируется</li>
-            </ul>
-        </div>
-        
-        <div class="warning">
-            <h3><span class="emoji">⚠️</span> Обновление полей товаров (Size и другие)</h3>
-            <p><strong>Известная проблема:</strong></p>
-            <ul>
-                <li>При автоматическом обновлении товаров в Bitrix24 могут возникать проблемы с обновлением некоторых полей:
-                    <ul>
-                        <li><strong>Size (Размер)</strong> - поле PROPERTY_98 не всегда обновляется корректно</li>
-                        <li><strong>Color (Цвет)</strong> - поле PROPERTY_106 может требовать ручного обновления</li>
-                        <li>Другие пользовательские поля могут не синхронизироваться автоматически</li>
-                    </ul>
-                </li>
-            </ul>
-            
-            <p><strong>Почему это происходит:</strong></p>
-            <ul>
-                <li>Некоторые поля в Bitrix24 требуют специальной обработки (например, Size требует поиска ID значения, а не текста)</li>
-                <li>При массовом обновлении некоторые поля могут пропускаться из-за ограничений API</li>
-            </ul>
-            
-            <p><strong>Что делать:</strong></p>
-            <ul>
-                <li><strong>Для критически важных товаров:</strong> обновляйте поля вручную через интерфейс Bitrix24</li>
-                <li><strong>При массовом обновлении:</strong> проверяйте, что все поля обновились корректно</li>
-                <li><strong>Если поле не обновилось:</strong> используйте ручное обновление через Bitrix24</li>
-            </ul>
-            
-            <p><strong>Временное решение:</strong></p>
-            <ul>
-                <li>Для товаров, где важно иметь актуальные Size и другие поля, рекомендуется:
-                    <ol>
-                        <li>Сначала создать товар через Middleware</li>
-                        <li>Затем вручную проверить и обновить поля Size, Color и другие в Bitrix24</li>
-                        <li>После этого товар будет корректно связываться с заказами</li>
-                    </ol>
-                </li>
-            </ul>
-            
-            <p><strong>Планируется исправить:</strong></p>
-            <ul>
-                <li>Улучшение логики обновления полей Size и других пользовательских свойств</li>
-                <li>Более надёжная синхронизация всех полей товаров</li>
-                <li>Автоматическая проверка и повторная попытка обновления при ошибках</li>
-            </ul>
-        </div>
-        
-        <hr>
-        
         <div class="footer">
             <p>Обновлено: 27.12.2025</p>
         </div>
     </div>
 </body>
 </html>
+
 
