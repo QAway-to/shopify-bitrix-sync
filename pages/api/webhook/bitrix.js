@@ -12,9 +12,10 @@ import { createOrderFromBitrix, findExistingOrderByDealId, cancelOrderByDealId, 
 import { addPositionToOrder, incrementLineItemQuantity, decrementLineItemQuantity } from '../../../src/lib/shopify/orderEdit.js';
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
+import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
 
 // Expected auth token from Bitrix
-const EXPECTED_AUTH_TOKEN = process.env.BITRIX_AUTH_TOKEN || '9gxukpkc7i1y4gms906jvm0t51npv0vb';
+const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
 
 /**
  * Parse Bitrix address string into Shopify address format

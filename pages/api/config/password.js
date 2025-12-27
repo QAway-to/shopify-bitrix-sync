@@ -6,12 +6,18 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Get password from environment variable (default to '1spotify2' for backward compatibility)
-    const password = process.env.WEBHOOK_PASSWORD || '1spotify2';
-    
+    const password = process.env.WEBHOOK_PASSWORD;
+
+    if (typeof password !== 'string' || password.trim() === '') {
+      return res.status(200).json({
+        success: false,
+        error: 'WEBHOOK_PASSWORD is not configured'
+      });
+    }
+
     return res.status(200).json({
       success: true,
-      password: password
+      password: password.trim()
     });
   } catch (error) {
     console.error('Get password error:', error);
@@ -22,6 +28,3 @@ export default async function handler(req, res) {
     });
   }
 }
-
-
-

@@ -63,9 +63,10 @@ SKU_TO_PRODUCT_ID: {
 
 ## Webhook URL
 
-По умолчанию используется webhook URL: `https://bfcshoes.bitrix24.eu/rest/52/i6l05o71ywxb8j1l/`
+Webhook URL берётся из переменных окружения:
 
-Вы можете переопределить его через переменную окружения `BITRIX_WEBHOOK_URL`.
+- `BITRIX_WEBHOOK_BASE` (рекомендуется)
+- `BITRIX_WEBHOOK_URL` (legacy)
 
 ## Пример конфигурации
 

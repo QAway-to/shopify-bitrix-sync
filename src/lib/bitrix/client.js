@@ -57,9 +57,21 @@ export function getBitrixWebhookBase() {
     const url = process.env.BITRIX_WEBHOOK_URL;
     return url.endsWith('/') ? url : `${url}/`;
   }
-  
-  // Hardcoded webhook base URL
-  return 'https://bfcshoes.bitrix24.eu/rest/52/i6l05o71ywxb8j1l/';
+
+  throw new Error(
+    'Bitrix webhook base URL is not configured. Set BITRIX_WEBHOOK_BASE (recommended) or BITRIX_WEBHOOK_URL.'
+  );
+}
+
+export function getBitrixExpectedAuthToken() {
+  const v =
+    (typeof process.env.BITRIX_AUTH_TOKEN === 'string' && process.env.BITRIX_AUTH_TOKEN.trim() !== ''
+      ? process.env.BITRIX_AUTH_TOKEN
+      : null) ||
+    (typeof process.env.EXPECTED_TOKEN === 'string' && process.env.EXPECTED_TOKEN.trim() !== ''
+      ? process.env.EXPECTED_TOKEN
+      : null);
+  return v ? v.trim() : null;
 }
 
 /**

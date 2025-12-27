@@ -53,19 +53,28 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
   const [bitrixEndpointPassword, setBitrixEndpointPassword] = useState('');
   const [bitrixEndpointUnlocked, setBitrixEndpointUnlocked] = useState(false);
   const [bitrixEndpointCopied, setBitrixEndpointCopied] = useState(false);
-  const [correctPassword, setCorrectPassword] = useState(null);
 
-  // ✅ Load password from API
+  // Password is configured server-side via WEBHOOK_PASSWORD
+  const [correctPassword, setCorrectPassword] = useState(null);
+  const [isLoadingPassword, setIsLoadingPassword] = useState(true);
+
   useEffect(() => {
     const fetchPassword = async () => {
+      setIsLoadingPassword(true);
       try {
         const response = await fetch('/api/config/password');
         const data = await response.json();
         if (data.success && data.password) {
-          setCorrectPassword(data.password);
+          setCorrectPassword(String(data.password));
+        } else {
+          console.error('Failed to fetch password:', data.error);
+          setCorrectPassword(null);
         }
       } catch (err) {
         console.error('Fetch password error:', err);
+        setCorrectPassword(null);
+      } finally {
+        setIsLoadingPassword(false);
       }
     };
     fetchPassword();
@@ -114,8 +123,9 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
 
   const handlePasswordSubmit = (e) => {
     e.preventDefault();
-    if (!correctPassword) {
-      alert('Password not loaded yet. Please wait.');
+    if (isLoadingPassword || !correctPassword) {
+      alert('Password is not configured on the server (WEBHOOK_PASSWORD)');
+      setPassword('');
       return;
     }
     if (password === correctPassword) {
@@ -129,8 +139,9 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
 
   const handleBitrixPasswordSubmit = (e) => {
     e.preventDefault();
-    if (!correctPassword) {
-      alert('Password not loaded yet. Please wait.');
+    if (isLoadingPassword || !correctPassword) {
+      alert('Password is not configured on the server (WEBHOOK_PASSWORD)');
+      setBitrixPassword('');
       return;
     }
     if (bitrixPassword === correctPassword) {
@@ -144,8 +155,9 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
 
   const handleBitrixEndpointPasswordSubmit = (e) => {
     e.preventDefault();
-    if (!correctPassword) {
-      alert('Password not loaded yet. Please wait.');
+    if (isLoadingPassword || !correctPassword) {
+      alert('Password is not configured on the server (WEBHOOK_PASSWORD)');
+      setBitrixEndpointPassword('');
       return;
     }
     if (bitrixEndpointPassword === correctPassword) {

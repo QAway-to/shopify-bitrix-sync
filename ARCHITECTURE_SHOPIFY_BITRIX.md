@@ -299,7 +299,7 @@ Shopify Order Created
 
 **Конфигурация:**
 - `BITRIX_WEBHOOK_BASE` - базовый URL webhook
-- Fallback: `https://bfcshoes.bitrix24.eu/rest/52/i6l05o71ywxb8j1l/`
+- Fallback: legacy env `BITRIX_WEBHOOK_URL` (avoid hardcoding URLs in code)
 
 #### `src/lib/bitrix/config.js`
 **Константы:**
@@ -359,8 +359,8 @@ SHOPIFY_API_VERSION=2024-01
 
 #### Bitrix24
 ```bash
-BITRIX_WEBHOOK_BASE=https://bfcshoes.bitrix24.eu/rest/52/i6l05o71ywxb8j1l/
-BITRIX_AUTH_TOKEN=9gxukpkc7i1y4gms906jvm0t51npv0vb
+BITRIX_WEBHOOK_BASE=https://your-domain.bitrix24.eu/rest/USER_ID/WEBHOOK_TOKEN/
+BITRIX_AUTH_TOKEN=<random-token>
 ```
 
 ### Bitrix24 Configuration
