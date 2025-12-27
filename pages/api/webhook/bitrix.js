@@ -1412,13 +1412,13 @@ async function handleDealUpdate(dealId, requestId) {
         const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
         
         try {
-          // Check if order is technical order
+          // Check if order is created from Bitrix (has BITRIX:{dealId} tag)
           const shopifyOrder = await getOrder(shopifyOrderId);
           if (shopifyOrder) {
             const orderTags = Array.isArray(shopifyOrder.tags) 
               ? shopifyOrder.tags 
               : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
-            const isTechnicalOrder = orderTags.includes('TECH');
+            const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
             
             // Cancel both technical and regular orders
             const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
@@ -1448,8 +1448,8 @@ async function handleDealUpdate(dealId, requestId) {
               throw new Error(`Shopify orderCancel userErrors: ${errorMessages}`);
             }
             
-            // Add BitrixUpdated tag to prevent webhook loop (for regular orders)
-            if (!isTechnicalOrder) {
+            // Add BitrixUpdated tag to prevent webhook loop (for regular orders, not created from Bitrix)
+            if (!isBitrixOrder) {
               await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
             }
             
@@ -1460,7 +1460,7 @@ async function handleDealUpdate(dealId, requestId) {
               stageId,
               shopifyOrderId,
               orderName: shopifyOrder.name,
-              isTechnicalOrder,
+              isBitrixOrder,
               jobId: cancelData?.orderCancel?.job?.id,
               timestamp: new Date().toISOString()
             }));
@@ -1902,13 +1902,13 @@ async function handleDealUpdate(dealId, requestId) {
       const shopifyOrder = await getOrder(shopifyOrderId);
       
       if (shopifyOrder) {
-        // Check if order is technical order (should sync quantities)
+        // Check if order is created from Bitrix (has BITRIX:{dealId} tag) - should sync quantities
         const orderTags = Array.isArray(shopifyOrder.tags) 
           ? shopifyOrder.tags 
           : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
-        const isTechnicalOrder = orderTags.includes('TECH');
+        const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
         
-        if (isTechnicalOrder) {
+        if (isBitrixOrder) {
           // Get product rows from Bitrix
           const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
             id: dealId
@@ -2556,12 +2556,12 @@ async function handleDealUpdate(dealId, requestId) {
       const orderTags = Array.isArray(shopifyOrder.tags) 
         ? shopifyOrder.tags 
         : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
-      const isTechnicalOrder = orderTags.includes('TECH');
+      const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
       
-      // Only process fulfillment for non-technical orders
-      if (isTechnicalOrder) {
+      // Only process fulfillment for orders NOT created from Bitrix
+      if (isBitrixOrder) {
         console.log(JSON.stringify({
-          event: 'DELIVERY_SKIP_TECHNICAL_ORDER',
+          event: 'DELIVERY_SKIP_BITRIX_ORDER',
           requestId,
           dealId,
           shopifyOrderId,

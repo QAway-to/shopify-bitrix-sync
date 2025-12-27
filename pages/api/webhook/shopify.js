@@ -1113,21 +1113,22 @@ export default async function handler(req, res) {
   // ✅ CRITICAL: Check if this is a technical order or Bitrix-updated order (should not be sent to Bitrix)
   // Technical orders are created FROM Bitrix to reserve inventory, so they should not create deals IN Bitrix
   // BitrixUpdated orders were updated FROM Bitrix, so webhook from this update should not go back to Bitrix (loop guard)
+  // Orders with BITRIX:{dealId} tag are created FROM Bitrix, so they should not create deals IN Bitrix
   // Handle tags as either array or comma-separated string (Shopify webhook may return both formats)
   const orderTags = Array.isArray(order?.tags) 
     ? order.tags 
     : (order?.tags ? String(order.tags).split(',').map(t => t.trim()) : []);
-  const isTechnicalOrder = orderTags.includes('TECH');
+  const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
   const isBitrixUpdated = orderTags.includes('BitrixUpdated');
   
-  if (isTechnicalOrder || isBitrixUpdated) {
-    const skipReason = isTechnicalOrder 
-      ? 'Technical order (TECH tag) - not sent to Bitrix'
+  if (isBitrixOrder || isBitrixUpdated) {
+    const skipReason = isBitrixOrder 
+      ? 'Order created from Bitrix (BITRIX:{dealId} tag) - not sent to Bitrix'
       : 'Bitrix-updated order (BitrixUpdated tag) - loop guard, not sent to Bitrix';
     
-    console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: ${isTechnicalOrder ? 'Technical' : 'Bitrix-updated'} order detected (tags: ${orderTags.join(', ')}). Order ${order?.name || order?.id} will NOT be sent to Bitrix.`);
-  if (isTechnicalOrder) {
-    console.log(`[SHOPIFY WEBHOOK] This is a technical order created from Bitrix to reserve inventory. It should not create a deal in Bitrix.`);
+    console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: ${isBitrixOrder ? 'Bitrix-created' : 'Bitrix-updated'} order detected (tags: ${orderTags.join(', ')}). Order ${order?.name || order?.id} will NOT be sent to Bitrix.`);
+  if (isBitrixOrder) {
+    console.log(`[SHOPIFY WEBHOOK] This order was created from Bitrix. It should not create a deal in Bitrix.`);
     } else {
       console.log(`[SHOPIFY WEBHOOK] This order was updated from Bitrix. Webhook from this update should not go back to Bitrix to prevent loop.`);
     }

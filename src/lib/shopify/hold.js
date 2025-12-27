@@ -93,8 +93,8 @@ export async function createHoldOrder(items, correlationId, payloadHash) {
     });
   }
 
-  // Build tags: ["MW:HOLD", "TECH", payloadHash]
-  const tags = ['MW:HOLD', 'TECH'];
+  // Build tags: ["MW:HOLD", payloadHash]
+  const tags = ['MW:HOLD'];
   if (payloadHash) {
     tags.push(`MW:HASH:${payloadHash}`);
   }

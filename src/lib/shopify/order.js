@@ -279,8 +279,8 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
           orderName: `Existing order ${existingOrderId}`,
           wasDuplicate: true,
           lineItems: [],
-          tags: ['TECH', `BITRIX:${dealId}`],
-          note: `Технический ордер из Bitrix. Сделка: ${dealId}`
+          tags: [`BITRIX:${dealId}`],
+          note: `Ордер из Bitrix. Сделка: ${dealId}`
         };
       }
       
@@ -305,8 +305,8 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
         orderName: `Existing order ${finalExistingOrderId}`,
         wasDuplicate: true,
         lineItems: [],
-        tags: ['TECH', 'BITRIX', `BITRIX:${dealId}`],
-        note: `Технический ордер из Bitrix. Сделка: ${dealId}`
+          tags: [`BITRIX:${dealId}`],
+          note: `Ордер из Bitrix. Сделка: ${dealId}`
       };
     }
     
@@ -334,8 +334,8 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
           orderName: `Existing order ${existingOrderId}`,
           wasDuplicate: true,
           lineItems: [],
-          tags: ['TECH', `BITRIX:${dealId}`],
-          note: `Технический ордер из Bitrix. Сделка: ${dealId}`
+          tags: [`BITRIX:${dealId}`],
+          note: `Ордер из Bitrix. Сделка: ${dealId}`
         };
       }
       if (preCheck < 3) {
@@ -387,16 +387,15 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     });
   }
 
-  // Build tags: ["TECH", "BITRIX:{dealId}"]
-  // TECH tag indicates this is a technical order (used to filter in Shopify webhook)
-  // BITRIX:{dealId} tag is used for duplicate detection and linking to Bitrix deal
-  const tags = ['TECH'];
+  // Build tags: ["BITRIX:{dealId}"]
+  // BITRIX:{dealId} tag is used for duplicate detection, linking to Bitrix deal, and identifying orders created from Bitrix
+  const tags = [];
   if (dealId) {
     tags.push(`BITRIX:${dealId}`);
   }
 
-  // Build note with technical order information
-  const note = `Технический ордер из Bitrix. Сделка: ${dealId}`;
+  // Build note with order information
+  const note = `Ордер из Bitrix. Сделка: ${dealId}`;
 
   const mutation = `
     mutation orderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
