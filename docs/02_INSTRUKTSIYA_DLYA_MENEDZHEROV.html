@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Инструкция для менеджеров - Bitrix → Shopify</title>
+    <title>Инструкция для менеджеров - Shopify ↔ Bitrix</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -50,14 +50,26 @@
 <body>
     <div class="container">
         <h1>Инструкция для менеджеров</h1>
-        <p><strong>Bitrix → Shopify</strong></p>
+        <p><strong>Shopify ↔ Bitrix</strong></p>
         <hr>
 
-        <p>Middleware автоматически переносит ваши действия в Bitrix в Shopify. Ниже — что можно сделать в Bitrix, что вы увидите в Shopify, и как быстро проверить.</p>
+        <p>Middleware автоматически переносит изменения между Bitrix и Shopify. Ниже — что вы увидите в каждой системе и как быстро проверить.</p>
 
-        <h2>1) Создание заказа в Shopify из сделки Bitrix</h2>
+        <h2>Shopify → Bitrix (автоматически)</h2>
+        <p><strong>Тест:</strong> создайте заказ в Shopify (сайт или POS) → сделка появится в Bitrix.</p>
+        <ul>
+            <li><strong>В Bitrix вы увидите:</strong> новую сделку с товарами и суммой заказа; название сделки соответствует номеру заказа Shopify (например, <strong>#2448</strong>).</li>
+        </ul>
+
+        <h2>Bitrix → Shopify (основные сценарии)</h2>
+
+        <h2>1) Тест: создать сделку с товарами → появится заказ в Shopify</h2>
         <p><strong>Действие в Bitrix:</strong> создайте сделку и добавьте товары.</p>
         <p><strong>Что вы увидите в Shopify:</strong> появится новый заказ (резерв товара) с теми же товарами и количествами.</p>
+        <ul>
+            <li><strong>Деталь:</strong> у заказа в Shopify появятся метки (например, <code>BITRIX:1234</code>).</li>
+            <li><strong>Деталь:</strong> название сделки в Bitrix обновится и станет номером заказа Shopify (например, <strong>#2513</strong>).</li>
+        </ul>
         <p><strong>Как протестировать:</strong></p>
         <ol>
             <li>Создайте новую сделку в Bitrix и добавьте 1–2 товара</li>
@@ -65,9 +77,12 @@
             <li>Откройте Shopify → Orders → найдите новый заказ</li>
         </ol>
 
-        <h2>2) Обновление адреса доставки (Bitrix → Shopify)</h2>
+        <h2>2) Тест: изменить адрес в Bitrix → адрес обновится в Shopify</h2>
         <p><strong>Действие в Bitrix:</strong> измените адрес доставки в сделке.</p>
         <p><strong>Что вы увидите в Shopify:</strong> в заказе обновится адрес доставки.</p>
+        <ul>
+            <li><strong>Деталь:</strong> после обновления из Bitrix заказ в Shopify получает метку <code>BitrixUpdated</code> (это защита от повторных “кругов” синхронизации).</li>
+        </ul>
         <p><strong>Как протестировать:</strong></p>
         <ol>
             <li>Возьмите сделку, у которой уже есть связанный заказ в Shopify</li>
@@ -75,7 +90,7 @@
             <li>Откройте этот заказ в Shopify и проверьте, что адрес поменялся</li>
         </ol>
 
-        <h2>3) Стадия “Delivery” (Bitrix → Shopify)</h2>
+        <h2>3) Тест: перевести сделку в “Delivery” → в Shopify обновится доставка</h2>
         <p><strong>Действие в Bitrix:</strong> переведите сделку в стадию “Delivery”.</p>
         <p><strong>Что вы увидите в Shopify:</strong> у заказа появится/обновится информация о доставке, чтобы было видно, что заказ “в доставке”.</p>
         <p><strong>Как протестировать:</strong></p>
@@ -85,9 +100,12 @@
             <li>В Shopify откройте заказ и проверьте, что статус доставки обновился</li>
         </ol>
 
-        <h2>4) Отмена сделки (LOSE) → отмена заказа в Shopify</h2>
+        <h2>4) Тест: перевести сделку в LOSE → заказ отменится в Shopify</h2>
         <p><strong>Действие в Bitrix:</strong> переведите сделку в LOSE.</p>
         <p><strong>Что вы увидите в Shopify:</strong> связанный заказ будет отменён, товар вернётся в остатки (restock).</p>
+        <ul>
+            <li><strong>Деталь:</strong> заказ в Shopify получает метку <code>BitrixUpdated</code> после отмены из Bitrix.</li>
+        </ul>
         <p><strong>Как протестировать:</strong></p>
         <ol>
             <li>Возьмите сделку, у которой есть связанный заказ в Shopify</li>
