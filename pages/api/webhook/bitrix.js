@@ -1601,6 +1601,7 @@ async function handleDealUpdate(dealId, requestId) {
         const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
         let addressChanged = false;
         let parsedAddress = null;
+        let addressUpdateAttempted = false;
         
         if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
           // Parse address string: "Street, ZIP City Region, Country | coordinate"
@@ -1708,15 +1709,46 @@ async function handleDealUpdate(dealId, requestId) {
               }));
               
               // Prepare update payload with address and shipping lines
-              // Always include shipping_lines (like in the example script) to ensure they are preserved/updated
+              // Match the working user script: send minimal payload
               const updatePayload = {};
               
-              // Always include shipping_address if we have parsed address (match example script behavior)
+              // Always include shipping_address if we have parsed address
               if (parsedAddress && Object.keys(parsedAddress).length > 0) {
-                updatePayload.shipping_address = parsedAddress;
+                const addressForShopify = { ...parsedAddress };
+                // IMPORTANT: Shopify часто валидирует province строго по списку для страны.
+                // Bitrix строка даёт "Brussels-Capital/Flanders", что вызывает 422.
+                // Пользовательский рабочий скрипт province не отправляет — делаем так же.
+                delete addressForShopify.province;
+
+                // Try to enrich with contact name/phone if available (non-blocking)
+                try {
+                  const contactIdRaw = dealData.CONTACT_ID || dealData.contact_id || null;
+                  const contactId = contactIdRaw && String(contactIdRaw) !== '0' ? String(contactIdRaw) : null;
+                  if (contactId) {
+                    const contactResp = await callBitrix('/crm.contact.get.json', { id: contactId });
+                    const contact = contactResp?.result || null;
+                    if (contact) {
+                      if (contact.NAME && !addressForShopify.first_name) {
+                        addressForShopify.first_name = String(contact.NAME);
+                      }
+                      if (contact.LAST_NAME && !addressForShopify.last_name) {
+                        addressForShopify.last_name = String(contact.LAST_NAME);
+                      }
+                      const phoneRaw = contact.PHONE;
+                      const phoneValue = Array.isArray(phoneRaw) ? phoneRaw?.[0]?.VALUE : phoneRaw?.VALUE;
+                      if (phoneValue && !addressForShopify.phone) {
+                        addressForShopify.phone = String(phoneValue);
+                      }
+                    }
+                  }
+                } catch (contactError) {
+                  console.warn(`[BITRIX ADDRESS] Failed to enrich shipping_address from contact: ${contactError.message}`);
+                }
+
+                updatePayload.shipping_address = addressForShopify;
               }
               
-              // Always include shipping_lines - update price if changed, otherwise keep current
+              // Only include shipping_lines if delivery price changed (do not send existing lines unnecessarily)
               if (deliveryPriceChanged && deliveryPrice !== null) {
                 // Update with new price
                 const currentShippingTitle = currentShippingLines.length > 0 
@@ -1730,13 +1762,6 @@ async function handleDealUpdate(dealId, requestId) {
                     ? currentShippingLines[0].code 
                     : 'CUSTOM_EDIT'
                 }];
-              } else if (currentShippingLines.length > 0) {
-                // Keep existing shipping lines when updating address (preserve them)
-                updatePayload.shipping_lines = currentShippingLines.map(line => ({
-                  title: line.title || '',
-                  price: String(line.price || '0.00'),
-                  code: line.code || 'CUSTOM_EDIT'
-                }));
               }
               
               // Log what we're about to send (for debugging)
@@ -1756,6 +1781,7 @@ async function handleDealUpdate(dealId, requestId) {
               // Update address and shipping in Shopify
               const { updateShippingAddress } = await import('../../../src/lib/shopify/address.js');
               const correlationId = `${dealId}:${Date.now()}`;
+              addressUpdateAttempted = true;
               const addressResult = await updateShippingAddress(shopifyOrderId, updatePayload, correlationId, null);
               
               if (addressResult.success) {
@@ -1800,7 +1826,7 @@ async function handleDealUpdate(dealId, requestId) {
         
         // Check if delivery price needs to be updated (only if address wasn't updated above)
         // If address was updated, shipping_lines were already included in that update
-        const wasAddressUpdated = addressChanged && parsedAddress && Object.keys(parsedAddress).length > 0;
+        const wasAddressUpdated = addressUpdateAttempted;
         
         if (deliveryPriceChanged && !wasAddressUpdated) {
           console.log(JSON.stringify({
