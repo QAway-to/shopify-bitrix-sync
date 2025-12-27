@@ -16,7 +16,7 @@ export default function DocsLayout({
       <main className="page">
         <header className="page-header">
           <div>
-            <div className="doc-kicker">Публичная документация</div>
+            <div className="doc-kicker">Публичные страницы</div>
             <h1>{title}</h1>
             {subtitle ? <p className="subtitle">{subtitle}</p> : null}
           </div>
