@@ -14,8 +14,9 @@ export default function InstructionPage({ htmlContent }) {
   );
 }
 
-export async function getStaticProps() {
-  const filePath = path.join(process.cwd(), 'docs', '02_INSTRUKTSIYA_DLYA_MENEDZHEROV.html');
+export async function getServerSideProps({ res }) {
+  // Read from public/docs to match what is deployed as static assets.
+  const filePath = path.join(process.cwd(), 'public', 'docs', '02_INSTRUKTSIYA_DLYA_MENEDZHEROV.html');
   let htmlContent = '';
   
   try {
@@ -28,6 +29,11 @@ export async function getStaticProps() {
   } catch (error) {
     console.error('Error reading instruction HTML:', error);
     htmlContent = '<p>Ошибка загрузки документа</p>';
+  }
+
+  // Avoid stale caching of docs pages
+  if (res) {
+    res.setHeader('Cache-Control', 'no-store');
   }
 
   return {
