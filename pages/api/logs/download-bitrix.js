@@ -3,6 +3,7 @@
  * Collects logs from recent Bitrix webhook operations and returns as text file
  */
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
+import { formatCapturedConsoleEntries } from '../../../src/lib/logging/consoleCapture.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -96,12 +97,34 @@ export default async function handler(req, res) {
     logs.push('For detailed server-side logs (console.log output), check:');
     logs.push('  - Server console output (stdout/stderr)');
     logs.push('  - Application logs in production environment');
-    logs.push('  - Deployment platform logs (Vercel, Render, etc.)');
+    logs.push('  - Deployment platform logs (Render, etc.)');
     logs.push('');
     logs.push('This log file includes:');
     logs.push('  - Recent webhook events received from Bitrix');
     logs.push('  - Event metadata (deal ID, Shopify order ID, category, stage)');
     logs.push('  - Deal information');
+    logs.push('');
+
+    logs.push('='.repeat(80));
+    logs.push('SERVER CONSOLE OUTPUT (CAPTURED stdout/stderr)');
+    logs.push('='.repeat(80));
+    logs.push('');
+    logs.push('This section contains recent console.log/warn/error output captured by the app runtime.');
+    logs.push('Tip: search for events like AUTO_ADDRESS_, ADDRESS_UPDATE_, SHOPIFY Admin API error (422), etc.');
+    logs.push('');
+
+    try {
+      const consoleLines = formatCapturedConsoleEntries(5000);
+      if (consoleLines.length === 0) {
+        logs.push('No console output captured yet.');
+      } else {
+        logs.push(`Captured lines: ${consoleLines.length}`);
+        logs.push('');
+        logs.push(...consoleLines);
+      }
+    } catch (e) {
+      logs.push(`Failed to include captured console output: ${e.message}`);
+    }
     logs.push('');
     logs.push('='.repeat(80));
     logs.push(`End of log file - ${new Date().toISOString()}`);

@@ -1,4 +1,5 @@
 // Bitrix24 Webhook endpoint - receives events from Bitrix and syncs to Shopify
+import '../../../src/lib/logging/consoleCapture.js';
 import { callBitrix } from '../../../src/lib/bitrix/client.js';
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
 import { BITRIX_CONFIG } from '../../../src/lib/bitrix/config.js';

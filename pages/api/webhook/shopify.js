@@ -1,4 +1,5 @@
 // Shopify Webhook endpoint
+import '../../../src/lib/logging/consoleCapture.js';
 import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
 import { successAdapter } from '../../../src/lib/adapters/success/index.js';
 import { callBitrix, getBitrixWebhookBase, classifyBitrixError } from '../../../src/lib/bitrix/client.js';
