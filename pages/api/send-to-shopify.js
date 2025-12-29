@@ -7,6 +7,11 @@ import { setProvenanceMarker } from '../../src/lib/shopify/metafields.js';
 import { createOrderFromBitrix } from '../../src/lib/shopify/order.js';
 import { callBitrix } from '../../src/lib/bitrix/client.js';
 
+// ✅ Optional: allow creating Shopify order even when Bitrix deal has 0 product rows
+const BITRIX_ALLOW_EMPTY_PRODUCT_LINES = String(process.env.BITRIX_ALLOW_EMPTY_PRODUCT_LINES || 'true').toLowerCase() === 'true';
+const BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID = String(process.env.BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID || '53051786756360');
+const BITRIX_EMPTY_ORDER_DEFAULT_QTY = Number(process.env.BITRIX_EMPTY_ORDER_DEFAULT_QTY || 1) || 1;
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -188,7 +193,7 @@ export default async function handler(req, res) {
           id: dealId
         });
 
-        if (productRowsResp.result && Array.isArray(productRowsResp.result) && productRowsResp.result.length > 0) {
+        if (productRowsResp.result && Array.isArray(productRowsResp.result)) {
           console.log(JSON.stringify({
             event: 'UI_BITRIX_TO_SHOPIFY_ORDER_CREATE_CHECK',
             eventId: event.id,
@@ -227,6 +232,40 @@ export default async function handler(req, res) {
             }
           }
 
+          // ✅ If Bitrix sent empty product rows (0 items), optionally add default product
+          if (items.length === 0 && productRowsResp.result.length === 0 && BITRIX_ALLOW_EMPTY_PRODUCT_LINES) {
+            items.push({
+              variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
+              qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
+            });
+            console.log(JSON.stringify({
+              event: 'UI_BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
+              eventId: event.id,
+              dealId,
+              defaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
+              defaultQty: BITRIX_EMPTY_ORDER_DEFAULT_QTY,
+              reason: 'empty_product_rows',
+              timestamp: new Date().toISOString()
+            }));
+          }
+
+          // ✅ If product rows exist but we couldn't map any valid items, optionally add default product
+          if (items.length === 0 && productRowsResp.result.length > 0 && BITRIX_ALLOW_EMPTY_PRODUCT_LINES) {
+            items.push({
+              variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
+              qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
+            });
+            console.log(JSON.stringify({
+              event: 'UI_BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
+              eventId: event.id,
+              dealId,
+              defaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
+              defaultQty: BITRIX_EMPTY_ORDER_DEFAULT_QTY,
+              reason: 'no_mappable_items',
+              timestamp: new Date().toISOString()
+            }));
+          }
+
           if (items.length > 0) {
             console.log(JSON.stringify({
               event: 'UI_BITRIX_TO_SHOPIFY_ORDER_CREATE_ATTEMPT',
@@ -238,7 +277,7 @@ export default async function handler(req, res) {
             }));
 
             // Create order in Shopify
-            const correlationId = `${dealId}:${Date.now()}`;
+            const correlationId = `ui-bitrix:${dealId}:${event.id}`;
             const orderResult = await createOrderFromBitrix(items, dealId, correlationId);
 
             if (orderResult.success) {
