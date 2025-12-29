@@ -1987,64 +1987,75 @@ async function handleDealUpdate(dealId, requestId) {
           const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
             id: dealId
           });
+
+          const bitrixRows = Array.isArray(productRowsResp?.result) ? productRowsResp.result : [];
+          console.log(JSON.stringify({
+            event: 'QUANTITY_SYNC_BITRIX_ROWS',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            rowsCount: bitrixRows.length,
+            timestamp: new Date().toISOString()
+          }));
+
+          // Get line items from Shopify
+          const shopifyLineItems = shopifyOrder.line_items || [];
           
-          if (productRowsResp.result && Array.isArray(productRowsResp.result) && productRowsResp.result.length > 0) {
-            // Get line items from Shopify
-            const shopifyLineItems = shopifyOrder.line_items || [];
-            
-            // Build map of SKU -> quantity from Bitrix
-            const bitrixQuantities = new Map();
-            for (const row of productRowsResp.result) {
-              const productId = row.PRODUCT_ID;
-              if (productId) {
-                try {
-                  const productResp = await callBitrix('/crm.product.get.json', { id: productId });
-                  if (productResp.result) {
-                    // In Bitrix, SKU is stored in CODE field, not SKU field
-                    const sku = productResp.result.CODE || productResp.result.code || productResp.result.SKU || productResp.result.sku;
-                    if (sku && sku.trim() !== '') {
-                      const quantity = parseFloat(row.QUANTITY || row.quantity || 0);
-                      bitrixQuantities.set(sku.trim(), quantity);
-                    }
+          // Build map of SKU -> quantity from Bitrix
+          const bitrixQuantities = new Map();
+          for (const row of bitrixRows) {
+            const productId = row.PRODUCT_ID;
+            if (productId) {
+              try {
+                const productResp = await callBitrix('/crm.product.get.json', { id: productId });
+                if (productResp.result) {
+                  // In Bitrix, SKU is stored in CODE field, not SKU field
+                  const sku = productResp.result.CODE || productResp.result.code || productResp.result.SKU || productResp.result.sku;
+                  if (sku && sku.trim() !== '') {
+                    const quantity = parseFloat(row.QUANTITY || row.quantity || 0);
+                    bitrixQuantities.set(sku.trim(), quantity);
                   }
-                } catch (productError) {
-                  console.warn(`[SYNC QUANTITIES] Failed to get product ${productId}: ${productError.message}`);
                 }
+              } catch (productError) {
+                console.warn(`[SYNC QUANTITIES] Failed to get product ${productId}: ${productError.message}`);
               }
             }
+          }
+          
+          // Compare with Shopify and find differences.
+          // IMPORTANT: If Bitrix rows are empty, we still must decrement all Shopify SKU-backed line items to 0.
+          const quantityChanges = [];
+          for (const lineItem of shopifyLineItems) {
+            const rawSku = lineItem.sku;
+            if (!rawSku || String(rawSku).trim() === '') continue;
+
+            const sku = String(rawSku).trim();
+            const bitrixQty = bitrixQuantities.has(sku) ? bitrixQuantities.get(sku) : 0;
+            const shopifyQty = parseFloat(lineItem.quantity || 0);
             
-            // Compare with Shopify and find differences
-            const quantityChanges = [];
-            for (const lineItem of shopifyLineItems) {
-              const sku = lineItem.sku;
-              if (sku && bitrixQuantities.has(sku)) {
-                const bitrixQty = bitrixQuantities.get(sku);
-                const shopifyQty = parseFloat(lineItem.quantity || 0);
-                
-                if (Math.abs(bitrixQty - shopifyQty) > 0.01) { // Allow small floating point differences
-                  quantityChanges.push({
-                    sku,
-                    bitrixQty,
-                    shopifyQty,
-                    newQty: bitrixQty
-                  });
-                }
-              }
+            if (Math.abs(bitrixQty - shopifyQty) > 0.01) { // Allow small floating point differences
+              quantityChanges.push({
+                sku,
+                bitrixQty,
+                shopifyQty,
+                newQty: bitrixQty
+              });
             }
-            
-            // Also check for new items in Bitrix that don't exist in Shopify
-            for (const [sku, bitrixQty] of bitrixQuantities.entries()) {
-              const existsInShopify = shopifyLineItems.some(li => li.sku === sku);
-              if (!existsInShopify && bitrixQty > 0) {
-                quantityChanges.push({
-                  sku,
-                  bitrixQty,
-                  shopifyQty: 0,
-                  newQty: bitrixQty,
-                  isNew: true
-                });
-              }
+          }
+          
+          // Also check for new items in Bitrix that don't exist in Shopify
+          for (const [sku, bitrixQty] of bitrixQuantities.entries()) {
+            const existsInShopify = shopifyLineItems.some(li => String(li?.sku || '').trim() === sku);
+            if (!existsInShopify && bitrixQty > 0) {
+              quantityChanges.push({
+                sku,
+                bitrixQty,
+                shopifyQty: 0,
+                newQty: bitrixQty,
+                isNew: true
+              });
             }
+          }
             
             if (quantityChanges.length > 0) {
               console.log(JSON.stringify({
@@ -2321,7 +2332,6 @@ async function handleDealUpdate(dealId, requestId) {
                 timestamp: new Date().toISOString()
               }));
             }
-          }
         }
       }
     } catch (quantitySyncError) {
