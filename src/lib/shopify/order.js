@@ -48,7 +48,12 @@ export async function findExistingOrderByDealId(dealId) {
     return null;
   }
 
-  const tag = `BITRIX:${dealId}`;
+  const dealIdStr = String(dealId).trim();
+  // IMPORTANT:
+  // Shopify order search is notoriously flaky with ":" inside tags.
+  // We keep legacy tag for backward compatibility, but primary dedupe relies on a stable tag without ":".
+  const legacyTag = `BITRIX:${dealIdStr}`;
+  const stableTag = `BITRIX_DEAL_${dealIdStr}`;
   const query = `
     query findOrderByTag($query: String!) {
       orders(first: 1, query: $query) {
@@ -65,21 +70,98 @@ export async function findExistingOrderByDealId(dealId) {
   `;
 
   try {
-    // Shopify tag search: use quotes for tags with special characters like ':'
-    const data = await callShopifyGraphQL(query, {
-      query: `tag:'${tag}'`
-    });
+    // 1) Prefer stableTag (no ":"), should be reliably searchable.
+    const stableQueryVariants = [
+      `tag:'${stableTag}'`,
+      `tag:"${stableTag}"`,
+      `tag:${stableTag}`,
+    ];
 
-    if (data?.orders?.edges && data.orders.edges.length > 0) {
-      const order = data.orders.edges[0].node;
-      const orderId = order.legacyResourceId || order.id.split('/').pop();
-      console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealId} by tag ${tag}`);
-      return String(orderId);
+    for (const q of stableQueryVariants) {
+      try {
+        const data = await callShopifyGraphQL(query, { query: q });
+        if (data?.orders?.edges?.length) {
+          const order = data.orders.edges[0].node;
+          const tags = Array.isArray(order.tags) ? order.tags : [];
+          if (tags.includes(stableTag) || tags.includes(legacyTag)) {
+            const orderId = order.legacyResourceId || order.id.split('/').pop();
+            console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealIdStr} by stable tag ${stableTag} (query: ${q})`);
+            return String(orderId);
+          }
+        }
+      } catch {
+        // Try next variant
+      }
+    }
+
+    // 2) Legacy fallback: attempt exact tag search with ":" variants.
+    // NOTE: this may fail due to Shopify search parsing ":" in tag values.
+    const legacyQueryVariants = [
+      `tag:'${legacyTag}'`,
+      `tag:"${legacyTag}"`,
+      `tag:${legacyTag}`,
+      `tag:${legacyTag.replace(':', '\\:')}`,
+    ];
+
+    for (const q of legacyQueryVariants) {
+      try {
+        const data = await callShopifyGraphQL(query, { query: q });
+        if (data?.orders?.edges?.length) {
+          const order = data.orders.edges[0].node;
+          const tags = Array.isArray(order.tags) ? order.tags : [];
+          if (tags.includes(legacyTag) || tags.includes(stableTag)) {
+            const orderId = order.legacyResourceId || order.id.split('/').pop();
+            console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealIdStr} by legacy tag ${legacyTag} (query: ${q})`);
+            return String(orderId);
+          }
+        }
+      } catch (variantError) {
+        // Try next variant
+      }
+    }
+
+    // 3) Last resort: fetch a small batch and filter client-side.
+    // Use stable prefix to avoid ":" parsing quirks.
+    const fallbackQuery = `
+      query findOrderByGenericTag($query: String!) {
+        orders(first: 25, query: $query) {
+          edges {
+            node {
+              id
+              legacyResourceId
+              name
+              tags
+            }
+          }
+        }
+      }
+    `;
+    const fallbackQueries = [
+      `tag:${stableTag}`,        // exact stable tag
+      `tag:BITRIX_DEAL_`,        // prefix-ish (Shopify may treat as contains)
+      `tag:"BITRIX_DEAL_"`,
+    ];
+    for (const fq of fallbackQueries) {
+      try {
+        const fallbackData = await callShopifyGraphQL(fallbackQuery, { query: fq });
+        const edges = fallbackData?.orders?.edges || [];
+        for (const edge of edges) {
+          const order = edge?.node;
+          const tags = Array.isArray(order?.tags) ? order.tags : [];
+          if (tags.includes(stableTag) || tags.includes(legacyTag)) {
+            const orderId = order.legacyResourceId || order.id.split('/').pop();
+            console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealIdStr} by scanning orders (query: ${fq})`);
+            return String(orderId);
+          }
+        }
+      } catch {
+        // keep trying next fallback query
+      }
     }
 
     return null;
   } catch (error) {
-    console.warn(`[FIND EXISTING ORDER] Error searching for order by tag ${tag}:`, error.message);
+    console.warn(`[FIND EXISTING ORDER] Error searching for order by tag for deal ${dealIdStr}:`, error.message);
     return null; // Don't block order creation if search fails
   }
 }
@@ -387,11 +469,14 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     });
   }
 
-  // Build tags: ["BITRIX:{dealId}"]
-  // BITRIX:{dealId} tag is used for duplicate detection, linking to Bitrix deal, and identifying orders created from Bitrix
+  // Build tags:
+  // - Stable: BITRIX_DEAL_{dealId} (preferred for search & dedupe; avoids ":" parsing quirks in Shopify search)
+  // - Legacy: BITRIX:{dealId} (kept for backward compatibility)
   const tags = [];
   if (dealId) {
-    tags.push(`BITRIX:${dealId}`);
+    const dealIdStr = String(dealId).trim();
+    tags.push(`BITRIX_DEAL_${dealIdStr}`);
+    tags.push(`BITRIX:${dealIdStr}`);
   }
 
   // Build note with order information
