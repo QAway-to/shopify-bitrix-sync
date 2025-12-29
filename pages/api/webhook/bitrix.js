@@ -2096,6 +2096,138 @@ async function handleDealUpdate(dealId, requestId) {
                 }
               }
               
+              // ✅ STEP C2.1: Clean up stub order if real products were added
+              // If order was a stub (has BITRIX_STUB tag) and now has real products, remove stub marker
+              const hasStubTag = orderTags.includes('BITRIX_STUB');
+              const hasRealProducts = bitrixQuantities.size > 0;
+              
+              if (hasStubTag && hasRealProducts) {
+                console.log(JSON.stringify({
+                  event: 'STUB_ORDER_CLEANUP_START',
+                  requestId,
+                  dealId,
+                  shopifyOrderId,
+                  bitrixProductsCount: bitrixQuantities.size,
+                  timestamp: new Date().toISOString()
+                }));
+                
+                try {
+                  // Step 1: Remove default variant (53051786756360) if it exists
+                  const defaultVariantId = BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID;
+                  
+                  // Use orderEdit API to find and remove the default variant line item
+                  const { beginOrderEdit, setLineItemQuantity, commitOrderEdit } = await import('../../../src/lib/shopify/orderEdit.js');
+                  
+                  const beginResult = await beginOrderEdit(shopifyOrderId);
+                  if (beginResult.success) {
+                    // Find the line item with default variant in calculated order
+                    const calculatedLineItems = beginResult.lineItems || [];
+                    const calculatedDefaultItem = calculatedLineItems.find(li => {
+                      if (!li.variant) return false;
+                      // Try legacyResourceId first (numeric ID), then extract from GraphQL ID
+                      const liVariantId = li.variant.legacyResourceId 
+                        ? String(li.variant.legacyResourceId)
+                        : (li.variant.id ? String(li.variant.id).split('/').pop() : null);
+                      return liVariantId === defaultVariantId;
+                    });
+                    
+                    if (calculatedDefaultItem && calculatedDefaultItem.quantity > 0) {
+                      // Set quantity to 0 to remove it
+                      const setResult = await setLineItemQuantity(
+                        beginResult.calculatedOrderId,
+                        calculatedDefaultItem.id,
+                        0
+                      );
+                      
+                      if (setResult.success) {
+                        const commitResult = await commitOrderEdit(beginResult.calculatedOrderId);
+                        if (commitResult.success) {
+                          console.log(JSON.stringify({
+                            event: 'STUB_ORDER_DEFAULT_VARIANT_REMOVED',
+                            requestId,
+                            dealId,
+                            shopifyOrderId,
+                            defaultVariantId,
+                            timestamp: new Date().toISOString()
+                          }));
+                        }
+                      }
+                    }
+                  }
+                  
+                  // Step 2: Remove BITRIX_STUB tag and update note
+                  const { callShopifyAdmin, getOrder } = await import('../../../src/lib/shopify/adminClient.js');
+                  const currentOrder = await getOrder(shopifyOrderId);
+                  
+                  if (currentOrder) {
+                    const currentTags = Array.isArray(currentOrder.tags)
+                      ? currentOrder.tags
+                      : (currentOrder.tags ? String(currentOrder.tags).split(',').map(t => t.trim()) : []);
+                    
+                    const updatedTags = currentTags.filter(tag => tag !== 'BITRIX_STUB');
+                    const currentNote = currentOrder.note || '';
+                    const shouldUpdateNote = currentNote.includes('STUB ORDER');
+                    const updatedNote = shouldUpdateNote ? `Ордер из Bitrix. Сделка: ${dealId}` : currentNote;
+                    
+                    // Update order to remove BITRIX_STUB tag and update note if needed
+                    if (updatedTags.length !== currentTags.length || shouldUpdateNote) {
+                      await callShopifyAdmin(`/orders/${shopifyOrderId}.json`, {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                          order: {
+                            id: shopifyOrderId,
+                            tags: updatedTags.join(', '),
+                            note: updatedNote
+                          }
+                        })
+                      });
+                      
+                      if (updatedTags.length !== currentTags.length) {
+                        console.log(JSON.stringify({
+                          event: 'STUB_ORDER_TAG_REMOVED',
+                          requestId,
+                          dealId,
+                          shopifyOrderId,
+                          removedTag: 'BITRIX_STUB',
+                          timestamp: new Date().toISOString()
+                        }));
+                      }
+                      
+                      if (shouldUpdateNote) {
+                        console.log(JSON.stringify({
+                          event: 'STUB_ORDER_NOTE_UPDATED',
+                          requestId,
+                          dealId,
+                          shopifyOrderId,
+                          oldNote: currentNote.substring(0, 100),
+                          newNote: updatedNote,
+                          timestamp: new Date().toISOString()
+                        }));
+                      }
+                    }
+                  }
+                  
+                  console.log(JSON.stringify({
+                    event: 'STUB_ORDER_CLEANUP_SUCCESS',
+                    requestId,
+                    dealId,
+                    shopifyOrderId,
+                    timestamp: new Date().toISOString()
+                  }));
+                } catch (stubCleanupError) {
+                  console.warn(`[STUB CLEANUP] Failed to clean up stub order: ${stubCleanupError.message}`);
+                  console.log(JSON.stringify({
+                    event: 'STUB_ORDER_CLEANUP_ERROR',
+                    requestId,
+                    dealId,
+                    shopifyOrderId,
+                    error: stubCleanupError.message,
+                    stack: stubCleanupError.stack,
+                    timestamp: new Date().toISOString()
+                  }));
+                }
+              }
+              
               // Add BitrixUpdated tag if any changes were made
               if (hasChanges) {
                 try {

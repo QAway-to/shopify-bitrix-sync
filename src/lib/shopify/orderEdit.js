@@ -12,7 +12,7 @@ import { getVariantIdsBySkus } from './hold.js';
  * @param {string|number} orderId - Shopify order ID
  * @returns {Promise<Object>} Calculated order with line items
  */
-async function beginOrderEdit(orderId) {
+export async function beginOrderEdit(orderId) {
   const orderGid = `gid://shopify/Order/${orderId}`;
   
   const mutation = `
@@ -27,6 +27,7 @@ async function beginOrderEdit(orderId) {
                 quantity
                 variant {
                   id
+                  legacyResourceId
                   sku
                 }
               }
@@ -129,7 +130,7 @@ async function addVariantToEdit(calculatedOrderId, variantId, quantity) {
  * @param {number} quantity - New quantity
  * @returns {Promise<Object>} Result
  */
-async function setLineItemQuantity(calculatedOrderId, lineItemId, quantity) {
+export async function setLineItemQuantity(calculatedOrderId, lineItemId, quantity) {
   const mutation = `
     mutation orderEditSetQuantity($id: ID!, $lineItemId: ID!, $quantity: Int!) {
       orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $quantity) {
@@ -174,7 +175,7 @@ async function setLineItemQuantity(calculatedOrderId, lineItemId, quantity) {
  * @param {string} calculatedOrderId - Calculated order ID from orderEditBegin
  * @returns {Promise<Object>} Updated order data
  */
-async function commitOrderEdit(calculatedOrderId) {
+export async function commitOrderEdit(calculatedOrderId) {
   const mutation = `
     mutation orderEditCommit($id: ID!) {
       orderEditCommit(id: $id) {
