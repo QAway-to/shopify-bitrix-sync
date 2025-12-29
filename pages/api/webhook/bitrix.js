@@ -16,6 +16,73 @@ import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
 
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
+const BITRIX_FALLBACK_CUSTOMER_EMAIL = String(process.env.BITRIX_FALLBACK_CUSTOMER_EMAIL || 'hold@bfcshoes.local');
+
+async function resolveCustomerEmailFromDeal(dealData, requestId, dealId, context) {
+  const contactIdRaw = dealData?.CONTACT_ID || dealData?.contact_id || null;
+  const contactId = contactIdRaw && String(contactIdRaw) !== '0' ? String(contactIdRaw) : null;
+
+  if (!contactId) {
+    console.log(JSON.stringify({
+      event: 'BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+      requestId,
+      dealId,
+      context,
+      source: 'fallback_no_contact_id',
+      email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
+      timestamp: new Date().toISOString()
+    }));
+    return BITRIX_FALLBACK_CUSTOMER_EMAIL;
+  }
+
+  try {
+    const contactResp = await callBitrix('/crm.contact.get.json', { id: contactId });
+    const contact = contactResp?.result || null;
+
+    const emailRaw = contact?.EMAIL;
+    const emailValue = Array.isArray(emailRaw) ? emailRaw?.[0]?.VALUE : (emailRaw?.VALUE || emailRaw);
+    const email = emailValue && String(emailValue).trim() !== '' ? String(emailValue).trim() : null;
+
+    if (email) {
+      console.log(JSON.stringify({
+        event: 'BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+        requestId,
+        dealId,
+        context,
+        source: 'contact',
+        contactId,
+        email,
+        timestamp: new Date().toISOString()
+      }));
+      return email;
+    }
+
+    console.log(JSON.stringify({
+      event: 'BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+      requestId,
+      dealId,
+      context,
+      source: 'fallback_contact_has_no_email',
+      contactId,
+      email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
+      timestamp: new Date().toISOString()
+    }));
+    return BITRIX_FALLBACK_CUSTOMER_EMAIL;
+  } catch (err) {
+    console.log(JSON.stringify({
+      event: 'BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+      requestId,
+      dealId,
+      context,
+      source: 'fallback_contact_fetch_error',
+      contactId,
+      email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
+      error: err?.message || String(err),
+      timestamp: new Date().toISOString()
+    }));
+    return BITRIX_FALLBACK_CUSTOMER_EMAIL;
+  }
+}
 
 // ✅ Optional: allow creating Shopify order even when Bitrix deal has 0 product rows.
 // Useful when Bitrix sends empty product line but we still want to reserve inventory / create placeholder order.
@@ -2530,9 +2597,11 @@ async function handleDealUpdate(dealId, requestId) {
 
           // Create order in Shopify (stable per webhook request for traceability)
           const correlationId = `bitrix:${dealId}:${requestId}`;
+          const customerEmail = await resolveCustomerEmailFromDeal(dealData, requestId, dealId, 'ORDER_CREATE_UPDATE');
           const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
             shippingAddress,
             shippingLines,
+            customerEmail,
             isStubOrder,
             stubReason,
             stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null
@@ -3450,9 +3519,11 @@ async function handleDealCreate(dealId, requestId) {
 
           // Create order in Shopify (stable per webhook request for traceability)
           const correlationId = `bitrix:${dealId}:${requestId}`;
+          const customerEmail = await resolveCustomerEmailFromDeal(dealData, requestId, dealId, 'ORDER_CREATE_CREATE');
           const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
             shippingAddress,
             shippingLines,
+            customerEmail,
             isStubOrder,
             stubReason,
             stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null

@@ -11,6 +11,69 @@ import { callBitrix } from '../../src/lib/bitrix/client.js';
 const BITRIX_ALLOW_EMPTY_PRODUCT_LINES = String(process.env.BITRIX_ALLOW_EMPTY_PRODUCT_LINES || 'true').toLowerCase() === 'true';
 const BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID = String(process.env.BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID || '53051786756360');
 const BITRIX_EMPTY_ORDER_DEFAULT_QTY = Number(process.env.BITRIX_EMPTY_ORDER_DEFAULT_QTY || 1) || 1;
+const BITRIX_FALLBACK_CUSTOMER_EMAIL = String(process.env.BITRIX_FALLBACK_CUSTOMER_EMAIL || 'hold@bfcshoes.local');
+
+async function resolveCustomerEmailForDeal(dealId, correlationId) {
+  try {
+    const dealResp = await callBitrix('/crm.deal.get.json', { id: dealId });
+    const dealData = dealResp?.result || null;
+    const contactIdRaw = dealData?.CONTACT_ID || dealData?.contact_id || null;
+    const contactId = contactIdRaw && String(contactIdRaw) !== '0' ? String(contactIdRaw) : null;
+
+    if (!contactId) {
+      console.log(JSON.stringify({
+        event: 'UI_BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+        dealId,
+        correlationId,
+        source: 'fallback_no_contact_id',
+        email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
+        timestamp: new Date().toISOString()
+      }));
+      return BITRIX_FALLBACK_CUSTOMER_EMAIL;
+    }
+
+    const contactResp = await callBitrix('/crm.contact.get.json', { id: contactId });
+    const contact = contactResp?.result || null;
+    const emailRaw = contact?.EMAIL;
+    const emailValue = Array.isArray(emailRaw) ? emailRaw?.[0]?.VALUE : (emailRaw?.VALUE || emailRaw);
+    const email = emailValue && String(emailValue).trim() !== '' ? String(emailValue).trim() : null;
+
+    if (email) {
+      console.log(JSON.stringify({
+        event: 'UI_BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+        dealId,
+        correlationId,
+        source: 'contact',
+        contactId,
+        email,
+        timestamp: new Date().toISOString()
+      }));
+      return email;
+    }
+
+    console.log(JSON.stringify({
+      event: 'UI_BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+      dealId,
+      correlationId,
+      source: 'fallback_contact_has_no_email',
+      contactId,
+      email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
+      timestamp: new Date().toISOString()
+    }));
+    return BITRIX_FALLBACK_CUSTOMER_EMAIL;
+  } catch (err) {
+    console.log(JSON.stringify({
+      event: 'UI_BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+      dealId,
+      correlationId,
+      source: 'fallback_error',
+      email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
+      error: err?.message || String(err),
+      timestamp: new Date().toISOString()
+    }));
+    return BITRIX_FALLBACK_CUSTOMER_EMAIL;
+  }
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -284,7 +347,9 @@ export default async function handler(req, res) {
 
             // Create order in Shopify
             const correlationId = `ui-bitrix:${dealId}:${event.id}`;
+            const customerEmail = await resolveCustomerEmailForDeal(dealId, correlationId);
             const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
+              customerEmail,
               isStubOrder,
               stubReason,
               stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null

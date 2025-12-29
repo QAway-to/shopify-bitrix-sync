@@ -484,6 +484,8 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
   const isStubOrder = !!options?.isStubOrder;
   const stubReason = options?.stubReason ? String(options.stubReason) : null;
   const stubDefaultVariantId = options?.stubDefaultVariantId ? String(options.stubDefaultVariantId) : null;
+  const customerEmailRaw = options?.customerEmail ? String(options.customerEmail) : '';
+  const customerEmail = customerEmailRaw && customerEmailRaw.trim() !== '' ? customerEmailRaw.trim() : null;
 
   // ✅ CRITICAL STEP 0: Fast cache check (prevents duplicates when Shopify search lags)
   const cachedOrderId = getRecentOrderId(dealId);
@@ -722,7 +724,8 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     lineItems: lineItems,
     tags: tags,
     note: note,
-    email: 'hold@bfcshoes.local',
+    // Email is optional for drafts / internal orders, but we try to use real Bitrix contact email if available
+    email: customerEmail || 'hold@bfcshoes.local',
     taxesIncluded: true // Tax is already included in price (to prevent +19% on top)
   };
 
