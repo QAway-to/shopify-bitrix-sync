@@ -481,6 +481,10 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     throw new Error('Deal ID is required');
   }
 
+  const isStubOrder = !!options?.isStubOrder;
+  const stubReason = options?.stubReason ? String(options.stubReason) : null;
+  const stubDefaultVariantId = options?.stubDefaultVariantId ? String(options.stubDefaultVariantId) : null;
+
   // ✅ CRITICAL STEP 0: Fast cache check (prevents duplicates when Shopify search lags)
   const cachedOrderId = getRecentOrderId(dealId);
   if (cachedOrderId) {
@@ -497,8 +501,10 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       orderName: `Existing order ${cachedOrderId}`,
       wasDuplicate: true,
       lineItems: [],
-      tags: [`BITRIX:${dealId}`],
-      note: `Ордер из Bitrix. Сделка: ${dealId}`
+      tags: [`BITRIX:${dealId}`, ...(isStubOrder ? ['BITRIX_STUB'] : [])],
+      note: isStubOrder
+        ? `STUB ORDER (Bitrix): deal=${dealId}${stubReason ? `; reason=${stubReason}` : ''}${stubDefaultVariantId ? `; default_variant=${stubDefaultVariantId}` : ''}`
+        : `Ордер из Bitrix. Сделка: ${dealId}`
     };
   }
 
@@ -529,8 +535,10 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
           orderName: `Existing order ${cached}`,
           wasDuplicate: true,
           lineItems: [],
-          tags: [`BITRIX:${dealId}`],
-          note: `Ордер из Bitrix. Сделка: ${dealId}`
+          tags: [`BITRIX:${dealId}`, ...(isStubOrder ? ['BITRIX_STUB'] : [])],
+          note: isStubOrder
+            ? `STUB ORDER (Bitrix): deal=${dealId}${stubReason ? `; reason=${stubReason}` : ''}${stubDefaultVariantId ? `; default_variant=${stubDefaultVariantId}` : ''}`
+            : `Ордер из Bitrix. Сделка: ${dealId}`
         };
       }
       
@@ -545,8 +553,10 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
           orderName: `Existing order ${existingOrderId}`,
           wasDuplicate: true,
           lineItems: [],
-          tags: [`BITRIX:${dealId}`],
-          note: `Ордер из Bitrix. Сделка: ${dealId}`
+          tags: [`BITRIX:${dealId}`, ...(isStubOrder ? ['BITRIX_STUB'] : [])],
+          note: isStubOrder
+            ? `STUB ORDER (Bitrix): deal=${dealId}${stubReason ? `; reason=${stubReason}` : ''}${stubDefaultVariantId ? `; default_variant=${stubDefaultVariantId}` : ''}`
+            : `Ордер из Bitrix. Сделка: ${dealId}`
         };
       }
       
@@ -572,8 +582,10 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
         orderName: `Existing order ${finalExistingOrderId}`,
         wasDuplicate: true,
         lineItems: [],
-          tags: [`BITRIX:${dealId}`],
-          note: `Ордер из Bitrix. Сделка: ${dealId}`
+          tags: [`BITRIX:${dealId}`, ...(isStubOrder ? ['BITRIX_STUB'] : [])],
+          note: isStubOrder
+            ? `STUB ORDER (Bitrix): deal=${dealId}${stubReason ? `; reason=${stubReason}` : ''}${stubDefaultVariantId ? `; default_variant=${stubDefaultVariantId}` : ''}`
+            : `Ордер из Bitrix. Сделка: ${dealId}`
       };
     }
     
@@ -602,8 +614,10 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
           orderName: `Existing order ${existingOrderId}`,
           wasDuplicate: true,
           lineItems: [],
-          tags: [`BITRIX:${dealId}`],
-          note: `Ордер из Bitrix. Сделка: ${dealId}`
+          tags: [`BITRIX:${dealId}`, ...(isStubOrder ? ['BITRIX_STUB'] : [])],
+          note: isStubOrder
+            ? `STUB ORDER (Bitrix): deal=${dealId}${stubReason ? `; reason=${stubReason}` : ''}${stubDefaultVariantId ? `; default_variant=${stubDefaultVariantId}` : ''}`
+            : `Ордер из Bitrix. Сделка: ${dealId}`
         };
       }
       if (preCheck < 3) {
@@ -661,9 +675,15 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
   if (dealId) {
     tags.push(`BITRIX:${dealId}`);
   }
+  if (isStubOrder) {
+    // Separate tag (no colon) to be easily visible and searchable in Shopify UI
+    tags.push('BITRIX_STUB');
+  }
 
   // Build note with order information
-  const note = `Ордер из Bitrix. Сделка: ${dealId}`;
+  const note = isStubOrder
+    ? `STUB ORDER (Bitrix): deal=${dealId}${stubReason ? `; reason=${stubReason}` : ''}${stubDefaultVariantId ? `; default_variant=${stubDefaultVariantId}` : ''}`
+    : `Ордер из Bitrix. Сделка: ${dealId}`;
 
   const mutation = `
     mutation orderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {

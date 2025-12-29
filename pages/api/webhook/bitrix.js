@@ -2256,6 +2256,8 @@ async function handleDealUpdate(dealId, requestId) {
         // Convert Bitrix product rows to Shopify items
         // Need to get SKU from Bitrix product by PRODUCT_ID
         const items = [];
+        let isStubOrder = false;
+        let stubReason = null;
         for (const row of productRowsResp.result) {
           const productId = row.PRODUCT_ID;
           if (!productId) continue;
@@ -2311,6 +2313,8 @@ async function handleDealUpdate(dealId, requestId) {
             variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
             qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
           });
+          isStubOrder = true;
+          stubReason = 'empty_product_rows';
           console.log(JSON.stringify({
             event: 'BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
             requestId,
@@ -2329,6 +2333,8 @@ async function handleDealUpdate(dealId, requestId) {
             variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
             qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
           });
+          isStubOrder = true;
+          stubReason = 'no_mappable_items';
           console.log(JSON.stringify({
             event: 'BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
             requestId,
@@ -2394,7 +2400,10 @@ async function handleDealUpdate(dealId, requestId) {
           const correlationId = `bitrix:${dealId}:${requestId}`;
           const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
             shippingAddress,
-            shippingLines
+            shippingLines,
+            isStubOrder,
+            stubReason,
+            stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null
           });
 
           if (orderResult.success) {
@@ -3161,6 +3170,8 @@ async function handleDealCreate(dealId, requestId) {
         // Convert Bitrix product rows to Shopify items
         // Need to get SKU from Bitrix product by PRODUCT_ID
         const items = [];
+        let isStubOrder = false;
+        let stubReason = null;
         for (const row of productRowsResp.result) {
           const productId = row.PRODUCT_ID;
           if (!productId) continue;
@@ -3222,6 +3233,8 @@ async function handleDealCreate(dealId, requestId) {
             variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
             qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
           });
+          isStubOrder = true;
+          stubReason = 'empty_product_rows';
           console.log(JSON.stringify({
             event: 'BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
             requestId,
@@ -3240,6 +3253,8 @@ async function handleDealCreate(dealId, requestId) {
             variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
             qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
           });
+          isStubOrder = true;
+          stubReason = 'no_mappable_items';
           console.log(JSON.stringify({
             event: 'BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
             requestId,
@@ -3305,7 +3320,10 @@ async function handleDealCreate(dealId, requestId) {
           const correlationId = `bitrix:${dealId}:${requestId}`;
           const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
             shippingAddress,
-            shippingLines
+            shippingLines,
+            isStubOrder,
+            stubReason,
+            stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null
           });
 
           if (orderResult.success) {

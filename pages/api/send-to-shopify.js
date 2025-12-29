@@ -204,6 +204,8 @@ export default async function handler(req, res) {
 
           // Convert Bitrix product rows to Shopify items
           const items = [];
+          let isStubOrder = false;
+          let stubReason = null;
           for (const row of productRowsResp.result) {
             const productId = row.PRODUCT_ID;
             if (!productId) continue;
@@ -238,6 +240,8 @@ export default async function handler(req, res) {
               variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
               qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
             });
+            isStubOrder = true;
+            stubReason = 'empty_product_rows';
             console.log(JSON.stringify({
               event: 'UI_BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
               eventId: event.id,
@@ -255,6 +259,8 @@ export default async function handler(req, res) {
               variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
               qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
             });
+            isStubOrder = true;
+            stubReason = 'no_mappable_items';
             console.log(JSON.stringify({
               event: 'UI_BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
               eventId: event.id,
@@ -278,7 +284,11 @@ export default async function handler(req, res) {
 
             // Create order in Shopify
             const correlationId = `ui-bitrix:${dealId}:${event.id}`;
-            const orderResult = await createOrderFromBitrix(items, dealId, correlationId);
+            const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
+              isStubOrder,
+              stubReason,
+              stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null
+            });
 
             if (orderResult.success) {
               // Save shopifyOrderId back to Bitrix deal
