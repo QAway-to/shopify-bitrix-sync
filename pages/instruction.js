@@ -89,6 +89,42 @@ export default function InstructionPage() {
             </ol>
           </SectionCard>
 
+          <SectionCard title="1.1) Тест: создать сделку БЕЗ товаров → появится заглушка в Shopify">
+            <p>
+              <strong>Действие в Bitrix:</strong> создайте сделку, но <strong>не добавляйте товары</strong> (или добавьте товары без SKU/XML_ID).
+            </p>
+            <p>
+              <strong>Что вы увидите в Shopify:</strong> появится заказ-заглушка с дефолтным товаром.
+            </p>
+            <ul>
+              <li>
+                <strong>Визуальная маркировка:</strong> у заказа будет тег <code>BITRIX_STUB</code> и note с пометкой "STUB ORDER".
+              </li>
+              <li>
+                <strong>Автоматическая очистка:</strong> если позже в Bitrix добавятся реальные товары, заглушка автоматически очистится:
+                <ul>
+                  <li>Дефолтный товар будет удалён</li>
+                  <li>Тег <code>BITRIX_STUB</code> будет убран</li>
+                  <li>Note обновится на обычный формат</li>
+                </ul>
+              </li>
+              <li>
+                <strong>Деталь:</strong> название сделки в Bitrix обновится и станет номером заказа Shopify.
+              </li>
+            </ul>
+            <p>
+              <strong>Как протестировать:</strong>
+            </p>
+            <ol>
+              <li>Создайте новую сделку в Bitrix <strong>без товаров</strong></li>
+              <li>Подождите 10–60 секунд</li>
+              <li>Откройте Shopify → Orders → найдите заказ с тегом <code>BITRIX_STUB</code></li>
+              <li>Добавьте товары в сделку в Bitrix</li>
+              <li>Подождите ещё 10–60 секунд</li>
+              <li>Проверьте, что тег <code>BITRIX_STUB</code> исчез, а дефолтный товар удалён</li>
+            </ol>
+          </SectionCard>
+
           <SectionCard title="2) Тест: изменить адрес в Bitrix → адрес обновится в Shopify">
             <p>
               <strong>Действие в Bitrix:</strong> измените адрес доставки в сделке.
