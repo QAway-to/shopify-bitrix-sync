@@ -9,6 +9,179 @@ import { getVariantIdsBySkus } from './hold.js';
 // In-memory lock to prevent concurrent order creation for the same deal
 const dealIdLocks = new Map();
 
+// In-memory cache of recently created / detected orders per dealId.
+// This specifically mitigates Shopify search/tag indexing lag + concurrent Bitrix webhooks.
+const RECENT_ORDER_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const dealIdRecentOrders = new Map(); // dealId -> { orderId: string, ts: number }
+
+function getRecentOrderId(dealId) {
+  const key = String(dealId || '').trim();
+  if (!key) return null;
+  const entry = dealIdRecentOrders.get(key);
+  if (!entry) return null;
+  const age = Date.now() - entry.ts;
+  if (age > RECENT_ORDER_TTL_MS) {
+    dealIdRecentOrders.delete(key);
+    return null;
+  }
+  return entry.orderId ? String(entry.orderId) : null;
+}
+
+function setRecentOrderId(dealId, orderId) {
+  const key = String(dealId || '').trim();
+  const val = String(orderId || '').trim();
+  if (!key || !val) return;
+  dealIdRecentOrders.set(key, { orderId: val, ts: Date.now() });
+}
+
+async function findOrdersByDealId(dealId, first = 10) {
+  if (!dealId) return [];
+  const tag = `BITRIX:${String(dealId).trim()}`;
+
+  const query = `
+    query findOrdersByTag($first: Int!, $query: String!) {
+      orders(first: $first, query: $query) {
+        edges {
+          node {
+            id
+            legacyResourceId
+            name
+            createdAt
+            tags
+          }
+        }
+      }
+    }
+  `;
+
+  // Shopify search can be finicky with ":" inside tags. Try variants and merge results.
+  const queryVariants = [
+    `tag:'${tag}'`,
+    `tag:"${tag}"`,
+    `tag:${tag}`,
+    `tag:${tag.replace(':', '\\:')}`,
+  ];
+
+  const byId = new Map(); // orderId -> orderInfo
+
+  for (const q of queryVariants) {
+    try {
+      const data = await callShopifyGraphQL(query, { first, query: q });
+      const edges = data?.orders?.edges || [];
+      for (const edge of edges) {
+        const node = edge?.node;
+        if (!node) continue;
+        const tags = Array.isArray(node.tags) ? node.tags : [];
+        if (!tags.includes(tag)) continue;
+        const orderId = String(node.legacyResourceId || node.id?.split('/').pop() || '').trim();
+        if (!orderId) continue;
+        byId.set(orderId, {
+          orderId,
+          name: node.name || null,
+          createdAt: node.createdAt || null,
+          tags,
+        });
+      }
+    } catch {
+      // ignore and try next variant
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
+function pickCanonicalOrderId(orders) {
+  if (!orders || orders.length === 0) return null;
+  // Prefer lowest numeric orderId (stable + correlates with earliest creation).
+  const sorted = [...orders].sort((a, b) => {
+    const ai = Number(a.orderId);
+    const bi = Number(b.orderId);
+    const aNum = Number.isFinite(ai) ? ai : Number.MAX_SAFE_INTEGER;
+    const bNum = Number.isFinite(bi) ? bi : Number.MAX_SAFE_INTEGER;
+    if (aNum !== bNum) return aNum - bNum;
+    const ac = a.createdAt || '';
+    const bc = b.createdAt || '';
+    return ac.localeCompare(bc);
+  });
+  return sorted[0].orderId;
+}
+
+async function reconcileDuplicateOrdersForDeal(dealId, createdOrderId, correlationId) {
+  // Best-effort: if multiple orders exist for same deal tag, cancel extras and return canonical orderId.
+  try {
+    // Small delay to allow Shopify indexing to catch up.
+    await new Promise(resolve => setTimeout(resolve, 1200));
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const orders = await findOrdersByDealId(dealId, 10);
+      if (orders.length <= 1) {
+        return String(createdOrderId);
+      }
+
+      const canonicalId = pickCanonicalOrderId(orders);
+      const extras = orders
+        .map(o => o.orderId)
+        .filter(id => id && id !== canonicalId);
+
+      console.warn(JSON.stringify({
+        event: 'CREATE_ORDER_FROM_BITRIX_DUPLICATE_RECONCILE_DETECTED',
+        dealId,
+        correlationId,
+        attempt,
+        orders: orders.map(o => ({ orderId: o.orderId, name: o.name, createdAt: o.createdAt })),
+        canonicalId,
+        extras,
+        timestamp: new Date().toISOString()
+      }));
+
+      for (const extraId of extras) {
+        try {
+          const cancelRes = await cancelOrderById(extraId, false);
+          console.log(JSON.stringify({
+            event: 'CREATE_ORDER_FROM_BITRIX_DUPLICATE_RECONCILE_CANCELLED',
+            dealId,
+            correlationId,
+            canonicalId,
+            cancelledOrderId: extraId,
+            cancelSuccess: !!cancelRes?.success,
+            cancelError: cancelRes?.error || null,
+            timestamp: new Date().toISOString()
+          }));
+        } catch (cancelErr) {
+          console.error(JSON.stringify({
+            event: 'CREATE_ORDER_FROM_BITRIX_DUPLICATE_RECONCILE_CANCEL_ERROR',
+            dealId,
+            correlationId,
+            canonicalId,
+            cancelledOrderId: extraId,
+            error: cancelErr.message,
+            timestamp: new Date().toISOString()
+          }));
+        }
+      }
+
+      if (canonicalId) {
+        setRecentOrderId(dealId, canonicalId);
+        return String(canonicalId);
+      }
+
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 800));
+    }
+
+    return String(createdOrderId);
+  } catch (e) {
+    console.warn(JSON.stringify({
+      event: 'CREATE_ORDER_FROM_BITRIX_DUPLICATE_RECONCILE_ERROR',
+      dealId,
+      correlationId,
+      createdOrderId,
+      error: e.message,
+      timestamp: new Date().toISOString()
+    }));
+    return String(createdOrderId);
+  }
+}
+
 /**
  * Acquire lock for dealId (returns true if acquired, false if already locked)
  */
@@ -48,12 +221,13 @@ export async function findExistingOrderByDealId(dealId) {
     return null;
   }
 
-  const dealIdStr = String(dealId).trim();
-  // IMPORTANT:
-  // Shopify order search is notoriously flaky with ":" inside tags.
-  // We keep legacy tag for backward compatibility, but primary dedupe relies on a stable tag without ":".
-  const legacyTag = `BITRIX:${dealIdStr}`;
-  const stableTag = `BITRIX_DEAL_${dealIdStr}`;
+  // Fast path: in-memory cache (avoids Shopify search indexing lag)
+  const cached = getRecentOrderId(dealId);
+  if (cached) {
+    return cached;
+  }
+
+  const tag = `BITRIX:${String(dealId).trim()}`;
   const query = `
     query findOrderByTag($query: String!) {
       orders(first: 1, query: $query) {
@@ -70,48 +244,24 @@ export async function findExistingOrderByDealId(dealId) {
   `;
 
   try {
-    // 1) Prefer stableTag (no ":"), should be reliably searchable.
-    const stableQueryVariants = [
-      `tag:'${stableTag}'`,
-      `tag:"${stableTag}"`,
-      `tag:${stableTag}`,
+    // Shopify search can be finicky with ":" inside tags. Try a few query variants.
+    const queryVariants = [
+      `tag:'${tag}'`,
+      `tag:"${tag}"`,
+      `tag:${tag}`,
+      `tag:${tag.replace(':', '\\:')}`,
     ];
 
-    for (const q of stableQueryVariants) {
+    for (const q of queryVariants) {
       try {
         const data = await callShopifyGraphQL(query, { query: q });
         if (data?.orders?.edges?.length) {
           const order = data.orders.edges[0].node;
           const tags = Array.isArray(order.tags) ? order.tags : [];
-          if (tags.includes(stableTag) || tags.includes(legacyTag)) {
+          if (tags.includes(tag)) {
             const orderId = order.legacyResourceId || order.id.split('/').pop();
-            console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealIdStr} by stable tag ${stableTag} (query: ${q})`);
-            return String(orderId);
-          }
-        }
-      } catch {
-        // Try next variant
-      }
-    }
-
-    // 2) Legacy fallback: attempt exact tag search with ":" variants.
-    // NOTE: this may fail due to Shopify search parsing ":" in tag values.
-    const legacyQueryVariants = [
-      `tag:'${legacyTag}'`,
-      `tag:"${legacyTag}"`,
-      `tag:${legacyTag}`,
-      `tag:${legacyTag.replace(':', '\\:')}`,
-    ];
-
-    for (const q of legacyQueryVariants) {
-      try {
-        const data = await callShopifyGraphQL(query, { query: q });
-        if (data?.orders?.edges?.length) {
-          const order = data.orders.edges[0].node;
-          const tags = Array.isArray(order.tags) ? order.tags : [];
-          if (tags.includes(legacyTag) || tags.includes(stableTag)) {
-            const orderId = order.legacyResourceId || order.id.split('/').pop();
-            console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealIdStr} by legacy tag ${legacyTag} (query: ${q})`);
+            console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealId} by tag ${tag} (query: ${q})`);
+            setRecentOrderId(dealId, orderId);
             return String(orderId);
           }
         }
@@ -120,8 +270,8 @@ export async function findExistingOrderByDealId(dealId) {
       }
     }
 
-    // 3) Last resort: fetch a small batch and filter client-side.
-    // Use stable prefix to avoid ":" parsing quirks.
+    // Fallback: fetch a small batch by generic BITRIX tag and filter client-side.
+    // This is slower, but helps when exact tag search doesn't match due to indexing quirks.
     const fallbackQuery = `
       query findOrderByGenericTag($query: String!) {
         orders(first: 25, query: $query) {
@@ -136,32 +286,22 @@ export async function findExistingOrderByDealId(dealId) {
         }
       }
     `;
-    const fallbackQueries = [
-      `tag:${stableTag}`,        // exact stable tag
-      `tag:BITRIX_DEAL_`,        // prefix-ish (Shopify may treat as contains)
-      `tag:"BITRIX_DEAL_"`,
-    ];
-    for (const fq of fallbackQueries) {
-      try {
-        const fallbackData = await callShopifyGraphQL(fallbackQuery, { query: fq });
-        const edges = fallbackData?.orders?.edges || [];
-        for (const edge of edges) {
-          const order = edge?.node;
-          const tags = Array.isArray(order?.tags) ? order.tags : [];
-          if (tags.includes(stableTag) || tags.includes(legacyTag)) {
-            const orderId = order.legacyResourceId || order.id.split('/').pop();
-            console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealIdStr} by scanning orders (query: ${fq})`);
-            return String(orderId);
-          }
-        }
-      } catch {
-        // keep trying next fallback query
+    const fallbackData = await callShopifyGraphQL(fallbackQuery, { query: `tag:BITRIX` });
+    const edges = fallbackData?.orders?.edges || [];
+    for (const edge of edges) {
+      const order = edge?.node;
+      const tags = Array.isArray(order?.tags) ? order.tags : [];
+      if (tags.includes(tag)) {
+        const orderId = order.legacyResourceId || order.id.split('/').pop();
+        console.log(`[FIND EXISTING ORDER] Found existing order ${orderId} for deal ${dealId} by scanning BITRIX-tagged orders`);
+        setRecentOrderId(dealId, orderId);
+        return String(orderId);
       }
     }
 
     return null;
   } catch (error) {
-    console.warn(`[FIND EXISTING ORDER] Error searching for order by tag for deal ${dealIdStr}:`, error.message);
+    console.warn(`[FIND EXISTING ORDER] Error searching for order by tag ${tag}:`, error.message);
     return null; // Don't block order creation if search fails
   }
 }
@@ -341,6 +481,27 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     throw new Error('Deal ID is required');
   }
 
+  // ✅ CRITICAL STEP 0: Fast cache check (prevents duplicates when Shopify search lags)
+  const cachedOrderId = getRecentOrderId(dealId);
+  if (cachedOrderId) {
+    console.log(JSON.stringify({
+      event: 'CREATE_ORDER_FROM_BITRIX_RECENT_CACHE_HIT',
+      dealId,
+      correlationId,
+      cachedOrderId,
+      timestamp: new Date().toISOString()
+    }));
+    return {
+      success: true,
+      orderId: cachedOrderId,
+      orderName: `Existing order ${cachedOrderId}`,
+      wasDuplicate: true,
+      lineItems: [],
+      tags: [`BITRIX:${dealId}`],
+      note: `Ордер из Bitrix. Сделка: ${dealId}`
+    };
+  }
+
   // ✅ CRITICAL STEP 1: Acquire lock IMMEDIATELY to prevent concurrent order creation
   const lockAcquired = acquireLock(dealId);
   if (!lockAcquired) {
@@ -350,11 +511,34 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     // Wait with multiple checks for existing order
     for (let checkAttempt = 1; checkAttempt <= 10; checkAttempt++) {
       await new Promise(resolve => setTimeout(resolve, 300)); // Wait 300ms between checks
+
+      // Fast path: in-memory cache (avoid Shopify search lag)
+      const cached = getRecentOrderId(dealId);
+      if (cached) {
+        console.log(JSON.stringify({
+          event: 'CREATE_ORDER_FROM_BITRIX_LOCK_WAIT_CACHE_HIT',
+          dealId,
+          correlationId,
+          cachedOrderId: cached,
+          checkAttempt,
+          timestamp: new Date().toISOString()
+        }));
+        return {
+          success: true,
+          orderId: cached,
+          orderName: `Existing order ${cached}`,
+          wasDuplicate: true,
+          lineItems: [],
+          tags: [`BITRIX:${dealId}`],
+          note: `Ордер из Bitrix. Сделка: ${dealId}`
+        };
+      }
       
       // Check if order already exists
       const existingOrderId = await findExistingOrderByDealId(dealId);
       if (existingOrderId) {
         console.log(`[CREATE ORDER FROM BITRIX] ✅ Found existing order ${existingOrderId} for deal ${dealId} on check attempt ${checkAttempt}`);
+        setRecentOrderId(dealId, existingOrderId);
         return {
           success: true,
           orderId: existingOrderId,
@@ -381,6 +565,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     const finalExistingOrderId = await findExistingOrderByDealId(dealId);
     if (finalExistingOrderId) {
       console.log(`[CREATE ORDER FROM BITRIX] ✅ Found existing order ${finalExistingOrderId} for deal ${dealId} after all checks`);
+      setRecentOrderId(dealId, finalExistingOrderId);
       return {
         success: true,
         orderId: finalExistingOrderId,
@@ -409,6 +594,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       const existingOrderId = await findExistingOrderByDealId(dealId);
       if (existingOrderId) {
         console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Existing order ${existingOrderId} found for deal ${dealId} on pre-check ${preCheck}`);
+        setRecentOrderId(dealId, existingOrderId);
         releaseLock(dealId);
         return {
           success: true,
@@ -469,14 +655,11 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     });
   }
 
-  // Build tags:
-  // - Stable: BITRIX_DEAL_{dealId} (preferred for search & dedupe; avoids ":" parsing quirks in Shopify search)
-  // - Legacy: BITRIX:{dealId} (kept for backward compatibility)
+  // Build tags: ["BITRIX:{dealId}"]
+  // BITRIX:{dealId} tag is used for duplicate detection, linking to Bitrix deal, and identifying orders created from Bitrix
   const tags = [];
   if (dealId) {
-    const dealIdStr = String(dealId).trim();
-    tags.push(`BITRIX_DEAL_${dealIdStr}`);
-    tags.push(`BITRIX:${dealIdStr}`);
+    tags.push(`BITRIX:${dealId}`);
   }
 
   // Build note with order information
@@ -644,24 +827,34 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     }
 
     // Extract numeric order ID from GraphQL ID
-    const orderId = order.legacyResourceId || order.id.split('/').pop();
+    const createdOrderId = order.legacyResourceId || order.id.split('/').pop();
+    setRecentOrderId(dealId, createdOrderId);
+
+    // ✅ Best-effort reconciliation: if duplicates exist (multi-instance race), cancel extras and return canonical orderId
+    const canonicalOrderId = await reconcileDuplicateOrdersForDeal(dealId, String(createdOrderId), correlationId);
+    const wasDuplicate = String(canonicalOrderId) !== String(createdOrderId);
+    if (wasDuplicate) {
+      setRecentOrderId(dealId, canonicalOrderId);
+    }
 
     console.log(JSON.stringify({
       event: 'CREATE_ORDER_FROM_BITRIX_SUCCESS',
       dealId,
       correlationId,
-      orderId,
+      orderId: canonicalOrderId,
       orderName: order.name,
       lineItemsCount: order.lineItems?.edges?.length || 0,
       tags: order.tags || [],
+      wasDuplicate,
       timestamp: new Date().toISOString()
     }));
 
     return {
       success: true,
       order: order,
-      orderId: orderId,
-      orderName: order.name,
+      orderId: canonicalOrderId,
+      orderName: wasDuplicate ? `Existing order ${canonicalOrderId}` : order.name,
+      wasDuplicate,
       lineItems: order.lineItems?.edges?.map(e => e.node) || [],
       tags: order.tags || [],
       note: order.note || ''

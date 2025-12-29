@@ -2348,8 +2348,8 @@ async function handleDealUpdate(dealId, requestId) {
             code: 'Free'
           }];
 
-          // Create order in Shopify
-          const correlationId = `${dealId}:${Date.now()}`;
+          // Create order in Shopify (stable per webhook request for traceability)
+          const correlationId = `bitrix:${dealId}:${requestId}`;
           const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
             shippingAddress,
             shippingLines
@@ -3223,8 +3223,8 @@ async function handleDealCreate(dealId, requestId) {
             code: 'Free'
           }];
 
-          // Create order in Shopify
-          const correlationId = `${dealId}:${Date.now()}`;
+          // Create order in Shopify (stable per webhook request for traceability)
+          const correlationId = `bitrix:${dealId}:${requestId}`;
           const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
             shippingAddress,
             shippingLines
