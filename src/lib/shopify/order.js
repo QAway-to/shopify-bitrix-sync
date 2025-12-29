@@ -3,7 +3,7 @@
  * Handles creation and cancellation of orders from Bitrix deals
  */
 
-import { callShopifyGraphQL } from './adminClient.js';
+import { callShopifyAdmin, callShopifyGraphQL } from './adminClient.js';
 import { getVariantIdsBySkus } from './hold.js';
 
 // In-memory lock to prevent concurrent order creation for the same deal
@@ -642,8 +642,9 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     variantIdMap = await getVariantIdsBySkus(skus);
   }
 
-  // Build line items with variant IDs
+  // Build line items with variant IDs (for GraphQL) and numeric variant_ids (for REST)
   const lineItems = [];
+  const lineItemsRest = [];
   for (const item of items) {
     let variantId = null;
 
@@ -667,6 +668,12 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     // GraphQL requires variant ID in format "gid://shopify/ProductVariant/{id}"
     lineItems.push({
       variantId: `gid://shopify/ProductVariant/${variantId}`,
+      quantity: item.qty
+    });
+
+    // REST requires numeric variant_id
+    lineItemsRest.push({
+      variant_id: Number(variantId),
       quantity: item.qty
     });
   }
@@ -789,6 +796,89 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       hasShippingLines: !!(options.shippingLines && options.shippingLines.length > 0),
       timestamp: new Date().toISOString()
     }));
+
+    // ✅ For stub orders we want Payment Pending (not Paid).
+    // Shopify often marks $0 orders as Paid automatically; REST order creation allows forcing financial_status=pending.
+    if (isStubOrder) {
+      console.log(JSON.stringify({
+        event: 'CREATE_ORDER_FROM_BITRIX_STUB_REST_ATTEMPT',
+        dealId,
+        correlationId,
+        lineItemsCount: lineItemsRest.length,
+        timestamp: new Date().toISOString()
+      }));
+
+      const shippingAddressRaw = options?.shippingAddress && typeof options.shippingAddress === 'object'
+        ? options.shippingAddress
+        : null;
+
+      const shipping_address = shippingAddressRaw ? {
+        first_name: shippingAddressRaw.first_name || shippingAddressRaw.firstName || undefined,
+        last_name: shippingAddressRaw.last_name || shippingAddressRaw.lastName || undefined,
+        address1: shippingAddressRaw.address1 || undefined,
+        address2: shippingAddressRaw.address2 || undefined,
+        city: shippingAddressRaw.city || undefined,
+        zip: shippingAddressRaw.zip || undefined,
+        province: shippingAddressRaw.province || shippingAddressRaw.provinceCode || undefined,
+        country: shippingAddressRaw.country || undefined,
+        country_code: shippingAddressRaw.country_code || shippingAddressRaw.countryCode || undefined,
+        phone: shippingAddressRaw.phone || undefined,
+      } : undefined;
+
+      const restResp = await callShopifyAdmin('/orders.json', {
+        method: 'POST',
+        body: JSON.stringify({
+          order: {
+            line_items: lineItemsRest,
+            tags: tags.join(', '),
+            note,
+            email: customerEmail || 'hold@bfcshoes.local',
+            taxes_included: true,
+            financial_status: 'pending',
+            inventory_behaviour: 'decrement_obeying_policy',
+            send_receipt: false,
+            send_fulfillment_receipt: false,
+            ...(shipping_address ? { shipping_address } : {})
+          }
+        })
+      });
+
+      const restOrder = restResp?.order;
+      if (!restOrder?.id) {
+        throw new Error('REST order creation failed: missing order.id');
+      }
+
+      const createdOrderId = String(restOrder.id);
+      setRecentOrderId(dealId, createdOrderId);
+
+      const canonicalOrderId = await reconcileDuplicateOrdersForDeal(dealId, createdOrderId, correlationId);
+      const wasDuplicate = String(canonicalOrderId) !== String(createdOrderId);
+      if (wasDuplicate) {
+        setRecentOrderId(dealId, canonicalOrderId);
+      }
+
+      console.log(JSON.stringify({
+        event: 'CREATE_ORDER_FROM_BITRIX_STUB_REST_SUCCESS',
+        dealId,
+        correlationId,
+        orderId: canonicalOrderId,
+        orderName: restOrder.name || null,
+        financialStatus: restOrder.financial_status || null,
+        wasDuplicate,
+        timestamp: new Date().toISOString()
+      }));
+
+      return {
+        success: true,
+        order: restOrder,
+        orderId: canonicalOrderId,
+        orderName: wasDuplicate ? `Existing order ${canonicalOrderId}` : (restOrder.name || `#${canonicalOrderId}`),
+        wasDuplicate,
+        lineItems: restOrder.line_items || [],
+        tags: Array.isArray(restOrder.tags) ? restOrder.tags : (restOrder.tags ? String(restOrder.tags).split(',').map(t => t.trim()) : []),
+        note: restOrder.note || ''
+      };
+    }
 
     const data = await callShopifyGraphQL(mutation, variables);
 
