@@ -117,6 +117,28 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
     return { success: true, skipped: true, reason: 'unknown_payment_enum' };
   }
 
+  // ✅ Force pending status if deal is not in WON stage
+  const stageId = dealData?.STAGE_ID || dealData?.stage_id || null;
+  const isWonStage = stageId === 'WON' || stageId === 'C4:WON' || stageId === BITRIX_CONFIG.STAGES.PAID;
+
+  if (!isWonStage) {
+    if (desired !== 'pending') {
+      console.log(JSON.stringify({
+        event: 'PAYMENT_STATUS_SYNC_FORCE_PENDING',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        stageId,
+        originalDesired: desired,
+        reason: 'deal_not_won',
+        timestamp: new Date().toISOString()
+      }));
+      // Override desired status to pending because deal is not finished
+      // We modify the 'desired' variable? No, 'desired' is const.
+      // We'll just handle it in the checking logic below.
+    }
+  }
+
   try {
     const { getOrder, callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
     const currentOrder = await getOrder(shopifyOrderId);
@@ -124,22 +146,31 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
     const totalPrice = Number(currentOrder?.total_price || currentOrder?.current_total_price || 0);
     const currency = currentOrder?.currency || null;
 
+    // Determine final desired status: if not WON, always pending. Otherwise use mapped status.
+    const finalDesired = !isWonStage ? 'pending' : desired;
+
     console.log(JSON.stringify({
       event: 'PAYMENT_STATUS_SYNC_CHECK',
       requestId,
       dealId,
       shopifyOrderId,
       bitrixPaymentEnumId: paymentEnumId,
-      desiredFinancialStatus: desired,
+      desiredFinancialStatus: finalDesired,
+      originalDesired: desired,
+      stageId,
+      isWonStage,
       currentFinancialStatus: current,
       totalPrice,
       currency,
       timestamp: new Date().toISOString()
     }));
 
-    // We currently only try to enforce Unpaid -> Pending (common case for Bitrix unpaid).
-    // Shopify may reject/ignore financial_status updates on existing orders; we log outcome either way.
-    if (desired === 'pending' && current === 'paid') {
+    // Logic:
+    // 1. If desired is Pending and current is Paid -> Revert to Pending (via REST)
+    // 2. If desired is Paid and current is Pending -> Mark as Paid (via GraphQL/REST transaction)
+    // Implementation: currently we only support reverting to pending (Unpaid -> Pending enforcement).
+
+    if (finalDesired === 'pending' && current === 'paid') {
       let updateError = null;
       try {
         await callShopifyAdmin(`/orders/${shopifyOrderId}.json`, {
@@ -164,7 +195,7 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
         requestId,
         dealId,
         shopifyOrderId,
-        desiredFinancialStatus: desired,
+        desiredFinancialStatus: finalDesired,
         beforeFinancialStatus: current,
         afterFinancialStatus: afterStatus,
         updateError,
@@ -180,7 +211,9 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
       };
     }
 
-    return { success: true, skipped: true, reason: 'no_change_needed', desired, current };
+    // Optional: Handle Pending -> Paid if needed in future (requires creating transaction)
+
+    return { success: true, skipped: true, reason: 'no_change_needed', desired: finalDesired, current };
   } catch (err) {
     console.warn(`[PAYMENT STATUS SYNC] Failed: ${err?.message || String(err)}`);
     console.log(JSON.stringify({
@@ -1556,6 +1589,26 @@ async function handleDealUpdate(dealId, requestId) {
   const stageId = dealData.STAGE_ID;
   let shopifyOrderId = dealData.UF_CRM_1742556489 || dealData.uf_crm_1742556489;
   const comments = dealData.COMMENTS || '';
+
+  // ✅ Fallback: If shopifyOrderId is missing, try to find it by tag (resilience against race conditions)
+  if (!shopifyOrderId || shopifyOrderId.trim() === '') {
+    try {
+      // Import explicitly if needed, but it should be available in scope from top imports
+      const foundOrderId = await findExistingOrderByDealId(dealId);
+      if (foundOrderId) {
+        shopifyOrderId = foundOrderId;
+        console.log(JSON.stringify({
+          event: 'SHOPIFY_ORDER_ID_RECOVERED',
+          requestId,
+          dealId,
+          recoveredOrderId: shopifyOrderId,
+          timestamp: new Date().toISOString()
+        }));
+      }
+    } catch (lookupError) {
+      console.warn(`[BITRIX WEBHOOK] Failed to look up existing order: ${lookupError.message}`);
+    }
+  }
 
   // ✅ Structured logging: [DEAL_DATA_RECEIVED]
   console.log(JSON.stringify({
