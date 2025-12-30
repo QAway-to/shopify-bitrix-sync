@@ -148,8 +148,11 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
     const totalPrice = Number(currentOrder?.total_price || currentOrder?.current_total_price || 0);
     const currency = currentOrder?.currency || null;
 
-    // Determine final desired status: if not WON, always pending. Otherwise use mapped status.
-    const finalDesired = !isWonStage ? 'pending' : desired;
+    // Determine final desired status:
+    // User Update 2024-12-31: Trust the 'desired' status from the enum implicitly.
+    // Even if stage is not WON, if the payment field says PAID, we make it PAID.
+    const finalDesired = desired; // !isWonStage ? 'pending' : desired;
+
 
     console.log(JSON.stringify({
       event: 'PAYMENT_STATUS_SYNC_CHECK',
