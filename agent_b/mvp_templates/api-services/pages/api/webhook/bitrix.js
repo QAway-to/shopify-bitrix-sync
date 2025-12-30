@@ -176,6 +176,7 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
     // Implementation: currently we only support reverting to pending (Unpaid -> Pending enforcement).
 
     // CASE 2: Pending -> Paid (GraphQL Mutation)
+    console.log(`[PAYMENT DEBUG 777] Checking conditions: finalDesired='${finalDesired}', current='${current}', check=${finalDesired === 'paid' && current !== 'paid'}`);
     if (finalDesired === 'paid' && current !== 'paid') {
       console.log(JSON.stringify({
         event: 'PAYMENT_STATUS_SYNC_ATTEMPT_PAID',
