@@ -167,8 +167,62 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
 
     // Logic:
     // 1. If desired is Pending and current is Paid -> Revert to Pending (via REST)
-    // 2. If desired is Paid and current is Pending -> Mark as Paid (via GraphQL/REST transaction)
+    // 2. If desired is Paid and current is Pending/PartiallyPaid -> Mark as Paid (via REST transaction)
     // Implementation: currently we only support reverting to pending (Unpaid -> Pending enforcement).
+
+    // CASE 2: Pending -> Paid (Capture)
+    if (finalDesired === 'paid' && current !== 'paid') {
+      console.log(JSON.stringify({
+        event: 'PAYMENT_STATUS_SYNC_ATTEMPT_PAID',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        current,
+        totalPrice,
+        timestamp: new Date().toISOString()
+      }));
+
+      // To mark as paid, we must create a transaction
+      // Use "capture" or "sale" depending on authorization status, but "capture" usually works for pending orders.
+      // If the order has "pending" status, it usually means it's authorized or just pending payment.
+      // For manual orders (like ours), creating a "capture" transaction is the standard way to pay it.
+
+      let transactionError = null;
+      try {
+        await callShopifyAdmin(`/orders/${shopifyOrderId}/transactions.json`, {
+          method: 'POST',
+          body: JSON.stringify({
+            transaction: {
+              kind: 'capture',
+              status: 'success',
+              amount: totalPrice,
+              currency: currency || 'EUR'
+            }
+          })
+        });
+      } catch (err) {
+        transactionError = err?.message || String(err);
+        console.error(`[PAYMENT SYNC] Failed to create capture transaction for order ${shopifyOrderId}:`, err);
+      }
+
+      // Re-fetch to verify
+      const after = await getOrder(shopifyOrderId);
+      const success = after?.financial_status === 'paid';
+
+      console.log(JSON.stringify({
+        event: 'PAYMENT_STATUS_SYNC_RESULT_PAID',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        before: current,
+        after: after?.financial_status,
+        success,
+        error: transactionError,
+        timestamp: new Date().toISOString()
+      }));
+
+      return { success, from: current, to: after?.financial_status, operation: 'capture_transaction' };
+    }
 
     if (finalDesired === 'pending' && current === 'paid') {
       let updateError = null;
