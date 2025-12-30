@@ -185,11 +185,19 @@ async function reconcileDuplicateOrdersForDeal(dealId, createdOrderId, correlati
 /**
  * Acquire lock for dealId (returns true if acquired, false if already locked)
  */
+const LOCK_TTL_MS = 30 * 1000; // 30 seconds
+
 function acquireLock(dealId) {
+  const now = Date.now();
   if (dealIdLocks.has(dealId)) {
-    return false; // Already locked
+    const lockedAt = dealIdLocks.get(dealId);
+    if (now - lockedAt < LOCK_TTL_MS) {
+      return false; // Already locked and within TTL
+    }
+    // Lock expired, overwrite it
+    console.warn(`[LOCK] Overwriting expired lock for deal ${dealId} (age: ${now - lockedAt}ms)`);
   }
-  dealIdLocks.set(dealId, Date.now());
+  dealIdLocks.set(dealId, now);
   return true;
 }
 
@@ -1001,8 +1009,8 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       dealId,
       correlationId,
       error: 'ORDER_CREATE_EXCEPTION',
-      message: error.message,
-      stack: error.stack,
+      message: error?.message || String(error),
+      stack: error?.stack,
       timestamp: new Date().toISOString()
     }));
 
