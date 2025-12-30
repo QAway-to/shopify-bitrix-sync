@@ -90,6 +90,112 @@ const BITRIX_ALLOW_EMPTY_PRODUCT_LINES = String(process.env.BITRIX_ALLOW_EMPTY_P
 const BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID = String(process.env.BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID || '53051786756360');
 const BITRIX_EMPTY_ORDER_DEFAULT_QTY = Number(process.env.BITRIX_EMPTY_ORDER_DEFAULT_QTY || 1) || 1;
 
+function bitrixPaymentEnumToDesiredFinancialStatus(paymentEnumId) {
+  const v = paymentEnumId != null ? String(paymentEnumId) : '';
+  // Bitrix field UF_CRM_1739183959976:
+  // "56" = Paid, "58" = Unpaid, "60" = 10% prepayment
+  if (v === '56') return 'paid';
+  if (v === '58') return 'pending';
+  if (v === '60') return 'partially_paid';
+  return null;
+}
+
+async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requestId, dealId) {
+  const paymentEnumId = dealData?.UF_CRM_1739183959976 || dealData?.uf_crm_1739183959976 || null;
+  const desired = bitrixPaymentEnumToDesiredFinancialStatus(paymentEnumId);
+
+  if (!desired) {
+    console.log(JSON.stringify({
+      event: 'PAYMENT_STATUS_SYNC_SKIP',
+      requestId,
+      dealId,
+      shopifyOrderId,
+      reason: 'missing_or_unknown_payment_enum',
+      paymentEnumId,
+      timestamp: new Date().toISOString()
+    }));
+    return { success: true, skipped: true, reason: 'unknown_payment_enum' };
+  }
+
+  try {
+    const { getOrder, callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
+    const currentOrder = await getOrder(shopifyOrderId);
+    const current = currentOrder?.financial_status || null;
+    const totalPrice = Number(currentOrder?.total_price || currentOrder?.current_total_price || 0);
+    const currency = currentOrder?.currency || null;
+
+    console.log(JSON.stringify({
+      event: 'PAYMENT_STATUS_SYNC_CHECK',
+      requestId,
+      dealId,
+      shopifyOrderId,
+      bitrixPaymentEnumId: paymentEnumId,
+      desiredFinancialStatus: desired,
+      currentFinancialStatus: current,
+      totalPrice,
+      currency,
+      timestamp: new Date().toISOString()
+    }));
+
+    // We currently only try to enforce Unpaid -> Pending (common case for Bitrix unpaid).
+    // Shopify may reject/ignore financial_status updates on existing orders; we log outcome either way.
+    if (desired === 'pending' && current === 'paid') {
+      let updateError = null;
+      try {
+        await callShopifyAdmin(`/orders/${shopifyOrderId}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            order: {
+              id: shopifyOrderId,
+              financial_status: 'pending'
+            }
+          })
+        });
+      } catch (err) {
+        updateError = err?.message || String(err);
+      }
+
+      // Re-fetch to verify
+      const after = await getOrder(shopifyOrderId);
+      const afterStatus = after?.financial_status || null;
+
+      console.log(JSON.stringify({
+        event: 'PAYMENT_STATUS_SYNC_RESULT',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        desiredFinancialStatus: desired,
+        beforeFinancialStatus: current,
+        afterFinancialStatus: afterStatus,
+        updateError,
+        timestamp: new Date().toISOString()
+      }));
+
+      return {
+        success: true,
+        attempted: true,
+        before: current,
+        after: afterStatus,
+        updateError
+      };
+    }
+
+    return { success: true, skipped: true, reason: 'no_change_needed', desired, current };
+  } catch (err) {
+    console.warn(`[PAYMENT STATUS SYNC] Failed: ${err?.message || String(err)}`);
+    console.log(JSON.stringify({
+      event: 'PAYMENT_STATUS_SYNC_ERROR',
+      requestId,
+      dealId,
+      shopifyOrderId,
+      error: err?.message || String(err),
+      stack: err?.stack,
+      timestamp: new Date().toISOString()
+    }));
+    return { success: false, error: 'PAYMENT_STATUS_SYNC_ERROR', message: err?.message || String(err) };
+  }
+}
+
 /**
  * Parse Bitrix address string into Shopify address format
  * Format: "Street, ZIP City Region, Country | coordinate"
@@ -2357,6 +2463,12 @@ async function handleDealUpdate(dealId, requestId) {
       reason: 'no_shopify_order_id',
       timestamp: new Date().toISOString()
     }));
+  }
+
+  // ✅ STEP C3: Sync payment status from Bitrix to Shopify (best-effort)
+  // Bitrix field UF_CRM_1739183959976: 56=Paid, 58=Unpaid, 60=prepayment
+  if (shopifyOrderId && shopifyOrderId.trim() !== '') {
+    await syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requestId, dealId);
   }
 
   // ✅ STEP D: Check if we need to create order in Shopify from Bitrix deal
