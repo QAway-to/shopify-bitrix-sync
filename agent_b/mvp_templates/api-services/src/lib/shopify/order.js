@@ -764,7 +764,8 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     note: note,
     // Email is optional for drafts / internal orders, but we try to use real Bitrix contact email if available
     email: customerEmail || 'hold@bfcshoes.local',
-    taxesIncluded: true // Tax is already included in price (to prevent +19% on top)
+    taxesIncluded: true, // Tax is already included in price (to prevent +19% on top)
+    financialStatus: 'PENDING' // ✅ Force pending status for regular orders (same as REST stub orders)
   };
 
   // Add shipping address if provided
