@@ -229,7 +229,8 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
           transactionError = "Unknown GraphQL error (missing order in response)";
         } else {
           // Success
-          console.log(`[PAYMENT SYNC] Successfully marked order ${shopifyOrderId} as PAID via GraphQL.`);
+          const orderData = payload.order;
+          console.log(`[PAYMENT SYNC] SUCCESS! Order ${orderData?.name} (ID: ${orderData?.id}) is now ${orderData?.displayFinancialStatus}. Fully Paid: ${orderData?.fullyPaid}`);
         }
 
       } catch (err) {
