@@ -118,8 +118,10 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
   }
 
   // ✅ Force pending status if deal is not in WON stage
+  // ✅ Force pending status if deal is not in WON stage
   const stageId = dealData?.STAGE_ID || dealData?.stage_id || null;
-  const isWonStage = stageId === 'WON' || stageId === 'C4:WON' || stageId === BITRIX_CONFIG.STAGES.PAID;
+  // Check for any stage ending in "WON" (e.g., "WON", "C4:WON", "C6:WON")
+  const isWonStage = stageId && (stageId === 'WON' || stageId.endsWith(':WON'));
 
   if (!isWonStage) {
     if (desired !== 'pending') {
