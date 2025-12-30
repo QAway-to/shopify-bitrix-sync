@@ -140,7 +140,7 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
   }
 
   try {
-    const { getOrder, callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
+    const { getOrder, callShopifyAdmin, callShopifyGraphQL } = await import('../../../src/lib/shopify/adminClient.js');
     const currentOrder = await getOrder(shopifyOrderId);
     const current = currentOrder?.financial_status || null;
     const totalPrice = Number(currentOrder?.total_price || currentOrder?.current_total_price || 0);
@@ -170,7 +170,7 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
     // 2. If desired is Paid and current is Pending/PartiallyPaid -> Mark as Paid (via REST transaction)
     // Implementation: currently we only support reverting to pending (Unpaid -> Pending enforcement).
 
-    // CASE 2: Pending -> Paid (Capture)
+    // CASE 2: Pending -> Paid (GraphQL Mutation)
     if (finalDesired === 'paid' && current !== 'paid') {
       console.log(JSON.stringify({
         event: 'PAYMENT_STATUS_SYNC_ATTEMPT_PAID',
@@ -179,30 +179,57 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
         shopifyOrderId,
         current,
         totalPrice,
+        method: 'GraphQL orderMarkAsPaid',
         timestamp: new Date().toISOString()
       }));
 
-      // To mark as paid, we must create a transaction
-      // Use "capture" or "sale" depending on authorization status, but "capture" usually works for pending orders.
-      // If the order has "pending" status, it usually means it's authorized or just pending payment.
-      // For manual orders (like ours), creating a "capture" transaction is the standard way to pay it.
-
       let transactionError = null;
       try {
-        await callShopifyAdmin(`/orders/${shopifyOrderId}/transactions.json`, {
-          method: 'POST',
-          body: JSON.stringify({
-            transaction: {
-              kind: 'capture',
-              status: 'success',
-              amount: totalPrice,
-              currency: currency || 'EUR'
+        const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
+        const mutation = `
+          mutation orderMarkAsPaid($input: OrderMarkAsPaidInput!) {
+            orderMarkAsPaid(input: $input) {
+              order {
+                id
+                displayFinancialStatus
+                fullyPaid
+                totalReceivedSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+              }
+              userErrors {
+                field
+                message
+              }
             }
-          })
-        });
+          }
+        `;
+
+        const variables = {
+          input: {
+            id: orderGid
+          }
+        };
+
+        const result = await callShopifyGraphQL(mutation, variables);
+        const payload = result?.orderMarkAsPaid;
+
+        if (payload?.userErrors && payload.userErrors.length > 0) {
+          transactionError = JSON.stringify(payload.userErrors);
+          console.error(`[PAYMENT SYNC] GraphQL Errors: ${transactionError}`);
+        } else if (!payload?.order) {
+          transactionError = "Unknown GraphQL error (missing order in response)";
+        } else {
+          // Success
+          console.log(`[PAYMENT SYNC] Successfully marked order ${shopifyOrderId} as PAID via GraphQL.`);
+        }
+
       } catch (err) {
         transactionError = err?.message || String(err);
-        console.error(`[PAYMENT SYNC] Failed to create capture transaction for order ${shopifyOrderId}:`, err);
+        console.error(`[PAYMENT SYNC] Failed to execute orderMarkAsPaid for ${shopifyOrderId}:`, err);
       }
 
       // Re-fetch to verify
@@ -221,7 +248,7 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
         timestamp: new Date().toISOString()
       }));
 
-      return { success, from: current, to: after?.financial_status, operation: 'capture_transaction' };
+      return { success, from: current, to: after?.financial_status, operation: 'graphql_mark_paid' };
     }
 
     if (finalDesired === 'pending' && current === 'paid') {
@@ -1661,6 +1688,68 @@ async function handleDealUpdate(dealId, requestId) {
       }
     } catch (lookupError) {
       console.warn(`[BITRIX WEBHOOK] Failed to look up existing order: ${lookupError.message}`);
+    }
+  }
+
+  // ✅ KILL & RECREATE: Logic for upgrading Stub -> Regular
+  // If we have an existing order that is a STUB, and now we have real content,
+  // we must DELETE (Cancel) the stub and let the create flow make a fresh REST order.
+  if (shopifyOrderId) {
+    try {
+      const { getOrder, callShopifyGraphQL } = await import('../../../src/lib/shopify/adminClient.js');
+      const existingOrder = await getOrder(shopifyOrderId);
+
+      if (existingOrder) {
+        const tagsStr = existingOrder.tags || '';
+        const tags = tagsStr.split(',').map(t => t.trim());
+
+        if (tags.includes('BITRIX_STUB')) {
+          // Check if we now have real products via Bitrix API
+          const rowsResp = await callBitrix('crm.deal.productrows.get', { id: dealId });
+          const rows = rowsResp?.result || [];
+
+          // If we have real rows (and presumed valid products), kill the stub
+          if (rows.length > 0) {
+            console.log(JSON.stringify({
+              event: 'STUB_ORDER_UPGRADE_TRIGGERED',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              reason: 'Real products added to stub',
+              timestamp: new Date().toISOString()
+            }));
+
+            // Cancel the stub via GraphQL to release inventory immediately
+            const cancelMutation = `
+                        mutation orderCancel($orderId: ID!) {
+                          orderCancel(orderId: $orderId) {
+                            job {
+                              id
+                            }
+                            userErrors {
+                              field
+                              message
+                            }
+                          }
+                        }
+                     `;
+
+            try {
+              await callShopifyGraphQL(cancelMutation, { orderId: `gid://shopify/Order/${shopifyOrderId}` });
+              console.log(`[STUB UPGRADE] Cancelled stub order ${shopifyOrderId}`);
+            } catch (cancelErr) {
+              console.error(`[STUB UPGRADE] Failed to cancel stub ${shopifyOrderId}:`, cancelErr);
+              // Convert to non-blocking warning? If cancel fails, recreating might duplicate.
+              // But we proceed anyway to ensure the new valid order exists.
+            }
+
+            // Force creation of new order logic
+            shopifyOrderId = null;
+          }
+        }
+      }
+    } catch (stubError) {
+      console.warn(`[STUB CHECK FAILED] Could not check/cancel stub order: ${stubError.message}`);
     }
   }
 
