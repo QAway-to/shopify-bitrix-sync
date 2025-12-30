@@ -725,305 +725,135 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
   }
   const note = noteBase;
 
-  const mutation = `
-    mutation orderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
-      orderCreate(order: $order, options: $options) {
-        userErrors {
-          field
-          message
-        }
-        order {
-          id
-          name
-          legacyResourceId
-          confirmed
-          tags
-          note
-          createdAt
-          lineItems(first: 250) {
-            edges {
-              node {
-                id
-                title
-                variant {
-                  id
-                  sku
-                }
-                quantity
-              }
-            }
-          }
-        }
+  // ✅ UNIFIED REST ORDER CREATION
+  // We use REST API because it reliably supports 'financial_status: pending'
+  // and 'shipping_address', which caused issues in the GraphQL implementation.
+
+  console.log(JSON.stringify({
+    event: 'CREATE_ORDER_FROM_BITRIX_REST_ATTEMPT',
+    dealId,
+    correlationId,
+    lineItemsCount: lineItemsRest.length,
+    isStubOrder: effectivelyStubOrder,
+    timestamp: new Date().toISOString()
+  }));
+
+  const shippingAddressRaw = options?.shippingAddress && typeof options.shippingAddress === 'object'
+    ? options.shippingAddress
+    : null;
+
+  const shipping_address = shippingAddressRaw ? {
+    first_name: shippingAddressRaw.first_name || shippingAddressRaw.firstName || undefined,
+    last_name: shippingAddressRaw.last_name || shippingAddressRaw.lastName || undefined,
+    address1: shippingAddressRaw.address1 || undefined,
+    address2: shippingAddressRaw.address2 || undefined,
+    city: shippingAddressRaw.city || undefined,
+    zip: shippingAddressRaw.zip || undefined,
+    province: shippingAddressRaw.province || shippingAddressRaw.provinceCode || undefined,
+    country: shippingAddressRaw.country || undefined,
+    country_code: shippingAddressRaw.country_code || shippingAddressRaw.countryCode || undefined,
+    phone: shippingAddressRaw.phone || undefined,
+  } : undefined;
+
+  const restResp = await callShopifyAdmin('/orders.json', {
+    method: 'POST',
+    body: JSON.stringify({
+      order: {
+        line_items: lineItemsRest,
+        tags: tags.join(', '),
+        note,
+        email: customerEmail || 'hold@bfcshoes.local',
+        taxes_included: true,
+        financial_status: 'pending', // Always pending initially
+        inventory_behaviour: 'decrement_obeying_policy',
+        send_receipt: false,
+        send_fulfillment_receipt: false,
+        ...(shipping_address ? { shipping_address } : {})
       }
-    }
-  `;
+    })
+  });
 
-  const order_input = {
-    lineItems: lineItems,
-    tags: tags,
-    note: note,
-    // Email is optional for drafts / internal orders, but we try to use real Bitrix contact email if available
-    email: customerEmail || 'hold@bfcshoes.local',
-    taxesIncluded: true, // Tax is already included in price (to prevent +19% on top)
-    financialStatus: 'PENDING' // ✅ Force pending status for regular orders (same as REST stub orders)
-  };
-
-  // Add shipping address if provided
-  if (options.shippingAddress && typeof options.shippingAddress === 'object') {
-    order_input.shippingAddress = options.shippingAddress;
-  }
-
-  // NOTE: shippingLines is NOT supported in GraphQL orderCreate mutation
-  // GraphQL OrderCreateOrderInput does not support shippingLines field
-  // Shipping lines must be added via REST API after order creation if needed
-  // Removing shippingLines from order_input to prevent GraphQL errors
-
-  const options_input = {
-    inventoryBehaviour: 'DECREMENT_OBEYING_POLICY', // Reserve inventory (British spelling as per Shopify API)
-    sendReceipt: false,
-    sendFulfillmentReceipt: false
-  };
-
-  const variables = {
-    order: order_input,
-    options: options_input
-  };
-
-  // ✅ CRITICAL STEP 3: Final duplicate checks with delays before creation
-  console.log(`[CREATE ORDER FROM BITRIX] Performing final duplicate checks before creating order for deal ${dealId}...`);
-
-  // Wait 1.5 seconds to allow any concurrent requests to finish creating their orders
-  await new Promise(resolve => setTimeout(resolve, 1500));
-
-  // Check 3 more times with delays
-  for (let finalCheck = 1; finalCheck <= 3; finalCheck++) {
-    const existingOrderId = await findExistingOrderByDealId(dealId);
-    if (existingOrderId) {
-      console.log(`[CREATE ORDER FROM BITRIX] ⚠️⚠️⚠️ CRITICAL: Existing order ${existingOrderId} found for deal ${dealId} on final check ${finalCheck}. Aborting creation!`);
-      releaseLock(dealId);
-      return {
-        success: true,
-        orderId: existingOrderId,
-        orderName: `Existing order ${existingOrderId}`,
-        wasDuplicate: true,
-        lineItems: [],
-        tags: tags,
-        note: note
-      };
-    }
-    if (finalCheck < 3) {
-      await new Promise(resolve => setTimeout(resolve, 400)); // Wait 400ms between final checks
-    }
-  }
-
-  console.log(`[CREATE ORDER FROM BITRIX] ✅ All duplicate checks passed. Proceeding with order creation for deal ${dealId}`);
-
-  try {
-    console.log(JSON.stringify({
-      event: 'CREATE_ORDER_FROM_BITRIX_GRAPHQL_ATTEMPT',
-      dealId,
-      correlationId,
-      lineItemsCount: lineItems.length,
-      hasShippingAddress: !!options.shippingAddress,
-      hasShippingLines: !!(options.shippingLines && options.shippingLines.length > 0),
-      timestamp: new Date().toISOString()
-    }));
-
-    // ✅ For stub orders we want Payment Pending (not Paid).
-    // Shopify often marks $0 orders as Paid automatically; REST order creation allows forcing financial_status=pending.
-    if (isStubOrder) {
-      console.log(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_STUB_REST_ATTEMPT',
-        dealId,
-        correlationId,
-        lineItemsCount: lineItemsRest.length,
-        timestamp: new Date().toISOString()
-      }));
-
-      const shippingAddressRaw = options?.shippingAddress && typeof options.shippingAddress === 'object'
-        ? options.shippingAddress
-        : null;
-
-      const shipping_address = shippingAddressRaw ? {
-        first_name: shippingAddressRaw.first_name || shippingAddressRaw.firstName || undefined,
-        last_name: shippingAddressRaw.last_name || shippingAddressRaw.lastName || undefined,
-        address1: shippingAddressRaw.address1 || undefined,
-        address2: shippingAddressRaw.address2 || undefined,
-        city: shippingAddressRaw.city || undefined,
-        zip: shippingAddressRaw.zip || undefined,
-        province: shippingAddressRaw.province || shippingAddressRaw.provinceCode || undefined,
-        country: shippingAddressRaw.country || undefined,
-        country_code: shippingAddressRaw.country_code || shippingAddressRaw.countryCode || undefined,
-        phone: shippingAddressRaw.phone || undefined,
-      } : undefined;
-
-      const restResp = await callShopifyAdmin('/orders.json', {
-        method: 'POST',
-        body: JSON.stringify({
-          order: {
-            line_items: lineItemsRest,
-            tags: tags.join(', '),
-            note,
-            email: customerEmail || 'hold@bfcshoes.local',
-            taxes_included: true,
-            financial_status: 'pending',
-            inventory_behaviour: 'decrement_obeying_policy',
-            send_receipt: false,
-            send_fulfillment_receipt: false,
-            ...(shipping_address ? { shipping_address } : {})
-          }
-        })
-      });
-
-      const restOrder = restResp?.order;
-      if (!restOrder?.id) {
-        throw new Error('REST order creation failed: missing order.id');
-      }
-
-      const createdOrderId = String(restOrder.id);
-      setRecentOrderId(dealId, createdOrderId);
-
-      const canonicalOrderId = await reconcileDuplicateOrdersForDeal(dealId, createdOrderId, correlationId);
-      const wasDuplicate = String(canonicalOrderId) !== String(createdOrderId);
-      if (wasDuplicate) {
-        setRecentOrderId(dealId, canonicalOrderId);
-      }
-
-      console.log(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_STUB_REST_SUCCESS',
-        dealId,
-        correlationId,
-        orderId: canonicalOrderId,
-        orderName: restOrder.name || null,
-        financialStatus: restOrder.financial_status || null,
-        wasDuplicate,
-        timestamp: new Date().toISOString()
-      }));
-
-      return {
-        success: true,
-        order: restOrder,
-        orderId: canonicalOrderId,
-        orderName: wasDuplicate ? `Existing order ${canonicalOrderId}` : (restOrder.name || `#${canonicalOrderId}`),
-        wasDuplicate,
-        lineItems: restOrder.line_items || [],
-        tags: Array.isArray(restOrder.tags) ? restOrder.tags : (restOrder.tags ? String(restOrder.tags).split(',').map(t => t.trim()) : []),
-        note: restOrder.note || ''
-      };
-    }
-
-    const data = await callShopifyGraphQL(mutation, variables);
-
-    console.log(JSON.stringify({
-      event: 'CREATE_ORDER_FROM_BITRIX_GRAPHQL_RESPONSE',
-      dealId,
-      correlationId,
-      hasData: !!data,
-      hasOrderCreate: !!data?.orderCreate,
-      hasUserErrors: !!(data?.orderCreate?.userErrors && data.orderCreate.userErrors.length > 0),
-      userErrorsCount: data?.orderCreate?.userErrors?.length || 0,
-      hasOrder: !!data?.orderCreate?.order,
-      timestamp: new Date().toISOString()
-    }));
-
-    if (!data?.orderCreate) {
-      const errorMsg = 'Invalid GraphQL response: orderCreate is missing';
-      console.error(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_GRAPHQL_ERROR',
-        dealId,
-        correlationId,
-        error: 'INVALID_RESPONSE',
-        message: errorMsg,
-        responseData: JSON.stringify(data).substring(0, 500),
-        timestamp: new Date().toISOString()
-      }));
-      throw new Error(errorMsg);
-    }
-
-    const { order, userErrors } = data.orderCreate;
-
-    // Check for user errors (business logic errors from Shopify)
-    if (userErrors && userErrors.length > 0) {
-      const errorMessages = userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
-      const errorMsg = `Shopify orderCreate userErrors: ${errorMessages}`;
-      console.error(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_USER_ERRORS',
-        dealId,
-        correlationId,
-        error: 'SHOPIFY_USER_ERRORS',
-        message: errorMsg,
-        userErrors: userErrors,
-        timestamp: new Date().toISOString()
-      }));
-      throw new Error(errorMsg);
-    }
-
-    if (!order) {
-      const errorMsg = 'Order creation failed: order is null';
-      console.error(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_NULL_ORDER',
-        dealId,
-        correlationId,
-        error: 'NULL_ORDER',
-        message: errorMsg,
-        timestamp: new Date().toISOString()
-      }));
-      throw new Error(errorMsg);
-    }
-
-    // Extract numeric order ID from GraphQL ID
-    const createdOrderId = order.legacyResourceId || order.id.split('/').pop();
-    setRecentOrderId(dealId, createdOrderId);
-
-    // ✅ Best-effort reconciliation: if duplicates exist (multi-instance race), cancel extras and return canonical orderId
-    const canonicalOrderId = await reconcileDuplicateOrdersForDeal(dealId, String(createdOrderId), correlationId);
-    const wasDuplicate = String(canonicalOrderId) !== String(createdOrderId);
-    if (wasDuplicate) {
-      setRecentOrderId(dealId, canonicalOrderId);
-    }
-
-    console.log(JSON.stringify({
-      event: 'CREATE_ORDER_FROM_BITRIX_SUCCESS',
-      dealId,
-      correlationId,
-      orderId: canonicalOrderId,
-      orderName: order.name,
-      lineItemsCount: order.lineItems?.edges?.length || 0,
-      tags: order.tags || [],
-      wasDuplicate,
-      timestamp: new Date().toISOString()
-    }));
-
-    return {
-      success: true,
-      order: order,
-      orderId: canonicalOrderId,
-      orderName: wasDuplicate ? `Existing order ${canonicalOrderId}` : order.name,
-      wasDuplicate,
-      lineItems: order.lineItems?.edges?.map(e => e.node) || [],
-      tags: order.tags || [],
-      note: order.note || ''
-    };
-  } catch (error) {
+  const restOrder = restResp?.order;
+  if (!restOrder?.id) {
+    const errorMsg = 'REST order creation failed: missing order.id';
     console.error(JSON.stringify({
-      event: 'CREATE_ORDER_FROM_BITRIX_EXCEPTION',
+      event: 'CREATE_ORDER_FROM_BITRIX_REST_ERROR',
       dealId,
       correlationId,
-      error: 'ORDER_CREATE_EXCEPTION',
-      message: error?.message || String(error),
-      stack: error?.stack,
+      error: 'INVALID_RESPONSE',
+      message: errorMsg,
+      responseData: JSON.stringify(restResp).substring(0, 500),
       timestamp: new Date().toISOString()
     }));
-
-    return {
-      success: false,
-      error: 'ORDER_CREATE_ERROR',
-      message: error.message
-    };
-  } finally {
-    // Always release lock when done
-    releaseLock(dealId);
+    throw new Error(errorMsg);
   }
+
+  const createdOrderId = String(restOrder.id);
+  setRecentOrderId(dealId, createdOrderId);
+
+  // ✅ Best-effort reconciliation: if duplicates exist (multi-instance race), cancel extras and return canonical orderId
+  const canonicalOrderId = await reconcileDuplicateOrdersForDeal(dealId, createdOrderId, correlationId);
+  const wasDuplicate = String(canonicalOrderId) !== String(createdOrderId);
+  if (wasDuplicate) {
+    setRecentOrderId(dealId, canonicalOrderId);
+  }
+
+  console.log(JSON.stringify({
+    event: 'CREATE_ORDER_FROM_BITRIX_REST_SUCCESS',
+    dealId,
+    correlationId,
+    orderId: canonicalOrderId,
+    orderName: restOrder.name || null,
+    financialStatus: restOrder.financial_status || null,
+    wasDuplicate,
+    timestamp: new Date().toISOString()
+  }));
+
+  // Construct response matching expected format
+  return {
+    success: true,
+    order: restOrder,
+    orderId: canonicalOrderId,
+    orderName: wasDuplicate ? `Existing order ${canonicalOrderId}` : (restOrder.name || `#${canonicalOrderId}`),
+    wasDuplicate,
+    lineItems: restOrder.line_items || [],
+    tags: Array.isArray(restOrder.tags) ? restOrder.tags : (restOrder.tags ? String(restOrder.tags).split(',').map(t => t.trim()) : []),
+    note: restOrder.note || ''
+  };
+
+} catch (error) {
+  console.error(JSON.stringify({
+    event: 'CREATE_ORDER_FROM_BITRIX_EXCEPTION',
+    dealId,
+    correlationId,
+    error: 'ORDER_CREATE_EXCEPTION',
+    message: error?.message || String(error),
+    stack: error?.stack,
+    timestamp: new Date().toISOString()
+  }));
+
+  return {
+    success: true,
+    order: restOrder,
+    orderId: canonicalOrderId,
+    orderName: wasDuplicate ? `Existing order ${canonicalOrderId}` : (restOrder.name || `#${canonicalOrderId}`),
+    wasDuplicate,
+    lineItems: restOrder.line_items || [],
+    tags: Array.isArray(restOrder.tags) ? restOrder.tags : (restOrder.tags ? String(restOrder.tags).split(',').map(t => t.trim()) : []),
+    note: restOrder.note || ''
+  };
+
+} catch (error) {
+  console.error(`[CREATE ORDER FROM BITRIX] Fatal error creating order for deal ${dealId}:`, error);
+  return {
+    success: false,
+    error: 'ORDER_CREATE_ERROR',
+    message: error.message
+  };
+} finally {
+  // Always release lock when done
+  releaseLock(dealId);
+}
 }
 
 /**
