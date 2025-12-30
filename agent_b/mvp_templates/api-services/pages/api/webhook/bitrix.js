@@ -211,10 +211,10 @@ function parseBitrixAddressString(addressString) {
   try {
     // Remove coordinate part if present (everything after |)
     const addressPart = addressString.split('|')[0].trim();
-    
+
     // Split by commas
     const parts = addressPart.split(',').map(p => p.trim()).filter(p => p);
-    
+
     if (parts.length < 2) {
       // Not enough parts, return as address1
       return {
@@ -224,12 +224,12 @@ function parseBitrixAddressString(addressString) {
 
     // Last part should be country
     const country = parts[parts.length - 1];
-    
+
     // Second to last part should be "ZIP City Region"
     let zip = '';
     let city = '';
     let province = '';
-    
+
     if (parts.length >= 2) {
       const locationPart = parts[parts.length - 2];
       // Try to extract ZIP (usually at the start, 4-5 digits)
@@ -261,7 +261,7 @@ function parseBitrixAddressString(addressString) {
         city = locationPart;
       }
     }
-    
+
     // First part(s) should be street address
     const streetParts = parts.slice(0, parts.length - 2);
     const address1 = streetParts.join(', ');
@@ -269,7 +269,7 @@ function parseBitrixAddressString(addressString) {
     const parsed = {
       address1: address1 || addressPart
     };
-    
+
     if (city) parsed.city = city;
     if (zip) parsed.zip = zip;
     if (province) parsed.province = province;
@@ -298,11 +298,11 @@ function hasAddressChanged(newAddress, currentAddress) {
 
   // Compare key fields
   const fieldsToCompare = ['address1', 'city', 'zip', 'country', 'province'];
-  
+
   for (const field of fieldsToCompare) {
     const newValue = (newAddress[field] || '').trim().toLowerCase();
     const currentValue = (currentAddress[field] || '').trim().toLowerCase();
-    
+
     if (newValue && newValue !== currentValue) {
       return true;
     }
@@ -392,7 +392,7 @@ function normalizePayload(action, rawPayload) {
       // Normalize: {action, shipping_address:{...}} - ключи сортировать, пустые поля выкинуть
       const shippingAddress = rawPayload.shipping_address || {};
       const cleanedAddress = cleanEmptyFields(shippingAddress);
-      
+
       // Log raw payload for debugging
       console.log(JSON.stringify({
         event: 'ADDRESS_UPDATE_NORMALIZE',
@@ -403,24 +403,24 @@ function normalizePayload(action, rawPayload) {
         hasDeliveryTitle: !!(rawPayload.delivery_title),
         timestamp: new Date().toISOString()
       }));
-      
+
       const normalized = {
         action: 'address_update',
         shipping_address: cleanedAddress || {}
       };
-      
+
       // Include shipping_lines if provided
       if (rawPayload.shipping_lines && Array.isArray(rawPayload.shipping_lines)) {
         normalized.shipping_lines = rawPayload.shipping_lines;
       }
-      
+
       // Support simplified format: delivery_title, delivery_price, delivery_code
       if (rawPayload.delivery_title || rawPayload.delivery_price) {
         normalized.delivery_title = rawPayload.delivery_title;
         normalized.delivery_price = rawPayload.delivery_price;
         normalized.delivery_code = rawPayload.delivery_code || 'CUSTOM_EDIT';
       }
-      
+
       return normalized;
     }
 
@@ -438,14 +438,14 @@ function normalizePayload(action, rawPayload) {
         action: 'order_position_add',
         quantity: Number(rawPayload.quantity || 1)
       };
-      
+
       if (rawPayload.variant_id) {
         normalized.variant_id = String(rawPayload.variant_id);
       }
       if (rawPayload.sku) {
         normalized.sku = String(rawPayload.sku);
       }
-      
+
       return normalized;
     }
 
@@ -478,7 +478,7 @@ function normalizePayload(action, rawPayload) {
 async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
   // Extract UF_MW_SHOPIFY_ACTION (case-insensitive)
   const mwActionRaw = dealData.UF_MW_SHOPIFY_ACTION || dealData.uf_mw_shopify_action || '';
-  
+
   if (!mwActionRaw || typeof mwActionRaw !== 'string' || mwActionRaw.trim() === '') {
     return null; // No MW action, continue with normal flow
   }
@@ -511,7 +511,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
     'order_position_increment',
     'order_position_decrement'
   ];
-  
+
   if (!action || !supportedActions.includes(action)) {
     console.log(JSON.stringify({
       event: 'MW_ACTION_PARSE_ERROR',
@@ -538,7 +538,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
 
   // Normalize payload
   const normalizedPayload = normalizePayload(action, actionData);
-  
+
   if (!normalizedPayload) {
     console.log(JSON.stringify({
       event: 'MW_ACTION_PARSE_ERROR',
@@ -623,7 +623,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
         // Set provenance marker with payloadHash (use orderId from created order)
         const createdOrderId = String(holdResult.orderId);
         const provenanceResult = await setProvenanceMarker(createdOrderId, correlationId, 'hold_create', hash);
-        
+
         if (provenanceResult.success) {
           console.log(JSON.stringify({
             event: 'SHOPIFY_PROVENANCE_SET',
@@ -726,7 +726,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
       if (refundResult.success) {
         // Set provenance marker with payloadHash
         const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'refund_create', hash);
-        
+
         if (provenanceResult.success) {
           console.log(JSON.stringify({
             event: 'SHOPIFY_PROVENANCE_SET',
@@ -863,7 +863,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
       if (addressResult.success) {
         // Set provenance marker with payloadHash
         const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'address_update', hash);
-        
+
         if (provenanceResult.success) {
           console.log(JSON.stringify({
             event: 'SHOPIFY_PROVENANCE_SET',
@@ -962,7 +962,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
       if (cancelResult.success) {
         // Set provenance marker
         const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'order_cancel', hash);
-        
+
         if (provenanceResult.success) {
           console.log(JSON.stringify({
             event: 'SHOPIFY_PROVENANCE_SET',
@@ -1100,7 +1100,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
       if (addResult.success) {
         // Set provenance marker
         const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'order_position_add', hash);
-        
+
         if (provenanceResult.success) {
           console.log(JSON.stringify({
             event: 'SHOPIFY_PROVENANCE_SET',
@@ -1240,7 +1240,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
       if (incrementResult.success) {
         // Set provenance marker
         const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'order_position_increment', hash);
-        
+
         if (provenanceResult.success) {
           console.log(JSON.stringify({
             event: 'SHOPIFY_PROVENANCE_SET',
@@ -1383,7 +1383,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
       if (decrementResult.success) {
         // Set provenance marker
         const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId, 'order_position_decrement', hash);
-        
+
         if (provenanceResult.success) {
           console.log(JSON.stringify({
             event: 'SHOPIFY_PROVENANCE_SET',
@@ -1570,11 +1570,11 @@ async function handleDealUpdate(dealId, requestId) {
 
   // ✅ STEP A: Check if deal is cancelled (LOSE stage) and cancel order in Shopify
   // Check if stage ends with :LOSE or is exactly LOSE (handles both C6:LOSE and LOSE formats)
-  const isLoseStage = stageId === 'LOSE' || 
-                      stageId === BITRIX_CONFIG.STAGES.CANCELLED || 
-                      stageId === BITRIX_CONFIG.STAGES.REFUNDED ||
-                      (typeof stageId === 'string' && stageId.endsWith(':LOSE'));
-  
+  const isLoseStage = stageId === 'LOSE' ||
+    stageId === BITRIX_CONFIG.STAGES.CANCELLED ||
+    stageId === BITRIX_CONFIG.STAGES.REFUNDED ||
+    (typeof stageId === 'string' && stageId.endsWith(':LOSE'));
+
   if (isLoseStage) {
     console.log(JSON.stringify({
       event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_CHECK',
@@ -1590,16 +1590,16 @@ async function handleDealUpdate(dealId, requestId) {
       if (shopifyOrderId && shopifyOrderId.trim() !== '') {
         const { callShopifyGraphQL, getOrder } = await import('../../../src/lib/shopify/adminClient.js');
         const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
-        
+
         try {
           // Check if order is created from Bitrix (has BITRIX:{dealId} tag)
           const shopifyOrder = await getOrder(shopifyOrderId);
           if (shopifyOrder) {
-            const orderTags = Array.isArray(shopifyOrder.tags) 
-              ? shopifyOrder.tags 
+            const orderTags = Array.isArray(shopifyOrder.tags)
+              ? shopifyOrder.tags
               : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
             const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
-            
+
             // Cancel both technical and regular orders
             const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
             const mutation = `
@@ -1620,19 +1620,19 @@ async function handleDealUpdate(dealId, requestId) {
                 }
               }
             `;
-            
+
             const cancelData = await callShopifyGraphQL(mutation, { orderId: orderGid });
-            
+
             if (cancelData?.orderCancel?.userErrors && cancelData.orderCancel.userErrors.length > 0) {
               const errorMessages = cancelData.orderCancel.userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
               throw new Error(`Shopify orderCancel userErrors: ${errorMessages}`);
             }
-            
+
             // Add BitrixUpdated tag to prevent webhook loop (for regular orders, not created from Bitrix)
             if (!isBitrixOrder) {
               await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
             }
-            
+
             console.log(JSON.stringify({
               event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SUCCESS',
               requestId,
@@ -1644,11 +1644,11 @@ async function handleDealUpdate(dealId, requestId) {
               jobId: cancelData?.orderCancel?.job?.id,
               timestamp: new Date().toISOString()
             }));
-            
+
             // Return success - cancellation was handled
-            return { 
-              success: true, 
-              triggerMatch: true, 
+            return {
+              success: true,
+              triggerMatch: true,
               action: 'order_cancelled',
               shopifyOrderId
             };
@@ -1666,50 +1666,50 @@ async function handleDealUpdate(dealId, requestId) {
           // Continue to try technical order cancellation as fallback
         }
       }
-      
+
       // ✅ STEP A2: Cancel technical order if exists (fallback for orders without shopifyOrderId in deal)
       // This handles cases where technical order exists but shopifyOrderId is not set in deal
-    try {
-      const cancelResult = await cancelOrderByDealId(dealId);
-      
-      if (cancelResult.success) {
-        console.log(JSON.stringify({
+      try {
+        const cancelResult = await cancelOrderByDealId(dealId);
+
+        if (cancelResult.success) {
+          console.log(JSON.stringify({
             event: 'BITRIX_TO_SHOPIFY_TECHNICAL_ORDER_CANCEL_SUCCESS',
-          requestId,
-          dealId,
-          stageId,
-          shopifyOrderId: cancelResult.orderId,
-          orderName: cancelResult.orderName,
-          timestamp: new Date().toISOString()
-        }));
-        
-        return { 
-          success: true, 
-          triggerMatch: true, 
+            requestId,
+            dealId,
+            stageId,
+            shopifyOrderId: cancelResult.orderId,
+            orderName: cancelResult.orderName,
+            timestamp: new Date().toISOString()
+          }));
+
+          return {
+            success: true,
+            triggerMatch: true,
             action: 'technical_order_cancelled',
-          shopifyOrderId: cancelResult.orderId
-        };
-      } else if (cancelResult.error === 'ORDER_NOT_FOUND') {
-        console.log(JSON.stringify({
-          event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SKIP',
-          requestId,
-          dealId,
-          stageId,
+            shopifyOrderId: cancelResult.orderId
+          };
+        } else if (cancelResult.error === 'ORDER_NOT_FOUND') {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SKIP',
+            requestId,
+            dealId,
+            stageId,
             skip_reason: 'no_order_found',
-          timestamp: new Date().toISOString()
-        }));
+            timestamp: new Date().toISOString()
+          }));
           // Continue with normal flow - no order to cancel
-      } else {
-        console.log(JSON.stringify({
-          event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_ERROR',
-          requestId,
-          dealId,
-          stageId,
-          error: cancelResult.error,
-          message: cancelResult.message,
-          timestamp: new Date().toISOString()
-        }));
-        // Continue with normal flow even if cancellation failed
+        } else {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_ERROR',
+            requestId,
+            dealId,
+            stageId,
+            error: cancelResult.error,
+            message: cancelResult.message,
+            timestamp: new Date().toISOString()
+          }));
+          // Continue with normal flow even if cancellation failed
         }
       } catch (techCancelError) {
         console.log(JSON.stringify({
@@ -1766,29 +1766,29 @@ async function handleDealUpdate(dealId, requestId) {
       // Get order from Shopify to check current address
       const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
       const shopifyOrder = await getOrder(shopifyOrderId);
-      
+
       if (shopifyOrder) {
         // Get current shipping lines for potential update
         const currentShippingLines = shopifyOrder.shipping_lines || [];
-        
+
         // Check delivery price first (UF_CRM_67BEF8B2AA721)
         const deliveryPriceField = dealData.UF_CRM_67BEF8B2AA721 || dealData.uf_crm_67bef8b2aa721 || '';
         const deliveryPrice = deliveryPriceField ? parseFloat(deliveryPriceField) : null;
         const currentShippingPrice = currentShippingLines.length > 0 ? parseFloat(currentShippingLines[0].price || '0') : 0;
         const deliveryPriceChanged = deliveryPrice !== null && !isNaN(deliveryPrice) && Math.abs(deliveryPrice - currentShippingPrice) > 0.01;
-        
+
         // Update address for all orders (both technical and regular)
         // Extract address from Bitrix field UF_CRM_1742037435676
         const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
         let addressChanged = false;
         let parsedAddress = null;
         let addressUpdateAttempted = false;
-        
+
         if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
           // Parse address string: "Street, ZIP City Region, Country | coordinate"
           // Example: "Rue Verwée - Verwéestraat 8, 1030 Schaerbeek - Schaarbeek Brussels-Capital, Belgium | 50.866888495699;4.3742416799068|190"
           parsedAddress = parseBitrixAddressString(bitrixAddressField);
-          
+
           if (parsedAddress && Object.keys(parsedAddress).length > 0) {
             // Try to get country code from country name
             if (parsedAddress.country && !parsedAddress.country_code) {
@@ -1796,7 +1796,7 @@ async function handleDealUpdate(dealId, requestId) {
                 const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
                 const countriesResponse = await callShopifyAdmin('/countries.json');
                 const countries = countriesResponse.countries || [];
-                const countryMatch = countries.find(c => 
+                const countryMatch = countries.find(c =>
                   c.name.toLowerCase() === parsedAddress.country.toLowerCase()
                 );
                 if (countryMatch) {
@@ -1807,11 +1807,11 @@ async function handleDealUpdate(dealId, requestId) {
                 console.warn(`[BITRIX ADDRESS] Failed to resolve country code: ${countryError.message}`);
               }
             }
-            
+
             // Compare with current Shopify address
             const currentAddress = shopifyOrder.shipping_address || {};
             addressChanged = hasAddressChanged(parsedAddress, currentAddress);
-            
+
             // Debug: Log detailed comparison
             const addressComparison = {
               address1: {
@@ -1840,7 +1840,7 @@ async function handleDealUpdate(dealId, requestId) {
                 changed: (parsedAddress.province || '').trim().toLowerCase() !== (currentAddress.province || '').trim().toLowerCase()
               }
             };
-            
+
             console.log(JSON.stringify({
               event: 'AUTO_ADDRESS_CHECK',
               requestId,
@@ -1863,11 +1863,11 @@ async function handleDealUpdate(dealId, requestId) {
               deliveryPriceChanged: deliveryPriceChanged,
               timestamp: new Date().toISOString()
             }));
-            
+
             // Always update if address is provided (even if comparison says no change)
             // This ensures address is synced even if comparison logic has issues
             const shouldUpdateAddress = addressChanged || (parsedAddress && Object.keys(parsedAddress).length > 0);
-            
+
             if (shouldUpdateAddress || deliveryPriceChanged) {
               console.log(JSON.stringify({
                 event: 'AUTO_ADDRESS_UPDATE_DETECTED',
@@ -1888,11 +1888,11 @@ async function handleDealUpdate(dealId, requestId) {
                 currentDeliveryPrice: currentShippingPrice,
                 timestamp: new Date().toISOString()
               }));
-              
+
               // Prepare update payload with address and shipping lines
               // Match the working user script: send minimal payload
               const updatePayload = {};
-              
+
               // Always include shipping_address if we have parsed address
               if (parsedAddress && Object.keys(parsedAddress).length > 0) {
                 const addressForShopify = { ...parsedAddress };
@@ -1928,23 +1928,23 @@ async function handleDealUpdate(dealId, requestId) {
 
                 updatePayload.shipping_address = addressForShopify;
               }
-              
+
               // Only include shipping_lines if delivery price changed (do not send existing lines unnecessarily)
               if (deliveryPriceChanged && deliveryPrice !== null) {
                 // Update with new price
-                const currentShippingTitle = currentShippingLines.length > 0 
-                  ? currentShippingLines[0].title 
+                const currentShippingTitle = currentShippingLines.length > 0
+                  ? currentShippingLines[0].title
                   : 'Standard Shipping';
-                
+
                 updatePayload.shipping_lines = [{
                   title: currentShippingTitle,
                   price: deliveryPrice.toFixed(2),
-                  code: currentShippingLines.length > 0 && currentShippingLines[0].code 
-                    ? currentShippingLines[0].code 
+                  code: currentShippingLines.length > 0 && currentShippingLines[0].code
+                    ? currentShippingLines[0].code
                     : 'CUSTOM_EDIT'
                 }];
               }
-              
+
               // Log what we're about to send (for debugging)
               console.log(JSON.stringify({
                 event: 'AUTO_ADDRESS_UPDATE_PAYLOAD',
@@ -1958,13 +1958,13 @@ async function handleDealUpdate(dealId, requestId) {
                 shippingLinesCount: updatePayload.shipping_lines ? updatePayload.shipping_lines.length : 0,
                 timestamp: new Date().toISOString()
               }));
-              
+
               // Update address and shipping in Shopify
               const { updateShippingAddress } = await import('../../../src/lib/shopify/address.js');
               const correlationId = `${dealId}:${Date.now()}`;
               addressUpdateAttempted = true;
               const addressResult = await updateShippingAddress(shopifyOrderId, updatePayload, correlationId, null);
-              
+
               if (addressResult.success) {
                 console.log(JSON.stringify({
                   event: 'AUTO_ADDRESS_UPDATE_SUCCESS',
@@ -1984,31 +1984,31 @@ async function handleDealUpdate(dealId, requestId) {
                   timestamp: new Date().toISOString()
                 }));
               }
-              } else {
-                console.log(JSON.stringify({
-                  event: 'AUTO_ADDRESS_NO_CHANGE',
-                  requestId,
-                  dealId,
-                  shopifyOrderId,
-                  timestamp: new Date().toISOString()
-                }));
-              }
             } else {
               console.log(JSON.stringify({
-                event: 'AUTO_ADDRESS_PARSE_FAILED',
+                event: 'AUTO_ADDRESS_NO_CHANGE',
                 requestId,
                 dealId,
                 shopifyOrderId,
-                bitrixAddress: bitrixAddressField,
                 timestamp: new Date().toISOString()
               }));
             }
+          } else {
+            console.log(JSON.stringify({
+              event: 'AUTO_ADDRESS_PARSE_FAILED',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              bitrixAddress: bitrixAddressField,
+              timestamp: new Date().toISOString()
+            }));
+          }
         }
-        
+
         // Check if delivery price needs to be updated (only if address wasn't updated above)
         // If address was updated, shipping_lines were already included in that update
         const wasAddressUpdated = addressUpdateAttempted;
-        
+
         if (deliveryPriceChanged && !wasAddressUpdated) {
           console.log(JSON.stringify({
             event: 'AUTO_DELIVERY_PRICE_UPDATE_DETECTED',
@@ -2019,26 +2019,26 @@ async function handleDealUpdate(dealId, requestId) {
             currentDeliveryPrice: currentShippingPrice,
             timestamp: new Date().toISOString()
           }));
-          
+
           // Update only shipping price
           const { updateShippingAddress } = await import('../../../src/lib/shopify/address.js');
           const correlationId = `${dealId}:${Date.now()}`;
-          
+
           // Get current shipping line title or use default
-          const currentShippingTitle = currentShippingLines.length > 0 
-            ? currentShippingLines[0].title 
+          const currentShippingTitle = currentShippingLines.length > 0
+            ? currentShippingLines[0].title
             : 'Standard Shipping';
-          
+
           const addressResult = await updateShippingAddress(shopifyOrderId, {
             shipping_lines: [{
               title: currentShippingTitle,
               price: deliveryPrice.toFixed(2),
-              code: currentShippingLines.length > 0 && currentShippingLines[0].code 
-                ? currentShippingLines[0].code 
+              code: currentShippingLines.length > 0 && currentShippingLines[0].code
+                ? currentShippingLines[0].code
                 : 'CUSTOM_EDIT'
             }]
           }, correlationId, null);
-          
+
           if (addressResult.success) {
             console.log(JSON.stringify({
               event: 'AUTO_DELIVERY_PRICE_UPDATE_SUCCESS',
@@ -2080,14 +2080,14 @@ async function handleDealUpdate(dealId, requestId) {
       }));
       const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
       const shopifyOrder = await getOrder(shopifyOrderId);
-      
+
       if (shopifyOrder) {
         // Check if order is created from Bitrix (has BITRIX:{dealId} tag) - should sync quantities
-        const orderTags = Array.isArray(shopifyOrder.tags) 
-          ? shopifyOrder.tags 
+        const orderTags = Array.isArray(shopifyOrder.tags)
+          ? shopifyOrder.tags
           : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
         const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
-        
+
         if (isBitrixOrder) {
           // Get product rows from Bitrix
           const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
@@ -2106,7 +2106,7 @@ async function handleDealUpdate(dealId, requestId) {
 
           // Get line items from Shopify
           const shopifyLineItems = shopifyOrder.line_items || [];
-          
+
           // Build map of SKU -> quantity from Bitrix
           const bitrixQuantities = new Map();
           for (const row of bitrixRows) {
@@ -2127,7 +2127,7 @@ async function handleDealUpdate(dealId, requestId) {
               }
             }
           }
-          
+
           // Compare with Shopify and find differences.
           // IMPORTANT: If Bitrix rows are empty, we still must decrement all Shopify SKU-backed line items to 0.
           const quantityChanges = [];
@@ -2138,7 +2138,7 @@ async function handleDealUpdate(dealId, requestId) {
             const sku = String(rawSku).trim();
             const bitrixQty = bitrixQuantities.has(sku) ? bitrixQuantities.get(sku) : 0;
             const shopifyQty = parseFloat(lineItem.quantity || 0);
-            
+
             if (Math.abs(bitrixQty - shopifyQty) > 0.01) { // Allow small floating point differences
               quantityChanges.push({
                 sku,
@@ -2148,7 +2148,7 @@ async function handleDealUpdate(dealId, requestId) {
               });
             }
           }
-          
+
           // Also check for new items in Bitrix that don't exist in Shopify
           for (const [sku, bitrixQty] of bitrixQuantities.entries()) {
             const existsInShopify = shopifyLineItems.some(li => String(li?.sku || '').trim() === sku);
@@ -2162,282 +2162,282 @@ async function handleDealUpdate(dealId, requestId) {
               });
             }
           }
-            
-            if (quantityChanges.length > 0) {
-              console.log(JSON.stringify({
-                event: 'QUANTITY_SYNC_DETECTED',
-                requestId,
-                dealId,
-                shopifyOrderId,
-                changesCount: quantityChanges.length,
-                changes: quantityChanges,
-                timestamp: new Date().toISOString()
-              }));
-              
-              // Apply changes using orderEdit API
-              const { incrementLineItemQuantity, decrementLineItemQuantity, addPositionToOrder } = await import('../../../src/lib/shopify/orderEdit.js');
-              const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
-              
-              let hasChanges = false;
-              
-              for (const change of quantityChanges) {
-                try {
-                  if (change.isNew) {
-                    // Add new position
-                    const addResult = await addPositionToOrder(shopifyOrderId, change.sku, change.newQty);
-                    if (addResult.success) {
-                      hasChanges = true;
-                      console.log(JSON.stringify({
-                        event: 'QUANTITY_SYNC_ADD_SUCCESS',
-                        requestId,
-                        dealId,
-                        shopifyOrderId,
-                        sku: change.sku,
-                        quantity: change.newQty,
-                        timestamp: new Date().toISOString()
-                      }));
-                    } else {
-                      console.log(JSON.stringify({
-                        event: 'QUANTITY_SYNC_ADD_ERROR',
-                        requestId,
-                        dealId,
-                        shopifyOrderId,
-                        sku: change.sku,
-                        quantity: change.newQty,
-                        error: addResult.error,
-                        message: addResult.message,
-                        timestamp: new Date().toISOString()
-                      }));
-                    }
-                  } else if (change.newQty > change.shopifyQty) {
-                    // Increment quantity
-                    const incrementQty = change.newQty - change.shopifyQty;
-                    const incrementResult = await incrementLineItemQuantity(shopifyOrderId, change.sku, incrementQty);
-                    if (incrementResult.success) {
-                      hasChanges = true;
-                      console.log(JSON.stringify({
-                        event: 'QUANTITY_SYNC_INCREMENT_SUCCESS',
-                        requestId,
-                        dealId,
-                        shopifyOrderId,
-                        sku: change.sku,
-                        previousQty: change.shopifyQty,
-                        newQty: incrementResult.newQuantity,
-                        timestamp: new Date().toISOString()
-                      }));
-                    } else {
-                      console.log(JSON.stringify({
-                        event: 'QUANTITY_SYNC_INCREMENT_ERROR',
-                        requestId,
-                        dealId,
-                        shopifyOrderId,
-                        sku: change.sku,
-                        incrementQty,
-                        error: incrementResult.error,
-                        message: incrementResult.message,
-                        timestamp: new Date().toISOString()
-                      }));
-                    }
-                  } else if (change.newQty < change.shopifyQty) {
-                    // Decrement quantity
-                    const decrementResult = await decrementLineItemQuantity(shopifyOrderId, change.sku, change.newQty);
-                    if (decrementResult.success) {
-                      hasChanges = true;
-                      console.log(JSON.stringify({
-                        event: 'QUANTITY_SYNC_DECREMENT_SUCCESS',
-                        requestId,
-                        dealId,
-                        shopifyOrderId,
-                        sku: change.sku,
-                        previousQty: change.shopifyQty,
-                        newQty: decrementResult.newQuantity,
-                        timestamp: new Date().toISOString()
-                      }));
-                    } else {
-                      console.log(JSON.stringify({
-                        event: 'QUANTITY_SYNC_DECREMENT_ERROR',
-                        requestId,
-                        dealId,
-                        shopifyOrderId,
-                        sku: change.sku,
-                        newQty: change.newQty,
-                        error: decrementResult.error,
-                        message: decrementResult.message,
-                        timestamp: new Date().toISOString()
-                      }));
-                    }
+
+          if (quantityChanges.length > 0) {
+            console.log(JSON.stringify({
+              event: 'QUANTITY_SYNC_DETECTED',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              changesCount: quantityChanges.length,
+              changes: quantityChanges,
+              timestamp: new Date().toISOString()
+            }));
+
+            // Apply changes using orderEdit API
+            const { incrementLineItemQuantity, decrementLineItemQuantity, addPositionToOrder } = await import('../../../src/lib/shopify/orderEdit.js');
+            const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
+
+            let hasChanges = false;
+
+            for (const change of quantityChanges) {
+              try {
+                if (change.isNew) {
+                  // Add new position
+                  const addResult = await addPositionToOrder(shopifyOrderId, change.sku, change.newQty);
+                  if (addResult.success) {
+                    hasChanges = true;
+                    console.log(JSON.stringify({
+                      event: 'QUANTITY_SYNC_ADD_SUCCESS',
+                      requestId,
+                      dealId,
+                      shopifyOrderId,
+                      sku: change.sku,
+                      quantity: change.newQty,
+                      timestamp: new Date().toISOString()
+                    }));
+                  } else {
+                    console.log(JSON.stringify({
+                      event: 'QUANTITY_SYNC_ADD_ERROR',
+                      requestId,
+                      dealId,
+                      shopifyOrderId,
+                      sku: change.sku,
+                      quantity: change.newQty,
+                      error: addResult.error,
+                      message: addResult.message,
+                      timestamp: new Date().toISOString()
+                    }));
                   }
-                } catch (changeError) {
-                  console.log(JSON.stringify({
-                    event: 'QUANTITY_SYNC_CHANGE_ERROR',
-                    requestId,
-                    dealId,
-                    shopifyOrderId,
-                    sku: change.sku,
-                    error: changeError.message,
-                    timestamp: new Date().toISOString()
-                  }));
+                } else if (change.newQty > change.shopifyQty) {
+                  // Increment quantity
+                  const incrementQty = change.newQty - change.shopifyQty;
+                  const incrementResult = await incrementLineItemQuantity(shopifyOrderId, change.sku, incrementQty);
+                  if (incrementResult.success) {
+                    hasChanges = true;
+                    console.log(JSON.stringify({
+                      event: 'QUANTITY_SYNC_INCREMENT_SUCCESS',
+                      requestId,
+                      dealId,
+                      shopifyOrderId,
+                      sku: change.sku,
+                      previousQty: change.shopifyQty,
+                      newQty: incrementResult.newQuantity,
+                      timestamp: new Date().toISOString()
+                    }));
+                  } else {
+                    console.log(JSON.stringify({
+                      event: 'QUANTITY_SYNC_INCREMENT_ERROR',
+                      requestId,
+                      dealId,
+                      shopifyOrderId,
+                      sku: change.sku,
+                      incrementQty,
+                      error: incrementResult.error,
+                      message: incrementResult.message,
+                      timestamp: new Date().toISOString()
+                    }));
+                  }
+                } else if (change.newQty < change.shopifyQty) {
+                  // Decrement quantity
+                  const decrementResult = await decrementLineItemQuantity(shopifyOrderId, change.sku, change.newQty);
+                  if (decrementResult.success) {
+                    hasChanges = true;
+                    console.log(JSON.stringify({
+                      event: 'QUANTITY_SYNC_DECREMENT_SUCCESS',
+                      requestId,
+                      dealId,
+                      shopifyOrderId,
+                      sku: change.sku,
+                      previousQty: change.shopifyQty,
+                      newQty: decrementResult.newQuantity,
+                      timestamp: new Date().toISOString()
+                    }));
+                  } else {
+                    console.log(JSON.stringify({
+                      event: 'QUANTITY_SYNC_DECREMENT_ERROR',
+                      requestId,
+                      dealId,
+                      shopifyOrderId,
+                      sku: change.sku,
+                      newQty: change.newQty,
+                      error: decrementResult.error,
+                      message: decrementResult.message,
+                      timestamp: new Date().toISOString()
+                    }));
+                  }
                 }
-              }
-              
-              // ✅ STEP C2.1: Clean up stub order if real products were added
-              // If order was a stub (has BITRIX_STUB tag) and now has real products, remove stub marker
-              const hasStubTag = orderTags.includes('BITRIX_STUB');
-              const hasRealProducts = bitrixQuantities.size > 0;
-              
-              if (hasStubTag && hasRealProducts) {
+              } catch (changeError) {
                 console.log(JSON.stringify({
-                  event: 'STUB_ORDER_CLEANUP_START',
+                  event: 'QUANTITY_SYNC_CHANGE_ERROR',
                   requestId,
                   dealId,
                   shopifyOrderId,
-                  bitrixProductsCount: bitrixQuantities.size,
+                  sku: change.sku,
+                  error: changeError.message,
                   timestamp: new Date().toISOString()
                 }));
-                
-                try {
-                  // Step 1: Remove default variant (53051786756360) if it exists
-                  const defaultVariantId = BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID;
-                  
-                  // Use orderEdit API to find and remove the default variant line item
-                  const { beginOrderEdit, setLineItemQuantity, commitOrderEdit } = await import('../../../src/lib/shopify/orderEdit.js');
-                  
-                  const beginResult = await beginOrderEdit(shopifyOrderId);
-                  if (beginResult.success) {
-                    // Find the line item with default variant in calculated order
-                    const calculatedLineItems = beginResult.lineItems || [];
-                    const calculatedDefaultItem = calculatedLineItems.find(li => {
-                      if (!li.variant) return false;
-                      // Try legacyResourceId first (numeric ID), then extract from GraphQL ID
-                      const liVariantId = li.variant.legacyResourceId 
-                        ? String(li.variant.legacyResourceId)
-                        : (li.variant.id ? String(li.variant.id).split('/').pop() : null);
-                      return liVariantId === defaultVariantId;
-                    });
-                    
-                    if (calculatedDefaultItem && calculatedDefaultItem.quantity > 0) {
-                      // Set quantity to 0 to remove it
-                      const setResult = await setLineItemQuantity(
-                        beginResult.calculatedOrderId,
-                        calculatedDefaultItem.id,
-                        0
-                      );
-                      
-                      if (setResult.success) {
-                        const commitResult = await commitOrderEdit(beginResult.calculatedOrderId);
-                        if (commitResult.success) {
-                          console.log(JSON.stringify({
-                            event: 'STUB_ORDER_DEFAULT_VARIANT_REMOVED',
-                            requestId,
-                            dealId,
-                            shopifyOrderId,
-                            defaultVariantId,
-                            timestamp: new Date().toISOString()
-                          }));
-                        }
-                      }
-                    }
-                  }
-                  
-                  // Step 2: Remove BITRIX_STUB tag and update note
-                  const { callShopifyAdmin, getOrder } = await import('../../../src/lib/shopify/adminClient.js');
-                  const currentOrder = await getOrder(shopifyOrderId);
-                  
-                  if (currentOrder) {
-                    const currentTags = Array.isArray(currentOrder.tags)
-                      ? currentOrder.tags
-                      : (currentOrder.tags ? String(currentOrder.tags).split(',').map(t => t.trim()) : []);
-                    
-                    const updatedTags = currentTags.filter(tag => tag !== 'BITRIX_STUB');
-                    const currentNote = currentOrder.note || '';
-                    const shouldUpdateNote = currentNote.includes('STUB ORDER');
-                    const updatedNote = shouldUpdateNote ? `Ордер из Bitrix. Сделка: ${dealId}` : currentNote;
-                    
-                    // Update order to remove BITRIX_STUB tag and update note if needed
-                    if (updatedTags.length !== currentTags.length || shouldUpdateNote) {
-                      await callShopifyAdmin(`/orders/${shopifyOrderId}.json`, {
-                        method: 'PUT',
-                        body: JSON.stringify({
-                          order: {
-                            id: shopifyOrderId,
-                            tags: updatedTags.join(', '),
-                            note: updatedNote
-                          }
-                        })
-                      });
-                      
-                      if (updatedTags.length !== currentTags.length) {
-                        console.log(JSON.stringify({
-                          event: 'STUB_ORDER_TAG_REMOVED',
-                          requestId,
-                          dealId,
-                          shopifyOrderId,
-                          removedTag: 'BITRIX_STUB',
-                          timestamp: new Date().toISOString()
-                        }));
-                      }
-                      
-                      if (shouldUpdateNote) {
-                        console.log(JSON.stringify({
-                          event: 'STUB_ORDER_NOTE_UPDATED',
-                          requestId,
-                          dealId,
-                          shopifyOrderId,
-                          oldNote: currentNote.substring(0, 100),
-                          newNote: updatedNote,
-                          timestamp: new Date().toISOString()
-                        }));
-                      }
-                    }
-                  }
-                  
-                  console.log(JSON.stringify({
-                    event: 'STUB_ORDER_CLEANUP_SUCCESS',
-                    requestId,
-                    dealId,
-                    shopifyOrderId,
-                    timestamp: new Date().toISOString()
-                  }));
-                } catch (stubCleanupError) {
-                  console.warn(`[STUB CLEANUP] Failed to clean up stub order: ${stubCleanupError.message}`);
-                  console.log(JSON.stringify({
-                    event: 'STUB_ORDER_CLEANUP_ERROR',
-                    requestId,
-                    dealId,
-                    shopifyOrderId,
-                    error: stubCleanupError.message,
-                    stack: stubCleanupError.stack,
-                    timestamp: new Date().toISOString()
-                  }));
-                }
               }
-              
-              // Add BitrixUpdated tag if any changes were made
-              if (hasChanges) {
-                try {
-                  await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
-                  console.log(JSON.stringify({
-                    event: 'QUANTITY_SYNC_TAG_ADDED',
-                    requestId,
-                    dealId,
-                    shopifyOrderId,
-                    timestamp: new Date().toISOString()
-                  }));
-                } catch (tagError) {
-                  console.warn(`[QUANTITY SYNC] Failed to add BitrixUpdated tag: ${tagError.message}`);
-                }
-              }
-            } else {
+            }
+
+            // ✅ STEP C2.1: Clean up stub order if real products were added
+            // If order was a stub (has BITRIX_STUB tag) and now has real products, remove stub marker
+            const hasStubTag = orderTags.includes('BITRIX_STUB');
+            const hasRealProducts = bitrixQuantities.size > 0;
+
+            if (hasStubTag && hasRealProducts) {
               console.log(JSON.stringify({
-                event: 'QUANTITY_SYNC_NO_CHANGES',
+                event: 'STUB_ORDER_CLEANUP_START',
                 requestId,
                 dealId,
                 shopifyOrderId,
-                bitrixItemsCount: bitrixQuantities.size,
-                shopifyItemsCount: shopifyLineItems.length,
+                bitrixProductsCount: bitrixQuantities.size,
                 timestamp: new Date().toISOString()
               }));
+
+              try {
+                // Step 1: Remove default variant (53051786756360) if it exists
+                const defaultVariantId = BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID;
+
+                // Use orderEdit API to find and remove the default variant line item
+                const { beginOrderEdit, setLineItemQuantity, commitOrderEdit } = await import('../../../src/lib/shopify/orderEdit.js');
+
+                const beginResult = await beginOrderEdit(shopifyOrderId);
+                if (beginResult.success) {
+                  // Find the line item with default variant in calculated order
+                  const calculatedLineItems = beginResult.lineItems || [];
+                  const calculatedDefaultItem = calculatedLineItems.find(li => {
+                    if (!li.variant) return false;
+                    // Try legacyResourceId first (numeric ID), then extract from GraphQL ID
+                    const liVariantId = li.variant.legacyResourceId
+                      ? String(li.variant.legacyResourceId)
+                      : (li.variant.id ? String(li.variant.id).split('/').pop() : null);
+                    return liVariantId === defaultVariantId;
+                  });
+
+                  if (calculatedDefaultItem && calculatedDefaultItem.quantity > 0) {
+                    // Set quantity to 0 to remove it
+                    const setResult = await setLineItemQuantity(
+                      beginResult.calculatedOrderId,
+                      calculatedDefaultItem.id,
+                      0
+                    );
+
+                    if (setResult.success) {
+                      const commitResult = await commitOrderEdit(beginResult.calculatedOrderId);
+                      if (commitResult.success) {
+                        console.log(JSON.stringify({
+                          event: 'STUB_ORDER_DEFAULT_VARIANT_REMOVED',
+                          requestId,
+                          dealId,
+                          shopifyOrderId,
+                          defaultVariantId,
+                          timestamp: new Date().toISOString()
+                        }));
+                      }
+                    }
+                  }
+                }
+
+                // Step 2: Remove BITRIX_STUB tag and update note
+                const { callShopifyAdmin, getOrder } = await import('../../../src/lib/shopify/adminClient.js');
+                const currentOrder = await getOrder(shopifyOrderId);
+
+                if (currentOrder) {
+                  const currentTags = Array.isArray(currentOrder.tags)
+                    ? currentOrder.tags
+                    : (currentOrder.tags ? String(currentOrder.tags).split(',').map(t => t.trim()) : []);
+
+                  const updatedTags = currentTags.filter(tag => tag !== 'BITRIX_STUB');
+                  const currentNote = currentOrder.note || '';
+                  const shouldUpdateNote = currentNote.includes('STUB ORDER');
+                  const updatedNote = shouldUpdateNote ? `Ордер из Bitrix. Сделка: ${dealId}` : currentNote;
+
+                  // Update order to remove BITRIX_STUB tag and update note if needed
+                  if (updatedTags.length !== currentTags.length || shouldUpdateNote) {
+                    await callShopifyAdmin(`/orders/${shopifyOrderId}.json`, {
+                      method: 'PUT',
+                      body: JSON.stringify({
+                        order: {
+                          id: shopifyOrderId,
+                          tags: updatedTags.join(', '),
+                          note: updatedNote
+                        }
+                      })
+                    });
+
+                    if (updatedTags.length !== currentTags.length) {
+                      console.log(JSON.stringify({
+                        event: 'STUB_ORDER_TAG_REMOVED',
+                        requestId,
+                        dealId,
+                        shopifyOrderId,
+                        removedTag: 'BITRIX_STUB',
+                        timestamp: new Date().toISOString()
+                      }));
+                    }
+
+                    if (shouldUpdateNote) {
+                      console.log(JSON.stringify({
+                        event: 'STUB_ORDER_NOTE_UPDATED',
+                        requestId,
+                        dealId,
+                        shopifyOrderId,
+                        oldNote: currentNote.substring(0, 100),
+                        newNote: updatedNote,
+                        timestamp: new Date().toISOString()
+                      }));
+                    }
+                  }
+                }
+
+                console.log(JSON.stringify({
+                  event: 'STUB_ORDER_CLEANUP_SUCCESS',
+                  requestId,
+                  dealId,
+                  shopifyOrderId,
+                  timestamp: new Date().toISOString()
+                }));
+              } catch (stubCleanupError) {
+                console.warn(`[STUB CLEANUP] Failed to clean up stub order: ${stubCleanupError.message}`);
+                console.log(JSON.stringify({
+                  event: 'STUB_ORDER_CLEANUP_ERROR',
+                  requestId,
+                  dealId,
+                  shopifyOrderId,
+                  error: stubCleanupError.message,
+                  stack: stubCleanupError.stack,
+                  timestamp: new Date().toISOString()
+                }));
+              }
             }
+
+            // Add BitrixUpdated tag if any changes were made
+            if (hasChanges) {
+              try {
+                await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+                console.log(JSON.stringify({
+                  event: 'QUANTITY_SYNC_TAG_ADDED',
+                  requestId,
+                  dealId,
+                  shopifyOrderId,
+                  timestamp: new Date().toISOString()
+                }));
+              } catch (tagError) {
+                console.warn(`[QUANTITY SYNC] Failed to add BitrixUpdated tag: ${tagError.message}`);
+              }
+            }
+          } else {
+            console.log(JSON.stringify({
+              event: 'QUANTITY_SYNC_NO_CHANGES',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              bitrixItemsCount: bitrixQuantities.size,
+              shopifyItemsCount: shopifyLineItems.length,
+              timestamp: new Date().toISOString()
+            }));
+          }
         }
       }
     } catch (quantitySyncError) {
@@ -2490,7 +2490,7 @@ async function handleDealUpdate(dealId, requestId) {
   if (shouldCreateOrder) {
     // Re-check shopifyOrderId after a short delay (race condition protection)
     await new Promise(resolve => setTimeout(resolve, 200));
-    
+
     try {
       const dealRecheckResp = await callBitrix('/crm.deal.get.json', { id: dealId });
       if (dealRecheckResp.result) {
@@ -2516,7 +2516,7 @@ async function handleDealUpdate(dealId, requestId) {
     // If still should create, check Shopify for existing order by tag
     if (shouldCreateOrder) {
       const existingOrderId = await findExistingOrderByDealId(dealId);
-      
+
       if (existingOrderId) {
         console.log(JSON.stringify({
           event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE_CHECK',
@@ -2529,7 +2529,7 @@ async function handleDealUpdate(dealId, requestId) {
         }));
         shouldCreateOrder = false;
         existingShopifyOrderId = existingOrderId;
-        
+
         // Update deal with found shopifyOrderId
         try {
           await callBitrix('/crm.deal.update.json', {
@@ -2593,7 +2593,7 @@ async function handleDealUpdate(dealId, requestId) {
               const product = productResp.result;
               const code = product.CODE;
               const xmlId = product.XML_ID; // XML_ID = variant_id in Shopify
-              
+
               // Priority: CODE (SKU) first, then XML_ID (variant_id) directly
               if (code && code.trim() !== '') {
                 // Use CODE as SKU - will look up variant_id by SKU
@@ -2694,7 +2694,7 @@ async function handleDealUpdate(dealId, requestId) {
                   const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
                   const countriesResponse = await callShopifyAdmin('/countries.json');
                   const countries = countriesResponse.countries || [];
-                  const countryMatch = countries.find(c => 
+                  const countryMatch = countries.find(c =>
                     c.name.toLowerCase() === parsedAddress.country.toLowerCase()
                   );
                   if (countryMatch) {
@@ -2726,14 +2726,14 @@ async function handleDealUpdate(dealId, requestId) {
             customerEmail,
             isStubOrder,
             stubReason,
-            stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null
+            stubDefaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID // Always pass default variant to allow fallback for missing SKUs
           });
 
           if (orderResult.success) {
             // Save shopifyOrderId back to Bitrix deal
             const createdOrderId = String(orderResult.orderId);
             let orderName = orderResult.orderName; // e.g., "#2491" or "Existing order 1234"
-            
+
             // If order was duplicate, try to get real order name from Shopify
             if (orderResult.wasDuplicate && orderName && !orderName.startsWith('#')) {
               try {
@@ -2754,40 +2754,40 @@ async function handleDealUpdate(dealId, requestId) {
                 console.warn(`[BITRIX TO SHOPIFY] Failed to fetch order name: ${fetchError.message}`);
               }
             }
-            
+
             try {
               // Get current deal title to check if order number is already added
               const currentTitle = dealData.TITLE || '';
-              
+
               // Check if title already contains THIS specific order number (prevent duplicate updates)
               // Check for both formats: "#2491" and just "2491"
               const orderNumberFromName = orderName ? orderName.replace('#', '') : null;
               const orderNumberPattern = orderNumberFromName ? new RegExp(`#?${orderNumberFromName}\\b`) : /#\d+/;
               const alreadyContainsThisOrderNumber = orderNumberFromName && orderNumberPattern.test(currentTitle);
-              
+
               // Prepare update fields
               const updateFields = {
-                  UF_CRM_1742556489: createdOrderId // Shopify Order ID field
+                UF_CRM_1742556489: createdOrderId // Shopify Order ID field
               };
-              
+
               // Update TITLE only if:
               // 1. orderName is available and contains "#" (real Shopify order name format)
               // 2. This specific order number is not already in title
               // 3. orderName is not in format "Existing order X" or "Order X"
-              const isValidOrderName = orderName && 
-                                      orderName.trim() !== '' && 
-                                      (orderName.startsWith('#') || /^#?\d+$/.test(orderName.replace('#', '')));
+              const isValidOrderName = orderName &&
+                orderName.trim() !== '' &&
+                (orderName.startsWith('#') || /^#?\d+$/.test(orderName.replace('#', '')));
               const isNotPlaceholderName = !orderName.includes('Existing order') && !orderName.includes('Order ');
-              
+
               if (!alreadyContainsThisOrderNumber && isValidOrderName && isNotPlaceholderName) {
                 // Ensure orderName starts with "#"
                 const formattedOrderName = orderName.startsWith('#') ? orderName : `#${orderName}`;
-                
+
                 // Replace TITLE completely with order number (not append)
                 // Example: "D_6704" -> "#2494" (not "D_6704 #2494")
                 const updatedTitle = formattedOrderName;
                 updateFields.TITLE = updatedTitle;
-                
+
                 console.log(JSON.stringify({
                   event: 'BITRIX_DEAL_TITLE_UPDATE_PLANNED',
                   requestId,
@@ -2800,14 +2800,14 @@ async function handleDealUpdate(dealId, requestId) {
                   timestamp: new Date().toISOString()
                 }));
               } else {
-                const skipReason = alreadyContainsThisOrderNumber 
-                  ? 'order_number_already_in_title' 
-                  : !isValidOrderName 
-                    ? 'invalid_order_name_format' 
+                const skipReason = alreadyContainsThisOrderNumber
+                  ? 'order_number_already_in_title'
+                  : !isValidOrderName
+                    ? 'invalid_order_name_format'
                     : !isNotPlaceholderName
                       ? 'placeholder_order_name'
                       : 'unknown';
-                
+
                 console.log(JSON.stringify({
                   event: 'BITRIX_DEAL_TITLE_UPDATE_SKIPPED',
                   requestId,
@@ -2822,7 +2822,7 @@ async function handleDealUpdate(dealId, requestId) {
                   timestamp: new Date().toISOString()
                 }));
               }
-              
+
               await callBitrix('/crm.deal.update.json', {
                 id: dealId,
                 fields: updateFields
@@ -2916,7 +2916,7 @@ async function handleDealUpdate(dealId, requestId) {
       // Step 1: Check if order is technical order
       const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
       const shopifyOrder = await getOrder(shopifyOrderId);
-      
+
       if (!shopifyOrder) {
         console.log(JSON.stringify({
           event: 'DELIVERY_ORDER_NOT_FOUND',
@@ -2927,12 +2927,12 @@ async function handleDealUpdate(dealId, requestId) {
         }));
         return { success: true, triggerMatch: true, correlationId };
       }
-      
-      const orderTags = Array.isArray(shopifyOrder.tags) 
-        ? shopifyOrder.tags 
+
+      const orderTags = Array.isArray(shopifyOrder.tags)
+        ? shopifyOrder.tags
         : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
       const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
-      
+
       // Only process fulfillment for orders NOT created from Bitrix
       if (isBitrixOrder) {
         console.log(JSON.stringify({
@@ -2944,10 +2944,10 @@ async function handleDealUpdate(dealId, requestId) {
         }));
         return { success: true, triggerMatch: true, correlationId };
       }
-      
+
       // Step 2: Set provenance marker first
       const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId);
-      
+
       if (provenanceResult.success) {
         console.log(JSON.stringify({
           event: 'SHOPIFY_PROVENANCE_SET',
@@ -2973,24 +2973,24 @@ async function handleDealUpdate(dealId, requestId) {
       }
 
       // Step 3: Check if tracking info is provided in deal fields
-      const trackingNumber = dealData.UF_CRM_TRACKING_NUMBER || dealData.uf_crm_tracking_number || 
-                             dealData.UF_CRM_1742556489_TRACKING || dealData.uf_crm_1742556489_tracking || null;
+      const trackingNumber = dealData.UF_CRM_TRACKING_NUMBER || dealData.uf_crm_tracking_number ||
+        dealData.UF_CRM_1742556489_TRACKING || dealData.uf_crm_1742556489_tracking || null;
       const trackingUrl = dealData.UF_CRM_TRACKING_URL || dealData.uf_crm_tracking_url || null;
       const trackingUrls = trackingUrl ? [trackingUrl] : [];
-      
+
       // Step 4: Check if fulfillment exists
       const { getFulfillmentOrders, updateOrderFulfillmentForDelivery } = await import('../../../src/lib/shopify/fulfillment.js');
       const fulfillmentsResponse = await getFulfillmentOrders(shopifyOrderId);
       const hasFulfillment = fulfillmentsResponse.success && fulfillmentsResponse.fulfillments && fulfillmentsResponse.fulfillments.length > 0;
-      
+
       // Step 5: Update order note to show "в доставке" / "in delivery" status
       const { updateOrder } = await import('../../../src/lib/shopify/adminClient.js');
       const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
-      
+
       try {
         const currentNote = shopifyOrder.note || '';
         const deliveryNote = `[Bitrix: C2:EXECUTING] Заказ в доставке / Order in delivery${trackingNumber ? ` | Tracking: ${trackingNumber}` : ''}`;
-        
+
         // Only update note if it doesn't already contain delivery status
         let updatedNote = currentNote;
         if (!currentNote.includes('в доставке') && !currentNote.includes('in delivery')) {
@@ -2999,13 +2999,13 @@ async function handleDealUpdate(dealId, requestId) {
           // Update note with tracking if not present
           updatedNote = currentNote.replace(/Tracking:.*/, `Tracking: ${trackingNumber}`);
         }
-        
+
         // Update order with note
         await updateOrder(shopifyOrderId, {
           id: shopifyOrderId,
           note: updatedNote
         });
-        
+
         console.log(JSON.stringify({
           event: 'DELIVERY_ORDER_NOTE_UPDATED',
           requestId,
@@ -3018,10 +3018,10 @@ async function handleDealUpdate(dealId, requestId) {
       } catch (noteError) {
         console.warn(`[BITRIX TO SHOPIFY] Failed to update order note: ${noteError.message}`);
       }
-      
+
       // Step 6: Update existing fulfillment OR create new one
       let fulfillmentResult = null;
-      
+
       if (hasFulfillment) {
         // Update existing fulfillment with tracking
         console.log(JSON.stringify({
@@ -3032,13 +3032,13 @@ async function handleDealUpdate(dealId, requestId) {
           trackingNumber,
           timestamp: new Date().toISOString()
         }));
-        
+
         fulfillmentResult = await updateOrderFulfillmentForDelivery(shopifyOrderId, {
           notify_customer: true,
           tracking_number: trackingNumber,
           tracking_urls: trackingUrls.length > 0 ? trackingUrls : undefined
         });
-        
+
         if (fulfillmentResult && fulfillmentResult.success) {
           console.log(JSON.stringify({
             event: 'DELIVERY_FULFILLMENT_UPDATE_SUCCESS',
@@ -3063,20 +3063,20 @@ async function handleDealUpdate(dealId, requestId) {
         }
       } else {
         // Fulfillment doesn't exist - check if we need to create it
-      const orderData = await getOrderForFulfillment(shopifyOrderId);
-      
-      if (!orderData.success) {
-        console.log(JSON.stringify({
-          event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
-          requestId,
-          dealId,
-          correlationId,
-          shopifyOrderId,
-          skip_reason: 'order_fetch_error',
-          error: orderData.error,
-          message: orderData.message,
-          timestamp: new Date().toISOString()
-        }));
+        const orderData = await getOrderForFulfillment(shopifyOrderId);
+
+        if (!orderData.success) {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            skip_reason: 'order_fetch_error',
+            error: orderData.error,
+            message: orderData.message,
+            timestamp: new Date().toISOString()
+          }));
           // Add tags even if fulfillment creation skipped
           try {
             await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
@@ -3084,10 +3084,10 @@ async function handleDealUpdate(dealId, requestId) {
           } catch (tagError) {
             console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
           }
-        return { success: true, triggerMatch: true, correlationId };
-      }
+          return { success: true, triggerMatch: true, correlationId };
+        }
 
-      // Check if already fulfilled
+        // Check if already fulfilled
         if (orderData.isFullyFulfilled) {
           console.log(JSON.stringify({
             event: 'SHOPIFY_FULFILLMENT_ALREADY_FULFILLED',
@@ -3110,16 +3110,16 @@ async function handleDealUpdate(dealId, requestId) {
 
         // Check if fulfillment is needed
         if (!orderData.needsFulfillment) {
-        console.log(JSON.stringify({
-          event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
-          requestId,
-          dealId,
-          correlationId,
-          shopifyOrderId,
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
             skip_reason: 'nothing_to_fulfill',
-          totalFulfillableQuantity: orderData.totalFulfillableQuantity,
-          timestamp: new Date().toISOString()
-        }));
+            totalFulfillableQuantity: orderData.totalFulfillableQuantity,
+            timestamp: new Date().toISOString()
+          }));
           // Add tags even if fulfillment creation skipped
           try {
             await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
@@ -3127,98 +3127,98 @@ async function handleDealUpdate(dealId, requestId) {
           } catch (tagError) {
             console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
           }
-        return { success: true, triggerMatch: true, correlationId };
-      }
+          return { success: true, triggerMatch: true, correlationId };
+        }
 
         // Create fulfillment
-      console.log(JSON.stringify({
-        event: 'SHOPIFY_FULFILLMENT_CREATE_ATTEMPT',
-        requestId,
-        dealId,
-        correlationId,
-        shopifyOrderId,
-        totalFulfillableQuantity: orderData.totalFulfillableQuantity,
-        itemsToFulfill: orderData.itemsToFulfill.length,
-        timestamp: new Date().toISOString()
-      }));
-
-        const { createFulfillment } = await import('../../../src/lib/shopify/fulfillment.js');
-        fulfillmentResult = await createFulfillment(shopifyOrderId, orderData.itemsToFulfill, {
-        notify_customer: true
-      });
-
-      if (fulfillmentResult.success) {
         console.log(JSON.stringify({
-          event: 'SHOPIFY_FULFILLMENT_CREATE_SUCCESS',
+          event: 'SHOPIFY_FULFILLMENT_CREATE_ATTEMPT',
           requestId,
           dealId,
           correlationId,
           shopifyOrderId,
-          fulfillmentId: fulfillmentResult.fulfillmentId,
-          fulfillmentIds: fulfillmentResult.fulfillmentIds,
-          httpStatus: fulfillmentResult.httpStatus,
+          totalFulfillableQuantity: orderData.totalFulfillableQuantity,
+          itemsToFulfill: orderData.itemsToFulfill.length,
           timestamp: new Date().toISOString()
         }));
 
-        // ✅ A3.1: Get post-fulfillment state for verification
-        try {
-          const postState = await getPostFulfillmentState(shopifyOrderId);
-          
-          console.log(JSON.stringify({
-            event: 'SHOPIFY_POST_FULFILLMENT_STATE',
-            requestId,
-            dealId,
-            correlationId,
-            shopifyOrderId: postState.shopifyOrderId,
-            fulfillmentIds: postState.fulfillmentIds,
-            fulfillmentStatuses: postState.fulfillmentStatuses,
-            orderFulfillmentStatus: postState.orderFulfillmentStatus,
-            lineItemsSummary: postState.lineItemsSummary,
-            timestamp: new Date().toISOString()
-          }));
+        const { createFulfillment } = await import('../../../src/lib/shopify/fulfillment.js');
+        fulfillmentResult = await createFulfillment(shopifyOrderId, orderData.itemsToFulfill, {
+          notify_customer: true
+        });
 
-          // Update stored event with fulfillment state for UI
-          if (storedEvent) {
-            storedEvent.fulfillmentState = postState.orderFulfillmentStatus;
-          }
-        } catch (postStateError) {
+        if (fulfillmentResult.success) {
           console.log(JSON.stringify({
-            event: 'SHOPIFY_POST_FULFILLMENT_STATE_ERROR',
+            event: 'SHOPIFY_FULFILLMENT_CREATE_SUCCESS',
             requestId,
             dealId,
             correlationId,
             shopifyOrderId,
-            error: postStateError.message,
+            fulfillmentId: fulfillmentResult.fulfillmentId,
+            fulfillmentIds: fulfillmentResult.fulfillmentIds,
+            httpStatus: fulfillmentResult.httpStatus,
+            timestamp: new Date().toISOString()
+          }));
+
+          // ✅ A3.1: Get post-fulfillment state for verification
+          try {
+            const postState = await getPostFulfillmentState(shopifyOrderId);
+
+            console.log(JSON.stringify({
+              event: 'SHOPIFY_POST_FULFILLMENT_STATE',
+              requestId,
+              dealId,
+              correlationId,
+              shopifyOrderId: postState.shopifyOrderId,
+              fulfillmentIds: postState.fulfillmentIds,
+              fulfillmentStatuses: postState.fulfillmentStatuses,
+              orderFulfillmentStatus: postState.orderFulfillmentStatus,
+              lineItemsSummary: postState.lineItemsSummary,
+              timestamp: new Date().toISOString()
+            }));
+
+            // Update stored event with fulfillment state for UI
+            if (storedEvent) {
+              storedEvent.fulfillmentState = postState.orderFulfillmentStatus;
+            }
+          } catch (postStateError) {
+            console.log(JSON.stringify({
+              event: 'SHOPIFY_POST_FULFILLMENT_STATE_ERROR',
+              requestId,
+              dealId,
+              correlationId,
+              shopifyOrderId,
+              error: postStateError.message,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        } else if (fulfillmentResult && fulfillmentResult.error === 'SHOPIFY_FULFILLMENT_CREATE_SKIP') {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            skip_reason: fulfillmentResult.skip_reason,
+            message: fulfillmentResult.message,
+            timestamp: new Date().toISOString()
+          }));
+        } else if (fulfillmentResult && !fulfillmentResult.success) {
+          console.log(JSON.stringify({
+            event: 'SHOPIFY_FULFILLMENT_CREATE_ERROR',
+            requestId,
+            dealId,
+            correlationId,
+            shopifyOrderId,
+            error: fulfillmentResult.error,
+            httpStatus: fulfillmentResult.httpStatus,
+            message: fulfillmentResult.message,
+            responseSnippet: fulfillmentResult.responseSnippet,
             timestamp: new Date().toISOString()
           }));
         }
-      } else if (fulfillmentResult && fulfillmentResult.error === 'SHOPIFY_FULFILLMENT_CREATE_SKIP') {
-        console.log(JSON.stringify({
-          event: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
-          requestId,
-          dealId,
-          correlationId,
-          shopifyOrderId,
-          skip_reason: fulfillmentResult.skip_reason,
-          message: fulfillmentResult.message,
-          timestamp: new Date().toISOString()
-        }));
-      } else if (fulfillmentResult && !fulfillmentResult.success) {
-        console.log(JSON.stringify({
-          event: 'SHOPIFY_FULFILLMENT_CREATE_ERROR',
-          requestId,
-          dealId,
-          correlationId,
-          shopifyOrderId,
-          error: fulfillmentResult.error,
-          httpStatus: fulfillmentResult.httpStatus,
-          message: fulfillmentResult.message,
-          responseSnippet: fulfillmentResult.responseSnippet,
-          timestamp: new Date().toISOString()
-        }));
-      }
       } // Close else block for fulfillment creation
-      
+
       // Step 7: Add tags to prevent webhook loop and mark as in delivery (for both update and create)
       try {
         await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
@@ -3385,7 +3385,7 @@ async function handleDealCreate(dealId, requestId) {
   if (shouldCreateOrder) {
     // Re-check shopifyOrderId after a short delay (race condition protection)
     await new Promise(resolve => setTimeout(resolve, 200));
-    
+
     try {
       const dealRecheckResp = await callBitrix('/crm.deal.get.json', { id: dealId });
       if (dealRecheckResp.result) {
@@ -3411,7 +3411,7 @@ async function handleDealCreate(dealId, requestId) {
     // If still should create, check Shopify for existing order by tag
     if (shouldCreateOrder) {
       const existingOrderId = await findExistingOrderByDealId(dealId);
-      
+
       if (existingOrderId) {
         console.log(JSON.stringify({
           event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE_CHECK',
@@ -3424,7 +3424,7 @@ async function handleDealCreate(dealId, requestId) {
         }));
         shouldCreateOrder = false;
         existingShopifyOrderId = existingOrderId;
-        
+
         // Update deal with found shopifyOrderId
         try {
           await callBitrix('/crm.deal.update.json', {
@@ -3509,7 +3509,7 @@ async function handleDealCreate(dealId, requestId) {
               const product = productResp.result;
               const code = product.CODE;
               const xmlId = product.XML_ID; // XML_ID = variant_id in Shopify
-              
+
               // Priority: CODE (SKU) first, then XML_ID (variant_id) directly
               if (code && code.trim() !== '') {
                 // Use CODE as SKU - will look up variant_id by SKU
@@ -3540,10 +3540,10 @@ async function handleDealCreate(dealId, requestId) {
           dealId,
           eventType: 'CREATE',
           itemsCount: items.length,
-          items: items.map(i => ({ 
-            sku: i.sku || null, 
+          items: items.map(i => ({
+            sku: i.sku || null,
             variantId: i.variantId || null,
-            qty: i.qty 
+            qty: i.qty
           })),
           itemsWithSku: items.filter(i => i.sku).length,
           itemsWithVariantId: items.filter(i => i.variantId).length,
@@ -3616,7 +3616,7 @@ async function handleDealCreate(dealId, requestId) {
                   const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
                   const countriesResponse = await callShopifyAdmin('/countries.json');
                   const countries = countriesResponse.countries || [];
-                  const countryMatch = countries.find(c => 
+                  const countryMatch = countries.find(c =>
                     c.name.toLowerCase() === parsedAddress.country.toLowerCase()
                   );
                   if (countryMatch) {
@@ -3668,7 +3668,7 @@ async function handleDealCreate(dealId, requestId) {
             } else {
               // Save shopifyOrderId back to Bitrix deal
               const createdOrderId = String(orderResult.orderId);
-              
+
               // ✅ CRITICAL: Re-check for duplicate immediately after creation (race condition protection)
               await new Promise(resolve => setTimeout(resolve, 100));
               const postCreateCheck = await findExistingOrderByDealId(dealId);
@@ -3688,12 +3688,12 @@ async function handleDealCreate(dealId, requestId) {
               } else {
                 existingShopifyOrderId = createdOrderId;
               }
-              
+
               try {
                 // Get current deal title to check if order number is already added
                 const currentTitle = dealData.TITLE || '';
                 let orderName = orderResult.orderName; // e.g., "#2491" or "Existing order 1234"
-                
+
                 // If order was duplicate, try to get real order name from Shopify
                 if (orderResult.wasDuplicate && orderName && !orderName.startsWith('#')) {
                   try {
@@ -3715,43 +3715,43 @@ async function handleDealCreate(dealId, requestId) {
                     console.warn(`[BITRIX TO SHOPIFY] Failed to fetch order name for duplicate: ${fetchError.message}`);
                   }
                 }
-                
+
                 // Check if title already contains THIS specific order number (prevent duplicate updates)
                 const orderNumberFromName = orderName ? orderName.replace('#', '') : null;
                 const orderNumberPattern = orderNumberFromName ? new RegExp(`#?${orderNumberFromName}\\b`) : /#\d+/;
                 const alreadyContainsThisOrderNumber = orderNumberFromName && orderNumberPattern.test(currentTitle);
-                
+
                 // Prepare update fields
                 const updateFields = {
-                    UF_CRM_1742556489: existingShopifyOrderId // Shopify Order ID field
+                  UF_CRM_1742556489: existingShopifyOrderId // Shopify Order ID field
                 };
-                
+
                 // Update TITLE only if:
                 // 1. orderName is available and contains "#" (real Shopify order name format)
                 // 2. This specific order number is not already in title
                 // 3. orderName is not in format "Existing order X" or "Order X"
-                const isValidOrderName = orderName && 
-                                        orderName.trim() !== '' && 
-                                        (orderName.startsWith('#') || /^#?\d+$/.test(orderName.replace('#', '')));
+                const isValidOrderName = orderName &&
+                  orderName.trim() !== '' &&
+                  (orderName.startsWith('#') || /^#?\d+$/.test(orderName.replace('#', '')));
                 const isNotPlaceholderName = !orderName.includes('Existing order') && !orderName.includes('Order ');
-                
+
                 if (!alreadyContainsThisOrderNumber && isValidOrderName && isNotPlaceholderName) {
                   // Ensure orderName starts with "#"
                   const formattedOrderName = orderName.startsWith('#') ? orderName : `#${orderName}`;
-                  
+
                   // Remove "D_XXXX" pattern from title if present, then add order number
                   // Example: "D_6704 #2494" -> "#2494" (remove "D_6704", keep "#2494")
                   // Example: "D_6704" -> "#2494" (replace "D_6704" with "#2494")
                   let updatedTitle = currentTitle;
-                  
+
                   // Remove "D_XXXX" pattern (e.g., "D_6704")
                   updatedTitle = updatedTitle.replace(/D_\d+\s*/g, '').trim();
-                  
+
                   // Add order number
                   updatedTitle = `${updatedTitle} ${formattedOrderName}`.trim();
-                  
+
                   updateFields.TITLE = updatedTitle;
-                  
+
                   console.log(JSON.stringify({
                     event: 'BITRIX_DEAL_TITLE_UPDATE_PLANNED',
                     requestId,
@@ -3764,14 +3764,14 @@ async function handleDealCreate(dealId, requestId) {
                     timestamp: new Date().toISOString()
                   }));
                 } else {
-                  const skipReason = alreadyContainsThisOrderNumber 
-                    ? 'order_number_already_in_title' 
-                    : !isValidOrderName 
-                      ? 'invalid_order_name_format' 
+                  const skipReason = alreadyContainsThisOrderNumber
+                    ? 'order_number_already_in_title'
+                    : !isValidOrderName
+                      ? 'invalid_order_name_format'
                       : !isNotPlaceholderName
                         ? 'placeholder_order_name'
                         : 'unknown';
-                  
+
                   console.log(JSON.stringify({
                     event: 'BITRIX_DEAL_TITLE_UPDATE_SKIPPED',
                     requestId,
@@ -3786,7 +3786,7 @@ async function handleDealCreate(dealId, requestId) {
                     timestamp: new Date().toISOString()
                   }));
                 }
-                
+
                 await callBitrix('/crm.deal.update.json', {
                   id: dealId,
                   fields: updateFields
@@ -3807,29 +3807,29 @@ async function handleDealCreate(dealId, requestId) {
                   timestamp: new Date().toISOString()
                 }));
 
-              // Update stored event with shopifyOrderId
-              if (storedEvent) {
-                storedEvent.shopifyOrderId = existingShopifyOrderId;
-              }
+                // Update stored event with shopifyOrderId
+                if (storedEvent) {
+                  storedEvent.shopifyOrderId = existingShopifyOrderId;
+                }
 
-              return { 
-                success: true, 
-                triggerMatch: true, 
-                shopifyOrderId: existingShopifyOrderId,
-                orderName: orderResult.orderName,
-                wasDuplicate: orderResult.wasDuplicate || false
-              };
-            } catch (updateError) {
-              console.error(`[BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
-              return { 
-                success: true, 
-                triggerMatch: true, 
-                shopifyOrderId: existingShopifyOrderId || createdOrderId,
-                orderCreated: true,
-                dealUpdateFailed: true,
-                wasDuplicate: orderResult.wasDuplicate || false
-              };
-            }
+                return {
+                  success: true,
+                  triggerMatch: true,
+                  shopifyOrderId: existingShopifyOrderId,
+                  orderName: orderResult.orderName,
+                  wasDuplicate: orderResult.wasDuplicate || false
+                };
+              } catch (updateError) {
+                console.error(`[BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
+                return {
+                  success: true,
+                  triggerMatch: true,
+                  shopifyOrderId: existingShopifyOrderId || createdOrderId,
+                  orderCreated: true,
+                  dealUpdateFailed: true,
+                  wasDuplicate: orderResult.wasDuplicate || false
+                };
+              }
             }
           } else {
             console.log(JSON.stringify({
@@ -3841,9 +3841,9 @@ async function handleDealCreate(dealId, requestId) {
               message: orderResult.message,
               timestamp: new Date().toISOString()
             }));
-            return { 
-              success: false, 
-              triggerMatch: false, 
+            return {
+              success: false,
+              triggerMatch: false,
               skip_reason: 'order_create_failed',
               error: orderResult.error
             };
@@ -3880,9 +3880,9 @@ async function handleDealCreate(dealId, requestId) {
         stack: orderCreateError.stack,
         timestamp: new Date().toISOString()
       }));
-      return { 
-        success: false, 
-        triggerMatch: false, 
+      return {
+        success: false,
+        triggerMatch: false,
         skip_reason: 'order_create_exception',
         error: orderCreateError.message
       };
@@ -3924,7 +3924,7 @@ export default async function handler(req, res) {
     hasAuthToken,
     timestamp: new Date().toISOString()
   }));
-  
+
   if (req.method !== 'POST') {
     console.log(JSON.stringify({
       event: 'BITRIX_WEBHOOK_METHOD_NOT_ALLOWED',
@@ -4048,8 +4048,8 @@ export default async function handler(req, res) {
         dealId
       });
     } else {
-      res.status(200).json({ 
-        success: true, 
+      res.status(200).json({
+        success: true,
         message: 'Event processed',
         requestId,
         dealId,
@@ -4067,9 +4067,9 @@ export default async function handler(req, res) {
       stack: e.stack,
       timestamp: new Date().toISOString()
     }));
-    
-    res.status(500).json({ 
-      error: 'Internal server error', 
+
+    res.status(500).json({
+      error: 'Internal server error',
       message: e.message,
       requestId
     });
