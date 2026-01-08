@@ -1,12 +1,12 @@
 // Shopify Webhook endpoint
-// ⚠️ VERSION MARKER - Change this to verify deployed code version
-const SHOPIFY_WEBHOOK_VERSION = 'v2026-01-08-A';
+import '../../../src/lib/logging/consoleCapture.js';
 import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
 import { successAdapter } from '../../../src/lib/adapters/success/index.js';
 import { callBitrix, getBitrixWebhookBase, classifyBitrixError } from '../../../src/lib/bitrix/client.js';
 import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
 import { upsertBitrixContact } from '../../../src/lib/bitrix/contact.js';
 import { BITRIX_CONFIG } from '../../../src/lib/bitrix/config.js';
+import { getProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
 
 // Configure body parser to accept raw JSON
 export const config = {
@@ -61,7 +61,8 @@ function validateDealFields(dealFields) {
     errors.push('TITLE is required');
   }
 
-  if (!dealFields.CATEGORY_ID) {
+  // CATEGORY_ID can be 0 (default funnel), so only warn if it's truly missing
+  if (dealFields.CATEGORY_ID === null || dealFields.CATEGORY_ID === undefined || dealFields.CATEGORY_ID === '') {
     warnings.push('CATEGORY_ID is missing - may use default category');
   }
 
@@ -563,12 +564,6 @@ async function handleOrderCreated(order) {
   // Map order to Bitrix deal
   const { dealFields, productRows } = await mapShopifyOrderToBitrixDeal(order);
 
-  // ✅ VARIANT B: Force NEW stage for order CREATION (regardless of payment status)
-  // Updates will still use real stage mapping. This ensures new deals start in NEW stage.
-  const originalStageId = dealFields.STAGE_ID;
-  dealFields.STAGE_ID = 'NEW';
-  console.log(`[SHOPIFY WEBHOOK] ✅ Forced STAGE_ID to 'NEW' for creation (original from mapper: '${originalStageId}')`);
-
   console.log(`[SHOPIFY WEBHOOK] Mapped dealFields:`, JSON.stringify(dealFields, null, 2));
   console.log(`[SHOPIFY WEBHOOK] Mapped productRows count:`, productRows.length);
   if (productRows.length > 0) {
@@ -718,7 +713,9 @@ async function handleOrderUpdated(order) {
 
   // ✅ CRITICAL: Convert dealId to number (Bitrix API returns string, but we need number for API calls)
   const dealId = Number(deal.ID);
-  console.log(`[SHOPIFY WEBHOOK] Found deal ${dealId} (converted to number) for order ${shopifyOrderId}`);
+  const currentStageId = deal.STAGE_ID;
+
+  console.log(`[SHOPIFY WEBHOOK] Found deal ${dealId} (converted to number) for order ${shopifyOrderId}, current stage: ${currentStageId}`);
 
   // ✅ Use mapShopifyOrderToBitrixDeal to get ALL fields AND productRows consistently (same as create)
   // This ensures OPPORTUNITY, payment status, stage, productRows with PRODUCT_ID are all calculated correctly
@@ -865,14 +862,13 @@ async function handleOrderUpdated(order) {
   console.log(`[SHOPIFY WEBHOOK] 🔍 Status checks: isCancelled=${isCancelled}, isFullRefund=${isFullRefund}, isPartialRefund=${isPartialRefund}`);
   console.log(`[SHOPIFY WEBHOOK] 🔍 Mapped STAGE_ID from orderMapper: "${mappedFields.STAGE_ID}"`);
 
+  // ✅ CRITICAL: Force update STAGE_ID based on refund/cancel status
+  // Priority: cancelled_at (HIGHEST) > cancelled > full refund > partial refund
   if (hasCancelledAt) {
     correctStageId = 'LOSE';
     correctPaymentStatus = '58'; // Unpaid
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED (cancelled_at is set) → FORCING STAGE_ID to LOSE for order ${shopifyOrderId}`);
-  }
-  // ✅ CRITICAL: Force update STAGE_ID based on refund/cancel status
-  // Priority: cancelled > full refund > partial refund (matching backup repository)
-  else if (isCancelled) {
+  } else if (isCancelled) {
     correctStageId = 'LOSE';
     correctPaymentStatus = '58'; // Unpaid
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to LOSE for cancelled order ${shopifyOrderId}`);
@@ -888,10 +884,13 @@ async function handleOrderUpdated(order) {
 
   console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctStageId: "${correctStageId}"`);
   console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctPaymentStatus: "${correctPaymentStatus}"`);
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Current deal stage: "${currentStageId}"`);
+  console.log(`[SHOPIFY WEBHOOK] 🔍 Will update to stage: "${correctStageId}" (${correctStageId !== currentStageId ? 'CHANGE' : 'NO CHANGE'})`);
 
   // 2. Prepare update fields - always update to ensure sync
   // ✅ Use mapped fields to ensure consistency with create logic, BUT override STAGE_ID with correct value
   const fields = {
+    TITLE: mappedFields.TITLE, // ✅ Sync Shopify order name (e.g. #2601) to Bitrix
     OPPORTUNITY: mappedFields.OPPORTUNITY,
     STAGE_ID: correctStageId, // ✅ Use corrected stage ID
     UF_CRM_1739183959976: correctPaymentStatus, // ✅ Use corrected payment status
@@ -948,18 +947,25 @@ async function handleOrderUpdated(order) {
     }
   } catch (error) {
     console.error(`[SHOPIFY WEBHOOK] ❌ Error updating deal ${dealId}:`, error);
-    throw error;
+    // ⚠️ Don't throw - continue to update product rows even if deal fields update failed
+    // This ensures product rows are updated even if there's a non-critical error with deal fields
+    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Continuing to update product rows despite deal update error`);
   }
 
-  // Verify updated deal
-  const verifiedDeal = await verifyDeal(dealId);
-  if (verifiedDeal) {
-    console.log(`[SHOPIFY WEBHOOK] ✅ Deal verified after update:`, {
-      ID: verifiedDeal.ID,
-      TITLE: verifiedDeal.TITLE,
-      OPPORTUNITY: verifiedDeal.OPPORTUNITY,
-      STAGE_ID: verifiedDeal.STAGE_ID
-    });
+  // Verify updated deal (only if update succeeded)
+  let verifiedDeal = null;
+  try {
+    verifiedDeal = await verifyDeal(dealId);
+    if (verifiedDeal) {
+      console.log(`[SHOPIFY WEBHOOK] ✅ Deal verified after update:`, {
+        ID: verifiedDeal.ID,
+        TITLE: verifiedDeal.TITLE,
+        OPPORTUNITY: verifiedDeal.OPPORTUNITY,
+        STAGE_ID: verifiedDeal.STAGE_ID
+      });
+    }
+  } catch (verifyError) {
+    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify deal after update:`, verifyError);
   }
 
   // 4. ✅ ALWAYS update product rows (including shipping) to reflect any changes
@@ -1065,7 +1071,6 @@ async function handleOrderUpdated(order) {
 
 export default async function handler(req, res) {
   console.log(`[SHOPIFY WEBHOOK] ===== INCOMING REQUEST =====`);
-  console.log(`[SHOPIFY WEBHOOK] 🔖 CODE VERSION: ${SHOPIFY_WEBHOOK_VERSION}`);
   console.log(`[SHOPIFY WEBHOOK] Method: ${req.method}`);
   console.log(`[SHOPIFY WEBHOOK] Headers:`, {
     'x-shopify-topic': req.headers['x-shopify-topic'],
@@ -1107,6 +1112,94 @@ export default async function handler(req, res) {
   console.log(`[SHOPIFY WEBHOOK] Order ID: ${order?.id || 'N/A'}`);
   console.log(`[SHOPIFY WEBHOOK] Order Name: ${order?.name || 'N/A'}`);
 
+  // ✅ CRITICAL: Check if this is a technical order or Bitrix-updated order (should not be sent to Bitrix)
+  // Technical orders are created FROM Bitrix to reserve inventory, so they should not create deals IN Bitrix
+  // BitrixUpdated orders were updated FROM Bitrix, so webhook from this update should not go back to Bitrix (loop guard)
+  // Orders with BITRIX:{dealId} tag are created FROM Bitrix, so they should not create deals IN Bitrix
+  // Handle tags as either array or comma-separated string (Shopify webhook may return both formats)
+  const orderTags = Array.isArray(order?.tags)
+    ? order.tags
+    : (order?.tags ? String(order.tags).split(',').map(t => t.trim()) : []);
+  const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
+  const isBitrixUpdated = orderTags.includes('BitrixUpdated');
+
+  if (isBitrixOrder || isBitrixUpdated) {
+    const skipReason = isBitrixOrder
+      ? 'Order created from Bitrix (BITRIX:{dealId} tag) - not sent to Bitrix'
+      : 'Bitrix-updated order (BitrixUpdated tag) - loop guard, not sent to Bitrix';
+
+    console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: ${isBitrixOrder ? 'Bitrix-created' : 'Bitrix-updated'} order detected (tags: ${orderTags.join(', ')}). Order ${order?.name || order?.id} will NOT be sent to Bitrix.`);
+    if (isBitrixOrder) {
+      console.log(`[SHOPIFY WEBHOOK] This order was created from Bitrix. It should not create a deal in Bitrix.`);
+    } else {
+      console.log(`[SHOPIFY WEBHOOK] This order was updated from Bitrix. Webhook from this update should not go back to Bitrix to prevent loop.`);
+    }
+
+    // Store event for monitoring (non-blocking) even though we skip Bitrix
+    try {
+      const storedEvent = shopifyAdapter.storeEvent(order, topic);
+      console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
+    } catch (storeError) {
+      console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
+    }
+
+    // Return 200 to prevent Shopify from retrying
+    return res.status(200).json({
+      success: true,
+      skipped: true,
+      reason: skipReason,
+      orderId: order?.id,
+      orderName: order?.name,
+      tags: orderTags
+    });
+  }
+
+  // ✅ CRITICAL: Check provenance marker (middleware.last_write) to prevent loop
+  // If order was last updated by Bitrix (source: 'bitrix'), skip sending webhook back to Bitrix
+  try {
+    const shopifyOrderId = String(order.id);
+    const provenanceResult = await getProvenanceMarker(shopifyOrderId);
+
+    if (provenanceResult.success && provenanceResult.exists && provenanceResult.value) {
+      const provenanceValue = provenanceResult.value;
+      const lastSource = provenanceValue.source;
+
+      // If last write was from Bitrix, skip to prevent loop
+      if (lastSource === 'bitrix') {
+        const skipReason = `Provenance marker indicates last update was from Bitrix (source: ${lastSource}, action: ${provenanceValue.action || 'unknown'}) - loop guard, not sent to Bitrix`;
+
+        console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: Provenance marker detected. Order ${order?.name || order?.id} was last updated by Bitrix. Will NOT be sent to Bitrix.`);
+        console.log(`[SHOPIFY WEBHOOK] Provenance details:`, {
+          source: lastSource,
+          action: provenanceValue.action,
+          correlationId: provenanceValue.correlationId,
+          timestamp: provenanceValue.ts
+        });
+
+        // Store event for monitoring (non-blocking) even though we skip Bitrix
+        try {
+          const storedEvent = shopifyAdapter.storeEvent(order, topic);
+          console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
+        } catch (storeError) {
+          console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
+        }
+
+        // Return 200 to prevent Shopify from retrying
+        return res.status(200).json({
+          success: true,
+          skipped: true,
+          reason: skipReason,
+          orderId: order?.id,
+          orderName: order?.name,
+          provenance: provenanceValue
+        });
+      }
+    }
+  } catch (provenanceError) {
+    // Non-blocking: if provenance check fails, continue with normal flow
+    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Provenance marker check failed (non-blocking):`, provenanceError.message);
+  }
+
   // ✅ CRITICAL: Log financial_status and cancellation/refund status for debugging
   const financialStatus = order?.financial_status || 'N/A';
   const statusLower = financialStatus?.toLowerCase() || '';
@@ -1123,6 +1216,7 @@ export default async function handler(req, res) {
     financial_status: financialStatus,
     cancelled: isCancelled,
     line_items_count: order?.line_items?.length || 0,
+    tags: orderTags,
     created_at: order?.created_at,
     updated_at: order?.updated_at
   });
