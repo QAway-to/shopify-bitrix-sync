@@ -3569,6 +3569,217 @@ async function handleDealCreate(dealId, requestId) {
     return mwActionResult;
   }
 
+  // ✅ ON-DEMAND SKU CREATION: Check if variant_id is provided in UF_CRM_1767912117856
+  // If filled, auto-create Bitrix product from Shopify variant and attach to deal
+  const onDemandVariantId = dealData.UF_CRM_1767912117856 || dealData.uf_crm_1767912117856;
+  if (onDemandVariantId && String(onDemandVariantId).trim() !== '' && String(onDemandVariantId).trim() !== '0') {
+    const variantIdStr = String(onDemandVariantId).trim();
+    console.log(JSON.stringify({
+      event: 'ON_DEMAND_SKU_CREATION_START',
+      requestId,
+      dealId,
+      variantId: variantIdStr,
+      timestamp: new Date().toISOString()
+    }));
+
+    try {
+      // Step 1: Fetch variant from Shopify API
+      const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
+
+      // Get variant by ID
+      const variantResp = await callShopifyAdmin(`/variants/${variantIdStr}.json`);
+
+      if (!variantResp || !variantResp.variant) {
+        console.log(JSON.stringify({
+          event: 'ON_DEMAND_SKU_CREATION_ERROR',
+          requestId,
+          dealId,
+          variantId: variantIdStr,
+          error: 'Variant not found in Shopify',
+          timestamp: new Date().toISOString()
+        }));
+      } else {
+        const variant = variantResp.variant;
+        const productId = variant.product_id;
+
+        // Get parent product for title
+        const productResp = await callShopifyAdmin(`/products/${productId}.json`);
+        const parentProduct = productResp?.product;
+
+        const sku = variant.sku || '';
+        const price = parseFloat(variant.price || 0);
+        const variantTitle = variant.title || '';
+        const productTitle = parentProduct?.title || 'Unknown Product';
+        const fullTitle = variantTitle && variantTitle !== 'Default Title'
+          ? `${productTitle} - ${variantTitle}`
+          : productTitle;
+
+        console.log(JSON.stringify({
+          event: 'ON_DEMAND_SKU_SHOPIFY_VARIANT_FETCHED',
+          requestId,
+          dealId,
+          variantId: variantIdStr,
+          sku,
+          price,
+          productTitle,
+          variantTitle,
+          fullTitle,
+          timestamp: new Date().toISOString()
+        }));
+
+        // Step 2: Check if product already exists in Bitrix by XML_ID (variant_id)
+        const existingProductResp = await callBitrix('/crm.product.list.json', {
+          filter: { 'XML_ID': variantIdStr },
+          select: ['ID', 'NAME', 'CODE', 'XML_ID', 'PRICE']
+        });
+
+        let bitrixProductId = null;
+
+        if (existingProductResp.result && existingProductResp.result.length > 0) {
+          // Product already exists
+          bitrixProductId = existingProductResp.result[0].ID;
+          console.log(JSON.stringify({
+            event: 'ON_DEMAND_SKU_BITRIX_PRODUCT_EXISTS',
+            requestId,
+            dealId,
+            variantId: variantIdStr,
+            bitrixProductId,
+            timestamp: new Date().toISOString()
+          }));
+        } else {
+          // Step 3: Create product in Bitrix catalog
+          // Use section 38 (main catalog) as default
+          const createProductResp = await callBitrix('/crm.product.add.json', {
+            fields: {
+              NAME: fullTitle,
+              CODE: sku || variantIdStr, // SKU or variant_id as CODE
+              XML_ID: variantIdStr, // variant_id as XML_ID for mapping
+              PRICE: price,
+              CURRENCY_ID: 'EUR',
+              SECTION_ID: 38, // Main catalog section
+              ACTIVE: 'Y',
+              DESCRIPTION: `Auto-created from Shopify variant ${variantIdStr}. SKU: ${sku || 'N/A'}`
+            }
+          });
+
+          if (createProductResp.result) {
+            bitrixProductId = createProductResp.result;
+            console.log(JSON.stringify({
+              event: 'ON_DEMAND_SKU_BITRIX_PRODUCT_CREATED',
+              requestId,
+              dealId,
+              variantId: variantIdStr,
+              bitrixProductId,
+              sku,
+              fullTitle,
+              price,
+              timestamp: new Date().toISOString()
+            }));
+          } else {
+            console.log(JSON.stringify({
+              event: 'ON_DEMAND_SKU_BITRIX_PRODUCT_CREATE_ERROR',
+              requestId,
+              dealId,
+              variantId: variantIdStr,
+              error: createProductResp.error || 'Unknown error',
+              errorDescription: createProductResp.error_description || '',
+              timestamp: new Date().toISOString()
+            }));
+          }
+        }
+
+        // Step 4: Attach product to deal (add to product rows)
+        if (bitrixProductId) {
+          try {
+            // Get current product rows
+            const currentRowsResp = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
+            const currentRows = currentRowsResp.result || [];
+
+            // Check if product already in rows
+            const alreadyInRows = currentRows.some(r => String(r.PRODUCT_ID) === String(bitrixProductId));
+
+            if (!alreadyInRows) {
+              // Add new product row
+              const newRows = [
+                ...currentRows.map(r => ({
+                  PRODUCT_ID: r.PRODUCT_ID,
+                  PRICE: r.PRICE,
+                  QUANTITY: r.QUANTITY
+                })),
+                {
+                  PRODUCT_ID: Number(bitrixProductId),
+                  PRICE: price,
+                  QUANTITY: 1
+                }
+              ];
+
+              await callBitrix('/crm.deal.productrows.set.json', {
+                id: dealId,
+                rows: newRows
+              });
+
+              console.log(JSON.stringify({
+                event: 'ON_DEMAND_SKU_PRODUCT_ATTACHED_TO_DEAL',
+                requestId,
+                dealId,
+                bitrixProductId,
+                variantId: variantIdStr,
+                totalRows: newRows.length,
+                timestamp: new Date().toISOString()
+              }));
+            } else {
+              console.log(JSON.stringify({
+                event: 'ON_DEMAND_SKU_PRODUCT_ALREADY_IN_DEAL',
+                requestId,
+                dealId,
+                bitrixProductId,
+                variantId: variantIdStr,
+                timestamp: new Date().toISOString()
+              }));
+            }
+          } catch (attachError) {
+            console.log(JSON.stringify({
+              event: 'ON_DEMAND_SKU_ATTACH_ERROR',
+              requestId,
+              dealId,
+              bitrixProductId,
+              error: attachError.message,
+              timestamp: new Date().toISOString()
+            }));
+          }
+        }
+
+        // Step 5: Clear the variant_id field to prevent re-processing
+        try {
+          await callBitrix('/crm.deal.update.json', {
+            id: dealId,
+            fields: {
+              UF_CRM_1767912117856: '' // Clear after processing
+            }
+          });
+          console.log(JSON.stringify({
+            event: 'ON_DEMAND_SKU_FIELD_CLEARED',
+            requestId,
+            dealId,
+            timestamp: new Date().toISOString()
+          }));
+        } catch (clearError) {
+          console.warn(`[ON-DEMAND SKU] Failed to clear variant_id field:`, clearError.message);
+        }
+      }
+    } catch (onDemandError) {
+      console.log(JSON.stringify({
+        event: 'ON_DEMAND_SKU_CREATION_ERROR',
+        requestId,
+        dealId,
+        variantId: variantIdStr,
+        error: onDemandError.message,
+        stack: onDemandError.stack,
+        timestamp: new Date().toISOString()
+      }));
+    }
+  }
+
   // ✅ Check if we need to create order in Shopify from Bitrix deal
   // Condition: No shopifyOrderId but deal has product rows
   console.log(JSON.stringify({
