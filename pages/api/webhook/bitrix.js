@@ -1,4 +1,6 @@
 // Bitrix24 Webhook endpoint - receives events from Bitrix and syncs to Shopify
+// ⚠️ VERSION MARKER - Change this to verify deployed code version
+const BITRIX_WEBHOOK_VERSION = 'v2026-01-08-A';
 import '../../../src/lib/logging/consoleCapture.js';
 import { callBitrix } from '../../../src/lib/bitrix/client.js';
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
@@ -86,7 +88,8 @@ async function resolveCustomerEmailFromDeal(dealData, requestId, dealId, context
 
 // ✅ Optional: allow creating Shopify order even when Bitrix deal has 0 product rows.
 // Useful when Bitrix sends empty product line but we still want to reserve inventory / create placeholder order.
-const BITRIX_ALLOW_EMPTY_PRODUCT_LINES = String(process.env.BITRIX_ALLOW_EMPTY_PRODUCT_LINES || 'true').toLowerCase() === 'true';
+// ⚠️ TEMPORARILY DISABLED: User requested to disable stub/placeholder orders (leads without products)
+const BITRIX_ALLOW_EMPTY_PRODUCT_LINES = false; // Was: String(process.env.BITRIX_ALLOW_EMPTY_PRODUCT_LINES || 'true').toLowerCase() === 'true';
 const BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID = String(process.env.BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID || '53051786756360');
 const BITRIX_EMPTY_ORDER_DEFAULT_QTY = Number(process.env.BITRIX_EMPTY_ORDER_DEFAULT_QTY || 1) || 1;
 
@@ -2929,7 +2932,7 @@ async function handleDealUpdate(dealId, requestId) {
             customerEmail,
             isStubOrder,
             stubReason,
-            stubDefaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID // Always pass default variant to allow fallback for missing SKUs
+            stubDefaultVariantId: null // ⚠️ DISABLED: Was BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID - no fallback to stub for missing SKUs
           });
 
           if (orderResult.success) {
@@ -4118,6 +4121,7 @@ export default async function handler(req, res) {
   const hasAuthToken = !!authToken;
 
   // ✅ Structured logging: [BITRIX_WEBHOOK_INCOMING]
+  console.log(`[BITRIX WEBHOOK] 🔖 CODE VERSION: ${BITRIX_WEBHOOK_VERSION}`);
   console.log(JSON.stringify({
     event: 'BITRIX_WEBHOOK_INCOMING',
     requestId,
