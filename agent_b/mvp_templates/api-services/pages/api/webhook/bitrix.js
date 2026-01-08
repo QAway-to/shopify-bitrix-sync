@@ -1,4 +1,6 @@
 // Bitrix24 Webhook endpoint - receives events from Bitrix and syncs to Shopify
+// ⚠️ VERSION MARKER - Change this to verify deployed code version
+const BITRIX_WEBHOOK_VERSION = 'v2026-01-08-A';
 import '../../../src/lib/logging/consoleCapture.js';
 import { callBitrix } from '../../../src/lib/bitrix/client.js';
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
@@ -4119,6 +4121,7 @@ export default async function handler(req, res) {
   const hasAuthToken = !!authToken;
 
   // ✅ Structured logging: [BITRIX_WEBHOOK_INCOMING]
+  console.log(`[BITRIX WEBHOOK] 🔖 CODE VERSION: ${BITRIX_WEBHOOK_VERSION}`);
   console.log(JSON.stringify({
     event: 'BITRIX_WEBHOOK_INCOMING',
     requestId,

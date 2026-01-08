@@ -1,4 +1,6 @@
 // Shopify Webhook endpoint
+// ⚠️ VERSION MARKER - Change this to verify deployed code version
+const SHOPIFY_WEBHOOK_VERSION = 'v2026-01-08-A';
 import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
 import { successAdapter } from '../../../src/lib/adapters/success/index.js';
 import { callBitrix, getBitrixWebhookBase, classifyBitrixError } from '../../../src/lib/bitrix/client.js';
@@ -1063,6 +1065,7 @@ async function handleOrderUpdated(order) {
 
 export default async function handler(req, res) {
   console.log(`[SHOPIFY WEBHOOK] ===== INCOMING REQUEST =====`);
+  console.log(`[SHOPIFY WEBHOOK] 🔖 CODE VERSION: ${SHOPIFY_WEBHOOK_VERSION}`);
   console.log(`[SHOPIFY WEBHOOK] Method: ${req.method}`);
   console.log(`[SHOPIFY WEBHOOK] Headers:`, {
     'x-shopify-topic': req.headers['x-shopify-topic'],
