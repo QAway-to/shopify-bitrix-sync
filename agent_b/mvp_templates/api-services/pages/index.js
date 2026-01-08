@@ -72,29 +72,29 @@ export default function ShopifyPage() {
 
       if (data.success) {
         const fetchedEvents = data.events || [];
-        
+
         // ✅ Smart merge: only add new events, preserve existing ones
         setEvents(prevEvents => {
           // Create a Set of existing event IDs for fast lookup
           const existingIds = new Set(prevEvents.map(e => e.id || e.eventId));
-          
+
           // Filter out events that already exist
           const newEvents = fetchedEvents.filter(e => {
             const eventId = e.id || e.eventId;
             return !existingIds.has(eventId);
           });
-          
+
           // If there are new events, append them to the end
           if (newEvents.length > 0) {
             return [...prevEvents, ...newEvents];
           }
-          
+
           // If no new events, return previous state (no re-render needed)
           return prevEvents;
         });
-        
+
         setLastRefresh(new Date());
-        
+
         // ✅ Update preview only if previewed event is selected and still exists
         if (previewEvent && previewData) {
           const updatedEvent = fetchedEvents.find(e => (e.id || e.eventId) === (previewEvent.id || previewEvent.eventId));
@@ -129,7 +129,7 @@ export default function ShopifyPage() {
 
       if (data.success) {
         const fetchedEvents = data.events || [];
-        
+
         // ✅ Smart merge: only add new events, preserve existing ones
         setBitrixEvents(prevEvents => {
           const existingIds = new Set(prevEvents.map(e => e.id || e.eventId || e.dealId));
@@ -157,7 +157,7 @@ export default function ShopifyPage() {
 
       if (data.success) {
         const fetchedOperations = data.operations || [];
-        
+
         // ✅ Smart merge: only add new operations, preserve existing ones
         setSuccessOperations(prevOperations => {
           const existingIds = new Set(prevOperations.map(op => op.id || op.operationId));
@@ -170,7 +170,7 @@ export default function ShopifyPage() {
           }
           return prevOperations;
         });
-        
+
         // ✅ Update preview only if previewed operation is selected
         if (successPreviewOperation && previewData) {
           const updatedOp = fetchedOperations.find(op => (op.id || op.operationId) === (successPreviewOperation.id || successPreviewOperation.operationId));
@@ -192,12 +192,12 @@ export default function ShopifyPage() {
   // Initial fetch
   useEffect(() => {
     fetchBitrixWebhookUrl(); // Fetch webhook URL first
-    
+
     // First load - set loading states
     setIsLoading(true);
     setIsBitrixLoading(true);
     setIsSuccessLoading(true);
-    
+
     Promise.all([
       fetchEvents(),
       fetchBitrixEvents(),
@@ -243,7 +243,7 @@ export default function ShopifyPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           selectedEvents,
           bitrixWebhookUrl: bitrixWebhookUrl.trim()
         })
@@ -253,8 +253,8 @@ export default function ShopifyPage() {
 
       if (response.ok || response.status === 207) {
         // 200 - все успешно, 207 - частичный успех
-        setSendResult({ 
-          success: result.success !== false, 
+        setSendResult({
+          success: result.success !== false,
           message: result.message,
           details: result.errors && result.errors.length > 0 ? result.errors : null,
           total: result.total,
@@ -264,8 +264,8 @@ export default function ShopifyPage() {
         });
       } else {
         // 400, 500 - ошибки
-        setSendResult({ 
-          success: false, 
+        setSendResult({
+          success: false,
           message: result.error || 'Failed to send',
           details: result.details || (result.errors && result.errors.length > 0 ? result.errors : null),
           results: result.results || [] // Store results for preview
@@ -273,8 +273,8 @@ export default function ShopifyPage() {
       }
     } catch (error) {
       console.error('Send to Bitrix error:', error);
-      setSendResult({ 
-        success: false, 
+      setSendResult({
+        success: false,
         message: 'Network error',
         details: [{ error: error.message || 'Unknown network error' }]
       });
@@ -295,7 +295,7 @@ export default function ShopifyPage() {
       });
 
       const result = await response.json();
-      
+
       if (!result.success) {
         throw new Error(result.message || 'Failed to transform order');
       }
@@ -334,7 +334,7 @@ export default function ShopifyPage() {
     try {
       // Download logs from API endpoint
       const response = await fetch('/api/logs/download');
-      
+
       if (!response.ok) {
         throw new Error('Failed to download logs');
       }
@@ -374,7 +374,7 @@ export default function ShopifyPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           selectedEvents: selectedBitrixEvents
         })
       });
@@ -383,8 +383,8 @@ export default function ShopifyPage() {
 
       if (response.ok || response.status === 207) {
         // 200 - все успешно, 207 - частичный успех
-        setSendToShopifyResult({ 
-          success: result.success !== false, 
+        setSendToShopifyResult({
+          success: result.success !== false,
           message: result.message,
           details: result.errors && result.errors.length > 0 ? result.errors : null,
           total: result.total,
@@ -394,8 +394,8 @@ export default function ShopifyPage() {
         });
       } else {
         // 400, 500 - ошибки
-        setSendToShopifyResult({ 
-          success: false, 
+        setSendToShopifyResult({
+          success: false,
           message: result.error || 'Failed to send',
           details: result.details || (result.errors && result.errors.length > 0 ? result.errors : null),
           results: result.results || []
@@ -403,8 +403,8 @@ export default function ShopifyPage() {
       }
     } catch (error) {
       console.error('Send to Shopify error:', error);
-      setSendToShopifyResult({ 
-        success: false, 
+      setSendToShopifyResult({
+        success: false,
         message: 'Network error',
         details: [{ error: error.message || 'Unknown network error' }]
       });
@@ -457,7 +457,7 @@ export default function ShopifyPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           selectedEvents: [previewEvent],
           bitrixWebhookUrl: bitrixWebhookUrl.trim()
         })
@@ -466,8 +466,8 @@ export default function ShopifyPage() {
       const result = await response.json();
 
       if (response.ok || response.status === 207) {
-        setSendResult({ 
-          success: result.success !== false, 
+        setSendResult({
+          success: result.success !== false,
           message: result.message,
           details: result.errors && result.errors.length > 0 ? result.errors : null,
           total: result.total,
@@ -476,8 +476,8 @@ export default function ShopifyPage() {
           results: result.results || []
         });
       } else {
-        setSendResult({ 
-          success: false, 
+        setSendResult({
+          success: false,
           message: result.error || 'Failed to send',
           details: result.details || (result.errors && result.errors.length > 0 ? result.errors : null),
           results: result.results || []
@@ -485,8 +485,8 @@ export default function ShopifyPage() {
       }
     } catch (error) {
       console.error('Send to Bitrix error:', error);
-      setSendResult({ 
-        success: false, 
+      setSendResult({
+        success: false,
         message: 'Network error',
         details: [{ error: error.message || 'Unknown network error' }]
       });
@@ -670,7 +670,7 @@ export default function ShopifyPage() {
               }}
               title="Download integration logs (Shopify→Bitrix and Bitrix→Shopify) as .txt file"
             >
-              📥 Скачать логи
+              📜 Скачать логи
             </button>
             {bitrixEvents.length > 0 && (
               <>
@@ -777,8 +777,8 @@ export default function ShopifyPage() {
               <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали ошибок:</div>
                 {sendResult.details.map((err, idx) => (
-                  <div key={idx} style={{ 
-                    fontSize: '0.8rem', 
+                  <div key={idx} style={{
+                    fontSize: '0.8rem',
                     marginBottom: '6px',
                     padding: '6px 8px',
                     background: 'rgba(0, 0, 0, 0.2)',
@@ -818,8 +818,8 @@ export default function ShopifyPage() {
               <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Результаты отправки:</div>
                 {sendResult.results.map((result, idx) => (
-                  <div key={idx} style={{ 
-                    fontSize: '0.8rem', 
+                  <div key={idx} style={{
+                    fontSize: '0.8rem',
                     marginBottom: '6px',
                     padding: '6px 8px',
                     background: result.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
@@ -890,7 +890,7 @@ export default function ShopifyPage() {
           <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.3rem' }}>
             Синхронизация товаров
           </h2>
-          
+
           <div style={{ marginBottom: '16px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <button
               onClick={handleSyncCertificates}
@@ -955,9 +955,9 @@ export default function ShopifyPage() {
           </div>
 
           <div style={{ marginTop: '16px' }}>
-            <div style={{ 
-              color: '#94a3b8', 
-              fontSize: '0.9rem', 
+            <div style={{
+              color: '#94a3b8',
+              fontSize: '0.9rem',
               marginBottom: '12px',
               fontWeight: 500
             }}>
@@ -992,16 +992,16 @@ export default function ShopifyPage() {
               color: (syncResult || createResult)?.success ? '#059669' : '#ef4444'
             }}>
               <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-                {syncResult 
+                {syncResult
                   ? (syncResult.success ? '✅ Синхронизация завершена' : '❌ Ошибка синхронизации')
                   : (createResult.success ? '✅ Создание завершено' : '❌ Ошибка создания')
                 }
               </div>
               {((syncResult || createResult)?.summary) && (
                 <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                  Всего вариантов: {(syncResult || createResult).summary.total} | 
-                  Создано документов: {(syncResult || createResult).summary.created} | 
-                  Обновлено: {(syncResult || createResult).summary.updated} | 
+                  Всего вариантов: {(syncResult || createResult).summary.total} |
+                  Создано документов: {(syncResult || createResult).summary.created} |
+                  Обновлено: {(syncResult || createResult).summary.updated} |
                   Ошибок: {(syncResult || createResult).summary.errors}
                 </div>
               )}
@@ -1081,13 +1081,13 @@ export default function ShopifyPage() {
               Shopify → Middleware → Bitrix
             </h2>
             <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-          <EventsList
-            events={events}
-            selectedEvents={selectedEvents}
-            onSelectionChange={setSelectedEvents}
-            onPreviewEvent={handlePreviewEvent}
-            isLoading={isInitialFetch && isLoading}
-          />
+              <EventsList
+                events={events}
+                selectedEvents={selectedEvents}
+                onSelectionChange={setSelectedEvents}
+                onPreviewEvent={handlePreviewEvent}
+                isLoading={isInitialFetch && isLoading}
+              />
             </div>
           </div>
 
@@ -1108,18 +1108,18 @@ export default function ShopifyPage() {
               }}>
                 <div style={{ fontWeight: 600, marginBottom: '8px' }}>
                   {sendToShopifyResult.message}
-                        </div>
+                </div>
                 {sendToShopifyResult.total !== undefined && (
                   <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
                     Всего: {sendToShopifyResult.total} | Успешно: {sendToShopifyResult.successful || 0} | Ошибок: {sendToShopifyResult.failed || 0}
-                        </div>
+                  </div>
                 )}
                 {sendToShopifyResult.details && sendToShopifyResult.details.length > 0 && (
                   <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendToShopifyResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
                     <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали ошибок:</div>
                     {sendToShopifyResult.details.map((err, idx) => (
-                      <div key={idx} style={{ 
-                        fontSize: '0.8rem', 
+                      <div key={idx} style={{
+                        fontSize: '0.8rem',
                         marginBottom: '6px',
                         padding: '6px 8px',
                         background: 'rgba(0, 0, 0, 0.2)',
@@ -1133,8 +1133,8 @@ export default function ShopifyPage() {
                     ))}
                   </div>
                 )}
-                </div>
-              )}
+              </div>
+            )}
             <div style={{ flex: '1 1 auto', minHeight: 0 }}>
               <BitrixEventsList
                 events={bitrixEvents}
@@ -1166,15 +1166,15 @@ export default function ShopifyPage() {
         {/* Data Preview - Wide block below */}
         {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation) ? (
           <div style={{ marginTop: '20px', width: '100%' }}>
-        {previewData && previewEvent && !successPreviewOperation && (
-          <DataPreview
-            shopifyData={previewData.shopifyData}
-            bitrixData={previewData.bitrixData}
-            eventId={previewEvent.id}
-            onSendEvent={handleSendPreviewEvent}
-            isSending={isSending}
-          />
-        )}
+            {previewData && previewEvent && !successPreviewOperation && (
+              <DataPreview
+                shopifyData={previewData.shopifyData}
+                bitrixData={previewData.bitrixData}
+                eventId={previewEvent.id}
+                onSendEvent={handleSendPreviewEvent}
+                isSending={isSending}
+              />
+            )}
             {bitrixPreviewData && bitrixPreviewEvent && (
               <DataPreview
                 shopifyData={bitrixPreviewData.shopifyData}
