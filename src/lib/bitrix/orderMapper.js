@@ -12,13 +12,12 @@ import brandMapping from './brandMapping.json' assert { type: 'json' };
 // ✅ SEMANTIC MAPPING: Используем семантический маппинг с 100% совпадениями
 import skuMappingSemantic from './skuMappingSemantic.json' assert { type: 'json' };
 // ✅ NEW: Category-based mapping with hybrid search (cache + Bitrix API)
-import { findProductIdBySku, findProductIdByVariantId, loadAllMappings } from './mappingUtils.js';
+import { findProductIdBySku, loadAllMappings } from './mappingUtils.js';
 import { resolveResponsibleId } from './responsible.js';
 
 // Known certificate variant_id -> Bitrix PRODUCT_ID mapping (fallback when SKU is missing)
-// Based on provided Shopify variants for all certificates
+// Based on provided Shopify variants for E-Certificate
 const CERT_VARIANT_TO_PRODUCT_ID = {
-  // E-Certificate (10 variants)
   50398439440648: 4268,  // €30
   50420389413128: 4270,  // €50
   50420389445896: 4272,  // €70
@@ -28,31 +27,7 @@ const CERT_VARIANT_TO_PRODUCT_ID = {
   50420389576968: 4280,  // €200
   50420389609736: 4282,  // €300
   50420389642504: 4284,  // €500
-  50420389675272: 4286,  // €1000
-  
-  // Gift certificate FBFC (10 variants)
-  50426892157192: 4288,  // €30
-  50041533726984: 4290,  // €50
-  50426892189960: 4292,  // €70
-  50041533759752: 4294,  // €100
-  50426892222728: 4296,  // €120
-  50041533792520: 4298,  // €150
-  50426892255496: 4300,  // €200
-  50041533825288: 4302,  // €300
-  50041533858056: 4304,  // €500
-  50041533890824: 4306,  // €1000
-  
-  // Printed Gift Certificate (10 variants)
-  50420393705736: 4308,  // €30
-  50420393738504: 4310,  // €50
-  50420393771272: 4312,  // €70
-  50420393804040: 4314,  // €100
-  50420393836808: 4316,  // €120
-  50420393869576: 4318,  // €150
-  50420393902344: 4320,  // €200
-  50420393935112: 4322,  // €300
-  50420393967880: 4324,  // €500
-  50420394000648: 4326   // €1000
+  50420389675272: 4286   // €1000
 };
 
 /**
@@ -63,15 +38,15 @@ const CERT_VARIANT_TO_PRODUCT_ID = {
  */
 function parseModelFromTitle(title) {
   if (!title || typeof title !== 'string') return null;
-  
+
   // Common patterns: "Brand Model Color Type" or "Model Color Type"
   // Try to extract model (usually first 2-3 words before color)
   const words = title.split(/\s+/);
-  
+
   // Look for color keywords to split model from color
   const colorKeywords = ['blue', 'red', 'green', 'yellow', 'black', 'white', 'pink', 'fuchsia', 'violet', 'cyan', 'tractor', 'flowers'];
   let modelEndIndex = words.length;
-  
+
   for (let i = 0; i < words.length; i++) {
     const word = words[i].toLowerCase();
     if (colorKeywords.some(keyword => word.includes(keyword))) {
@@ -79,12 +54,12 @@ function parseModelFromTitle(title) {
       break;
     }
   }
-  
+
   // Extract model (first part before color)
   if (modelEndIndex > 0) {
     return words.slice(0, modelEndIndex).join(' ').trim() || null;
   }
-  
+
   // Fallback: return first 2-3 words
   return words.slice(0, Math.min(3, words.length)).join(' ').trim() || null;
 }
@@ -97,19 +72,19 @@ function parseModelFromTitle(title) {
  */
 function parseColorFromTitle(title, properties = []) {
   // First try properties
-  const colorProperty = properties.find(p => 
+  const colorProperty = properties.find(p =>
     p.name && (
-      p.name.toLowerCase().includes('color') || 
+      p.name.toLowerCase().includes('color') ||
       p.name.toLowerCase().includes('цвет')
     )
   );
   if (colorProperty?.value) {
     return colorProperty.value.trim();
   }
-  
+
   // Then try to extract from title
   if (!title || typeof title !== 'string') return null;
-  
+
   const colorKeywords = {
     'blue': 'blue',
     'red': 'red',
@@ -124,14 +99,14 @@ function parseColorFromTitle(title, properties = []) {
     'tractor blue': 'tractor blue',
     'flowers': 'flowers'
   };
-  
+
   const titleLower = title.toLowerCase();
   for (const [keyword, color] of Object.entries(colorKeywords)) {
     if (titleLower.includes(keyword)) {
       return color;
     }
   }
-  
+
   return null;
 }
 
@@ -147,7 +122,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   console.log(`[ORDER MAPPER] order.total_price: ${order.total_price}`);
   console.log(`[ORDER MAPPER] order.current_total_tax: ${order.current_total_tax}`);
   console.log(`[ORDER MAPPER] order.total_tax: ${order.total_tax}`);
-  
+
   // ✅ Calculate total from active line_items (current_quantity > 0) to get sum of active items
   // This matches Shopify UI "Total" (sum of unfulfilled/active items), not "Paid" amount
   let totalPrice = 0;
@@ -176,19 +151,19 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       0
     );
     totalPrice += shippingPrice;
-    
+
     console.log(`[ORDER MAPPER] ✅ Calculated totalPrice from active line_items: ${totalPrice}`);
   }
-  
+
   // Fallback to current_total_price or total_price if line_items calculation failed
   if (totalPrice === 0) {
     totalPrice = Number(order.current_total_price || order.total_price || 0);
     console.log(`[ORDER MAPPER] ⚠️ Using fallback totalPrice from order totals: ${totalPrice}`);
   }
-  
+
   const totalDiscount = Number(order.current_total_discounts || order.total_discounts || 0);
   const totalTax = Number(order.current_total_tax || 0);
-  
+
   console.log(`[ORDER MAPPER] Calculated totalPrice: ${totalPrice}`);
   console.log(`[ORDER MAPPER] Calculated totalTax: ${totalTax}`);
   const shippingPrice = Number(
@@ -200,26 +175,17 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   );
 
   // Determine category based on order tags (pre-order tags → cat_8, otherwise cat_2)
-  const orderTags = Array.isArray(order.tags) 
-    ? order.tags 
+  const orderTags = Array.isArray(order.tags)
+    ? order.tags
     : (order.tags ? String(order.tags).split(',').map(t => t.trim()) : []);
-  
+
   const preorderTags = ['pre-order', 'preorder-product-added'];
-  const hasPreorderTag = orderTags.some(tag => 
+  const hasPreorderTag = orderTags.some(tag =>
     preorderTags.some(preorderTag => tag.toLowerCase() === preorderTag.toLowerCase())
   );
-  
-  // Determine category (funnel) by source and preorder tag
-  // POS → Stock (in the shop, 0) or Pre-order (in the shop, 4)
-  // Site → Stock (site, 2) or Pre-order (site, 8)
-  let categoryId;
-  const isPos = order.source_name === 'pos';
-  if (isPos) {
-    categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_SHOP_PREORDER : BITRIX_CONFIG.CATEGORY_SHOP_STOCK;
-  } else {
-    categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
-  }
-  console.log(`[ORDER MAPPER] Category determined: ${categoryId} (${isPos ? 'POS' : 'Site'} | ${hasPreorderTag ? 'Pre-order' : 'Stock'}) based on tags:`, orderTags);
+
+  const categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
+  console.log(`[ORDER MAPPER] Category determined: ${categoryId} (${hasPreorderTag ? 'Pre-order' : 'Stock'}) based on tags:`, orderTags);
 
   // Customer name
   const customerName = order.customer
@@ -254,7 +220,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   // ✅ CRITICAL: If order is empty (0 amount, no active items), it's ALWAYS cancelled
   // This covers cases where cancelled_at/cancel_reason might not be in webhook, but order is clearly cancelled
   const isCancelledByEmpty = isOrderEmpty;
-  
+
   // ✅ CRITICAL: cancelled_at has HIGHEST PRIORITY - if it's set, order is cancelled regardless of financial_status
   const isCancelled = isCancelledByField || isCancelledByStatus || isCancelledByReason || isCancelledByEmpty;
 
@@ -290,7 +256,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     stageId = financialStatusToStageId(order.financial_status || '', categoryId);
     console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Stage "${stageId}" for category ${categoryId}`);
   }
-  
+
   // Map financial status to payment status field
   // ✅ CRITICAL: For cancelled orders, ALWAYS set payment status to '58' (Unpaid)
   // regardless of financial_status (cancelled orders should never show as paid)
@@ -302,7 +268,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     paymentStatusEnumId = financialStatusToPaymentStatus(order.financial_status);
     console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Payment status enum ID "${paymentStatusEnumId}"`);
   }
-  
+
   // Map source name to source ID
   const sourceId = sourceNameToSourceId(order.source_name);
   // SOURCE_DESCRIPTION: use actual source_name if available, otherwise default to 'shopify_draft_order'
@@ -328,10 +294,10 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     // Check if it's pickup (shop pickup, store pickup, etc.)
     const shippingTitle = (shippingLine.title || shippingLine.code || '').toLowerCase();
     const shippingCode = (shippingLine.code || '').toLowerCase();
-    
-    if (shippingTitle.includes('pick') || shippingTitle.includes('shop') || 
-        shippingCode.includes('pick') || shippingCode.includes('shop') ||
-        shippingTitle.includes('самовывоз') || shippingTitle.includes('магазин')) {
+
+    if (shippingTitle.includes('pick') || shippingTitle.includes('shop') ||
+      shippingCode.includes('pick') || shippingCode.includes('shop') ||
+      shippingTitle.includes('самовывоз') || shippingTitle.includes('магазин')) {
       deliveryMethodId = '52'; // Pick up in shop
     } else {
       deliveryMethodId = '54'; // Delivery by courier
@@ -350,7 +316,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       deliveryMethodId = '54'; // Delivery by courier
     }
   }
-  
+
   console.log(`[ORDER MAPPER] Delivery method determined: ID "${deliveryMethodId}"`);
 
   // ✅ Calculate paid amount (total - refunds)
@@ -399,7 +365,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     // Only set if determined, otherwise leave empty (Bitrix will show empty)
     ...(deliveryMethodId ? { UF_CRM_1739183302609: deliveryMethodId } : {}),
   };
-  
+
   // Log all fields being sent for debugging
   console.log(`[ORDER MAPPER] Deal fields prepared:`, {
     ORDER_TYPE_ID: orderTypeId,
@@ -409,8 +375,8 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     STAGE_ID: stageId
   });
 
-  // Resolve responsible: assign explicitly on create per mapping (Bitrix can reassign later)
-  const assigneeId = resolveResponsibleId(order);
+  // Resolve responsible: find current shift manager by phone 100 in Bitrix
+  const assigneeId = await resolveResponsibleId(order);
   if (assigneeId) {
     dealFields.ASSIGNED_BY_ID = assigneeId;
   }
@@ -499,7 +465,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
 
     // ===== MODEL AND BRAND (first item as reference) =====
     const firstItem = lineItems[0];
-    
+
     // ✅ FIX: Check if firstItem exists and has title property
     if (firstItem && firstItem.title) {
       const model = parseModelFromTitle(firstItem.title);
@@ -527,7 +493,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   } else {
     console.warn(`[ORDER MAPPER] ⚠️ No line_items found in order, cannot extract product properties`);
   }
-  
+
   // Log all UF-fields that will be sent to Bitrix
   const ufFields = Object.keys(dealFields).filter(key => key.startsWith('UF_'));
   console.log(`[ORDER MAPPER] All UF-fields in dealFields:`, ufFields.map(key => ({
@@ -537,70 +503,56 @@ export async function mapShopifyOrderToBitrixDeal(order) {
 
   // Product rows
   const productRows = [];
-  
+
   // Shipping variables (defined early for final validation)
   let actualShippingPrice = 0;
   let shippingLineTitle = null;
 
   if (order.line_items && Array.isArray(order.line_items)) {
     // Get shipping product ID to avoid confusion
-    const shippingProductId = BITRIX_CONFIG.SHIPPING_PRODUCT_ID > 0 
-      ? BITRIX_CONFIG.SHIPPING_PRODUCT_ID 
+    const shippingProductId = BITRIX_CONFIG.SHIPPING_PRODUCT_ID > 0
+      ? BITRIX_CONFIG.SHIPPING_PRODUCT_ID
       : 3000; // Default shipping product ID
-    
+
     for (const item of order.line_items) {
       // ✅ ИСПРАВЛЕНИЕ: Используем current_quantity и пропускаем товары с quantity <= 0 (refunded/removed)
       const currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
-      
+
       if (currentQuantity <= 0) {
         console.log(`[ORDER MAPPER] ⏭️ Skipping item ${item.id} (SKU: ${item.sku || 'N/A'}) - current_quantity is 0 (refunded/removed)`);
         continue;
       }
-      
+
       // CRITICAL: line_items are ALWAYS products, NEVER shipping
       // Even if a product has the same ID as shipping, it's still a product from line_items
-      
-      // ===== STRICT MAPPING: SKU/XML_ID first, fallback to variant_id =====
+
+      // ===== STRICT MAPPING: SKU/XML_ID first, fallback to variant_id for certificates =====
       let productId = null;
       let mappingMethod = 'none';
 
-      // Strategy 1: Try SKU first (if available)
-      if (item.sku && item.sku.trim()) {
-        console.log(`[ORDER MAPPER] 🔍 Strategy 1: Searching for Product ID by SKU/CODE: "${item.sku}"`);
-        productId = await findProductIdBySku(item.sku.trim());
+      if (item.sku) {
+        console.log(`[ORDER MAPPER] 🔍 Searching for Product ID by SKU/XML_ID: "${item.sku}"`);
+        productId = await findProductIdBySku(item.sku);
         if (productId) {
-          mappingMethod = 'sku/code';
-          console.log(`[ORDER MAPPER] ✅ Found by SKU/CODE: "${item.sku}" -> Product ID: ${productId}`);
+          mappingMethod = 'sku/xml_id';
+          console.log(`[ORDER MAPPER] ✅ Found by SKU/XML_ID: "${item.sku}" -> Product ID: ${productId}`);
         } else {
-          console.warn(`[ORDER MAPPER] ⚠️ SKU/CODE NOT FOUND in Bitrix: "${item.sku}"`);
+          console.error(`[ORDER MAPPER] ❌ SKU/XML_ID NOT FOUND in Bitrix: "${item.sku}"`);
         }
       } else {
-        console.warn(`[ORDER MAPPER] ⚠️ SKU is missing or empty for item: "${item.title || 'N/A'}"`);
+        console.warn(`[ORDER MAPPER] ⚠️ SKU is missing for item: "${item.title || 'N/A'}"`);
       }
 
-      // Strategy 2: Try variant_id for known certificates (hardcoded mapping)
+      // Fallback: variant_id for known certificates (no SKU in Shopify)
       if (!productId && item.variant_id) {
         const variantId = Number(item.variant_id);
         const certProductId = CERT_VARIANT_TO_PRODUCT_ID[variantId];
         if (certProductId) {
           productId = certProductId;
-          mappingMethod = 'variant_id_certificate_hardcoded';
-          console.log(`[ORDER MAPPER] ✅ Found by variant_id (certificate hardcoded): ${variantId} -> Product ID: ${productId}`);
-        }
-      }
-
-      // Strategy 3: Try variant_id for ALL products (search by XML_ID in Bitrix)
-      // This is the key fallback for socks and other products
-      if (!productId && item.variant_id) {
-        console.log(`[ORDER MAPPER] 🔍 Strategy 3: Trying variant_id search (XML_ID) for all products: ${item.variant_id}`);
-        const variantProductId = await findProductIdByVariantId(item.variant_id);
-        if (variantProductId) {
-          productId = variantProductId;
-          mappingMethod = 'variant_id_xml_id';
-          console.log(`[ORDER MAPPER] ✅ Found by variant_id (XML_ID): ${item.variant_id} -> Product ID: ${productId}`);
+          mappingMethod = 'variant_id_certificate';
+          console.log(`[ORDER MAPPER] ✅ Found by variant_id (certificate): ${variantId} -> Product ID: ${productId}`);
         } else {
-          console.warn(`[ORDER MAPPER] ⚠️ variant_id NOT FOUND in Bitrix (XML_ID search): ${item.variant_id}`);
-          console.warn(`[ORDER MAPPER]   This means no product in Bitrix has XML_ID="${item.variant_id}"`);
+          console.error(`[ORDER MAPPER] ❌ variant_id NOT FOUND in certificate map: ${variantId}`);
         }
       }
 
@@ -609,7 +561,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
         console.error(`[ORDER MAPPER] ❌❌❌ CRITICAL: NO PRODUCT_ID FOUND (SKU/XML_ID or variant_id required). Item: "${item.title || 'N/A'}" (SKU: "${item.sku || 'N/A'}", variant_id: ${item.variant_id || 'N/A'})`);
         console.error(`[ORDER MAPPER]   ⚠️ This item will NOT be added to deal (no PRODUCT_ID available)`);
       }
-      
+
       // Safety check: if product ID matches shipping ID, log warning but keep it as product
       // (line_items are always products, even if they accidentally have shipping ID)
       if (productId && productId == shippingProductId) {
@@ -619,41 +571,41 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       // Extract size and properties from Shopify line_item
       // variant_title usually contains the size (e.g., "31", "36-39", "S", "M")
       const variantTitle = item.variant_title || null;
-      
+
       // Extract properties (array of {name, value} objects)
       const properties = item.properties || [];
-      const sizeProperty = properties.find(p => 
+      const sizeProperty = properties.find(p =>
         p.name && (
-          p.name.toLowerCase().includes('size') || 
+          p.name.toLowerCase().includes('size') ||
           p.name.toLowerCase().includes('размер') ||
           p.name.toLowerCase() === 'size'
         )
       );
-      const colorProperty = properties.find(p => 
+      const colorProperty = properties.find(p =>
         p.name && (
-          p.name.toLowerCase().includes('color') || 
+          p.name.toLowerCase().includes('color') ||
           p.name.toLowerCase().includes('цвет') ||
           p.name.toLowerCase() === 'color'
         )
       );
-      
+
       // Get size from variant_title or properties
       const size = variantTitle || sizeProperty?.value || null;
-      
+
       // Build descriptive name with size/variant/vendor/color/model if available
       // ✅ FIX: Check if item exists and has title property
       const parts = [(item && item.title) ? item.title : ''];
-      
+
       // Add size if available (most important - should be visible)
       if (size) {
         parts.push(`Size: ${size}`);
       }
-      
+
       // Add color if available
       if (colorProperty?.value) {
         parts.push(`Color: ${colorProperty.value}`);
       }
-      
+
       // Add other options if they differ from variant_title
       if (item.option1 && item.option1 !== variantTitle && item.option1 !== size) {
         parts.push(item.option1);
@@ -664,12 +616,12 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       if (item.option3) {
         parts.push(item.option3);
       }
-      
+
       // Add vendor/brand if available
       if (item.vendor) {
         parts.push(`Brand: ${item.vendor}`);
       }
-      
+
       // Join all parts with separator
       const productName = parts.filter(Boolean).join(' | ');
 
@@ -694,7 +646,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
 
       // ✅ ИСПРАВЛЕНИЕ: Используем currentQuantity (актуальное количество после refund)
       const quantity = currentQuantity;
-      
+
       // ✅ LOG: Log item details for debugging
       console.log(`[ORDER MAPPER] 📦 Processing item: SKU=${item.sku || 'N/A'}, Title="${item.title || 'N/A'}"`);
       console.log(`[ORDER MAPPER]   - quantity (original): ${item.quantity}`);
@@ -716,7 +668,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
           TAX_INCLUDED: order.taxes_included ? 'Y' : 'N',
           TAX_RATE: taxRate,
         };
-        
+
         // ✅ CRITICAL: ALWAYS use PRODUCT_ID (never PRODUCT_NAME)
         // Bitrix requires PRODUCT_ID (XML_ID/SKU) to link product to catalog
         // If productId is not found, skip this row (don't create custom row)
@@ -741,7 +693,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
           console.error(`[ORDER MAPPER]   This item will NOT be added to deal (requires PRODUCT_ID from Bitrix catalog)`);
           continue; // Skip this row
         }
-        
+
         productRows.push(row);
         const rowType = productId ? `PRODUCT_ID=${productId}` : `PRODUCT_NAME="${row.PRODUCT_NAME}"`;
         console.log(`[ORDER MAPPER]   ✅ Added product row ${i + 1}/${quantity}: ${rowType}, Price: ${priceAfterDiscount}, QUANTITY: 1`);
@@ -749,15 +701,15 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       console.log(`[ORDER MAPPER] 📦 Finished processing item "${item.title || item.sku}": ${quantity} row(s) added`);
     }
   }
-  
+
   // ✅ LOG: Log total product rows before shipping
   console.log(`[ORDER MAPPER] 📊 Total product rows (before shipping): ${productRows.length}`);
-  
+
   // ✅ CRITICAL: Log summary of product rows (PRODUCT_ID vs PRODUCT_NAME)
   const rowsWithProductId = productRows.filter(r => r.PRODUCT_ID && r.PRODUCT_ID !== 0).length;
   const rowsWithProductName = productRows.filter(r => r.PRODUCT_NAME && !r.PRODUCT_ID).length;
   console.log(`[ORDER MAPPER] 📋 Product rows summary: ${rowsWithProductId} with PRODUCT_ID (linked), ${rowsWithProductName} with PRODUCT_NAME only (custom)`);
-  
+
   // Log each row for debugging
   productRows.forEach((row, idx) => {
     if (row.PRODUCT_ID) {
@@ -772,7 +724,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   if (order.shipping_lines && Array.isArray(order.shipping_lines) && order.shipping_lines.length > 0) {
     // Get shipping from the first shipping_line (most reliable source)
     const shippingLine = order.shipping_lines[0];
-    
+
     // CRITICAL VALIDATION: shipping_lines should NOT contain product information
     // If shipping_line has product-like fields (sku, variant_id, product_id), it's likely a data error
     if (shippingLine.sku || shippingLine.variant_id || shippingLine.product_id || shippingLine.line_item_id) {
@@ -799,22 +751,22 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     );
     shippingLineTitle = 'Shipping';
   }
-  
+
   // Only add shipping row if we have actual shipping_lines OR explicit shipping price > 0
   // AND shipping price matches what we calculated (to avoid confusion with products)
   // AND shippingLineTitle is valid (not null, which would indicate invalid shipping data)
   const hasShippingLines = order.shipping_lines && Array.isArray(order.shipping_lines) && order.shipping_lines.length > 0;
   const hasExplicitShippingPrice = actualShippingPrice > 0 && Math.abs(actualShippingPrice - shippingPrice) < 0.01;
   const hasValidShippingTitle = shippingLineTitle && shippingLineTitle.trim().length > 0;
-  
+
   if (actualShippingPrice > 0 && hasValidShippingTitle && (hasShippingLines || hasExplicitShippingPrice)) {
     // Use PRODUCT_ID for shipping (matching working script)
-    const shippingProductId = BITRIX_CONFIG.SHIPPING_PRODUCT_ID > 0 
-      ? BITRIX_CONFIG.SHIPPING_PRODUCT_ID 
+    const shippingProductId = BITRIX_CONFIG.SHIPPING_PRODUCT_ID > 0
+      ? BITRIX_CONFIG.SHIPPING_PRODUCT_ID
       : 3000; // Default shipping product ID from working script
-    
+
     const shippingName = shippingLineTitle || 'Shipping';
-    
+
     productRows.push({
       PRODUCT_ID: shippingProductId, // Use shipping product ID (3000 from working script)
       PRODUCT_NAME: shippingName, // Explicit name for visibility
@@ -825,7 +777,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       TAX_INCLUDED: order.taxes_included ? 'Y' : 'N',
       TAX_RATE: 19.0, // Default tax rate for shipping
     });
-    
+
     console.log(`[ORDER MAPPER] Added shipping row (PRODUCT_ID: ${shippingProductId}): ${shippingName}, Price: ${actualShippingPrice}`);
   } else if (shippingPrice > 0 && !hasShippingLines) {
     // Log warning if we have shipping price but no shipping_lines (potential data issue)
@@ -834,21 +786,21 @@ export async function mapShopifyOrderToBitrixDeal(order) {
 
   // Final validation: count products vs shipping
   const productRowsCount = productRows.length;
-  const shippingRowsCount = productRows.filter(r => 
+  const shippingRowsCount = productRows.filter(r =>
     r.PRODUCT_NAME && r.PRODUCT_NAME.toLowerCase().includes('shipping')
   ).length;
   const regularProductRowsCount = productRowsCount - shippingRowsCount;
-  
+
   // Count expected items from Shopify (using current_quantity for accurate count)
-  const expectedLineItemsCount = order.line_items 
+  const expectedLineItemsCount = order.line_items
     ? order.line_items.reduce((sum, item) => {
-        const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
-        return sum + (currentQty > 0 ? currentQty : 0); // Only count active items
-      }, 0)
+      const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
+      return sum + (currentQty > 0 ? currentQty : 0); // Only count active items
+    }, 0)
     : 0;
   const expectedShippingCount = (order.shipping_lines && order.shipping_lines.length > 0 && actualShippingPrice > 0) ? 1 : 0;
   const expectedTotalRows = expectedLineItemsCount + expectedShippingCount;
-  
+
   // Log summary for debugging
   console.log(`[ORDER MAPPER] Order ${order.name || order.id} mapping summary:`);
   console.log(`  - Line items in Shopify: ${order.line_items?.length || 0} (total quantity: ${expectedLineItemsCount})`);
@@ -856,11 +808,11 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   console.log(`  - Product rows created: ${regularProductRowsCount}`);
   console.log(`  - Shipping rows created: ${shippingRowsCount}`);
   console.log(`  - Total rows: ${productRowsCount} (expected: ${expectedTotalRows})`);
-  
+
   if (regularProductRowsCount !== expectedLineItemsCount) {
     console.warn(`[ORDER MAPPER] WARNING: Product rows count mismatch! Expected ${expectedLineItemsCount} from line_items, got ${regularProductRowsCount}`);
   }
-  
+
   if (shippingRowsCount !== expectedShippingCount) {
     console.warn(`[ORDER MAPPER] WARNING: Shipping rows count mismatch! Expected ${expectedShippingCount}, got ${shippingRowsCount}`);
   }

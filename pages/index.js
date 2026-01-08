@@ -5,16 +5,9 @@ import EventsList from '../src/components/shopify/EventsList';
 import BitrixEventsList from '../src/components/bitrix/EventsList';
 import SuccessOperationsList from '../src/components/success/SuccessOperationsList';
 import DataPreview from '../src/components/shopify/DataPreview';
-import AuthModal from '../src/components/auth/AuthModal';
-import LockedSection from '../src/components/common/LockedSection';
 // Removed shopifyAdapter import - now using API endpoint for transformation
 
 export default function ShopifyPage() {
-  // Authentication state
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isGuestMode, setIsGuestMode] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(true);
-  const [authPassword, setAuthPassword] = useState('');
   const [events, setEvents] = useState([]);
   const [selectedEvents, setSelectedEvents] = useState([]);
   const [bitrixEvents, setBitrixEvents] = useState([]);
@@ -50,87 +43,6 @@ export default function ShopifyPage() {
   // Update certificate product state (manual update button)
   const [isUpdatingCert500, setIsUpdatingCert500] = useState(false);
   const [updateCertResult, setUpdateCertResult] = useState(null);
-  // Category sync state (universal for all categories)
-  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
-  const [createCategoryResult, setCreateCategoryResult] = useState(null);
-  const [selectedCategory, setSelectedCategory] = useState('category-a-f');
-  const [syncProgress, setSyncProgress] = useState(null);
-  const [progressInterval, setProgressInterval] = useState(null);
-
-  // Hardcoded section mapping
-  const CATEGORY_SECTION_MAP = {
-    'category-a-f': 36,
-    'category-g-m': 38,
-    'category-n-s': 40,
-    'category-t-z': 42
-  };
-
-  // Get section ID for selected category
-  const getSectionIdForCategory = (category) => {
-    return CATEGORY_SECTION_MAP[category] || 32;
-  };
-
-  // Check authentication status from localStorage on mount
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const authStatus = localStorage.getItem('auth_status');
-      const guestStatus = localStorage.getItem('guest_mode');
-      
-      if (authStatus === 'authenticated') {
-        setIsAuthenticated(true);
-        setShowAuthModal(false);
-      } else if (guestStatus === 'true') {
-        setIsGuestMode(true);
-        setIsAuthenticated(false);
-        setShowAuthModal(false);
-      }
-    }
-  }, []);
-
-  // Handle authentication
-  const handleAuth = async (password, guestMode = false) => {
-    try {
-      const response = await fetch('/api/config/password');
-      const data = await response.json();
-      
-      if (data.success) {
-        const correctPassword = data.password;
-        
-        if (guestMode) {
-          // Guest mode - no password needed
-          setIsGuestMode(true);
-          setIsAuthenticated(false);
-          setShowAuthModal(false);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('guest_mode', 'true');
-            localStorage.removeItem('auth_status');
-          }
-        } else if (password === correctPassword) {
-          // Full access
-          setIsAuthenticated(true);
-          setIsGuestMode(false);
-          setShowAuthModal(false);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('auth_status', 'authenticated');
-            localStorage.removeItem('guest_mode');
-          }
-        } else {
-          alert('Incorrect password');
-          setAuthPassword('');
-          return false;
-        }
-        return true;
-      }
-    } catch (error) {
-      console.error('Auth error:', error);
-      alert('Authentication error. Please try again.');
-      return false;
-    }
-  };
-
-  const handleGuestMode = () => {
-    handleAuth('', true);
-  };
 
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);
@@ -160,29 +72,29 @@ export default function ShopifyPage() {
 
       if (data.success) {
         const fetchedEvents = data.events || [];
-        
+
         // ✅ Smart merge: only add new events, preserve existing ones
         setEvents(prevEvents => {
           // Create a Set of existing event IDs for fast lookup
           const existingIds = new Set(prevEvents.map(e => e.id || e.eventId));
-          
+
           // Filter out events that already exist
           const newEvents = fetchedEvents.filter(e => {
             const eventId = e.id || e.eventId;
             return !existingIds.has(eventId);
           });
-          
+
           // If there are new events, append them to the end
           if (newEvents.length > 0) {
             return [...prevEvents, ...newEvents];
           }
-          
+
           // If no new events, return previous state (no re-render needed)
           return prevEvents;
         });
-        
+
         setLastRefresh(new Date());
-        
+
         // ✅ Update preview only if previewed event is selected and still exists
         if (previewEvent && previewData) {
           const updatedEvent = fetchedEvents.find(e => (e.id || e.eventId) === (previewEvent.id || previewEvent.eventId));
@@ -217,7 +129,7 @@ export default function ShopifyPage() {
 
       if (data.success) {
         const fetchedEvents = data.events || [];
-        
+
         // ✅ Smart merge: only add new events, preserve existing ones
         setBitrixEvents(prevEvents => {
           const existingIds = new Set(prevEvents.map(e => e.id || e.eventId || e.dealId));
@@ -245,7 +157,7 @@ export default function ShopifyPage() {
 
       if (data.success) {
         const fetchedOperations = data.operations || [];
-        
+
         // ✅ Smart merge: only add new operations, preserve existing ones
         setSuccessOperations(prevOperations => {
           const existingIds = new Set(prevOperations.map(op => op.id || op.operationId));
@@ -258,7 +170,7 @@ export default function ShopifyPage() {
           }
           return prevOperations;
         });
-        
+
         // ✅ Update preview only if previewed operation is selected
         if (successPreviewOperation && previewData) {
           const updatedOp = fetchedOperations.find(op => (op.id || op.operationId) === (successPreviewOperation.id || successPreviewOperation.operationId));
@@ -280,12 +192,12 @@ export default function ShopifyPage() {
   // Initial fetch
   useEffect(() => {
     fetchBitrixWebhookUrl(); // Fetch webhook URL first
-    
+
     // First load - set loading states
     setIsLoading(true);
     setIsBitrixLoading(true);
     setIsSuccessLoading(true);
-    
+
     Promise.all([
       fetchEvents(),
       fetchBitrixEvents(),
@@ -306,15 +218,6 @@ export default function ShopifyPage() {
 
     return () => clearInterval(interval);
   }, []);
-
-  // Cleanup progress interval on unmount
-  useEffect(() => {
-    return () => {
-      if (progressInterval) {
-        clearInterval(progressInterval);
-      }
-    };
-  }, [progressInterval]);
 
   const handleSendToBitrix = async () => {
     if (selectedEvents.length === 0) {
@@ -340,7 +243,7 @@ export default function ShopifyPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           selectedEvents,
           bitrixWebhookUrl: bitrixWebhookUrl.trim()
         })
@@ -350,8 +253,8 @@ export default function ShopifyPage() {
 
       if (response.ok || response.status === 207) {
         // 200 - все успешно, 207 - частичный успех
-        setSendResult({ 
-          success: result.success !== false, 
+        setSendResult({
+          success: result.success !== false,
           message: result.message,
           details: result.errors && result.errors.length > 0 ? result.errors : null,
           total: result.total,
@@ -361,8 +264,8 @@ export default function ShopifyPage() {
         });
       } else {
         // 400, 500 - ошибки
-        setSendResult({ 
-          success: false, 
+        setSendResult({
+          success: false,
           message: result.error || 'Failed to send',
           details: result.details || (result.errors && result.errors.length > 0 ? result.errors : null),
           results: result.results || [] // Store results for preview
@@ -370,8 +273,8 @@ export default function ShopifyPage() {
       }
     } catch (error) {
       console.error('Send to Bitrix error:', error);
-      setSendResult({ 
-        success: false, 
+      setSendResult({
+        success: false,
         message: 'Network error',
         details: [{ error: error.message || 'Unknown network error' }]
       });
@@ -392,7 +295,7 @@ export default function ShopifyPage() {
       });
 
       const result = await response.json();
-      
+
       if (!result.success) {
         throw new Error(result.message || 'Failed to transform order');
       }
@@ -431,7 +334,7 @@ export default function ShopifyPage() {
     try {
       // Download logs from API endpoint
       const response = await fetch('/api/logs/download');
-      
+
       if (!response.ok) {
         throw new Error('Failed to download logs');
       }
@@ -471,7 +374,7 @@ export default function ShopifyPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           selectedEvents: selectedBitrixEvents
         })
       });
@@ -480,8 +383,8 @@ export default function ShopifyPage() {
 
       if (response.ok || response.status === 207) {
         // 200 - все успешно, 207 - частичный успех
-        setSendToShopifyResult({ 
-          success: result.success !== false, 
+        setSendToShopifyResult({
+          success: result.success !== false,
           message: result.message,
           details: result.errors && result.errors.length > 0 ? result.errors : null,
           total: result.total,
@@ -491,8 +394,8 @@ export default function ShopifyPage() {
         });
       } else {
         // 400, 500 - ошибки
-        setSendToShopifyResult({ 
-          success: false, 
+        setSendToShopifyResult({
+          success: false,
           message: result.error || 'Failed to send',
           details: result.details || (result.errors && result.errors.length > 0 ? result.errors : null),
           results: result.results || []
@@ -500,8 +403,8 @@ export default function ShopifyPage() {
       }
     } catch (error) {
       console.error('Send to Shopify error:', error);
-      setSendToShopifyResult({ 
-        success: false, 
+      setSendToShopifyResult({
+        success: false,
         message: 'Network error',
         details: [{ error: error.message || 'Unknown network error' }]
       });
@@ -554,7 +457,7 @@ export default function ShopifyPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           selectedEvents: [previewEvent],
           bitrixWebhookUrl: bitrixWebhookUrl.trim()
         })
@@ -563,8 +466,8 @@ export default function ShopifyPage() {
       const result = await response.json();
 
       if (response.ok || response.status === 207) {
-        setSendResult({ 
-          success: result.success !== false, 
+        setSendResult({
+          success: result.success !== false,
           message: result.message,
           details: result.errors && result.errors.length > 0 ? result.errors : null,
           total: result.total,
@@ -573,8 +476,8 @@ export default function ShopifyPage() {
           results: result.results || []
         });
       } else {
-        setSendResult({ 
-          success: false, 
+        setSendResult({
+          success: false,
           message: result.error || 'Failed to send',
           details: result.details || (result.errors && result.errors.length > 0 ? result.errors : null),
           results: result.results || []
@@ -582,8 +485,8 @@ export default function ShopifyPage() {
       }
     } catch (error) {
       console.error('Send to Bitrix error:', error);
-      setSendResult({ 
-        success: false, 
+      setSendResult({
+        success: false,
         message: 'Network error',
         details: [{ error: error.message || 'Unknown network error' }]
       });
@@ -673,97 +576,6 @@ export default function ShopifyPage() {
     }
   };
 
-  // Fetch progress for sync
-  const fetchProgress = async (requestId) => {
-    try {
-      const response = await fetch(`/api/sync/progress?requestId=${requestId}`);
-      const data = await response.json();
-      if (data.success && data.progress) {
-        setSyncProgress(data.progress);
-        
-        // Stop polling if completed or error
-        if (data.progress.status === 'completed' || data.progress.status === 'error') {
-          if (progressInterval) {
-            clearInterval(progressInterval);
-            setProgressInterval(null);
-          }
-          setIsCreatingCategory(false);
-          setCreateCategoryResult({
-            success: data.progress.status === 'completed',
-            summary: {
-              total: data.progress.total,
-              created: data.progress.created,
-              updated: data.progress.updated,
-              skipped: data.progress.skipped,
-              errors: data.progress.errors
-            }
-          });
-        }
-      }
-    } catch (err) {
-      console.error('[PROGRESS] Error fetching progress:', err);
-    }
-  };
-
-  // Create products for selected category (optimized version)
-  const handleCreateCategory = async () => {
-    setIsCreatingCategory(true);
-    setCreateCategoryResult(null);
-    setError(null);
-    setSyncProgress(null);
-
-    const sectionId = getSectionIdForCategory(selectedCategory);
-
-    try {
-      const response = await fetch('/api/sync/category-optimized?action=create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          category: selectedCategory,
-          sectionId: sectionId
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success && data.requestId) {
-        // Start polling for progress every 30 seconds
-        const interval = setInterval(() => {
-          fetchProgress(data.requestId);
-        }, 30000); // 30 seconds
-        
-        setProgressInterval(interval);
-        
-        // Fetch initial progress immediately
-        fetchProgress(data.requestId);
-        
-        console.log(`[CREATE ${selectedCategory.toUpperCase()}] Processing started, requestId: ${data.requestId}`);
-      } else {
-        setError(data.error || `Failed to start ${selectedCategory} sync`);
-        setIsCreatingCategory(false);
-      }
-    } catch (err) {
-      console.error(`[CREATE ${selectedCategory.toUpperCase()}] Error starting sync:`, err);
-      setError(err.message || `Failed to start ${selectedCategory} sync`);
-      setIsCreatingCategory(false);
-    }
-  };
-
-  // Show auth modal if not authenticated and not in guest mode
-  if (showAuthModal && !isAuthenticated && !isGuestMode) {
-    return (
-      <>
-        <Head>
-          <title>Shopify Webhook - API Services</title>
-          <meta name="description" content="Monitor Shopify webhook events" />
-        </Head>
-        <AuthModal onAuth={handleAuth} onGuest={handleGuestMode} />
-      </>
-    );
-  }
-
   return (
     <>
       <Head>
@@ -775,56 +587,14 @@ export default function ShopifyPage() {
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
       </Head>
       <main className="page">
-        <header className="page-header" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '20px' }}>
-          <div style={{ flex: '1 1 auto', minWidth: '200px' }}>
-            <h1 style={{ margin: 0, marginBottom: '4px' }}>Webhook Monitor</h1>
-            <p className="subtitle" style={{ margin: 0, fontSize: '0.9rem', opacity: 0.8 }}>
+        <header className="page-header">
+          <div>
+            <h1>Webhook Monitor</h1>
+            <p className="subtitle">
               Monitor Shopify → Bitrix and Bitrix → Shopify webhook events in real-time
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', flexShrink: 0 }}>
-            <a href="/report" target="_blank" rel="noopener noreferrer" style={{ 
-              color: '#3b82f6', 
-              textDecoration: 'none', 
-              fontSize: '0.85rem',
-              padding: '6px 10px',
-              borderRadius: '4px',
-              background: 'rgba(59, 130, 246, 0.1)',
-              border: '1px solid rgba(59, 130, 246, 0.3)',
-              transition: 'all 0.2s',
-              whiteSpace: 'nowrap'
-            }} onMouseEnter={(e) => { e.target.style.background = 'rgba(59, 130, 246, 0.2)'; e.target.style.borderColor = 'rgba(59, 130, 246, 0.5)'; }} onMouseLeave={(e) => { e.target.style.background = 'rgba(59, 130, 246, 0.1)'; e.target.style.borderColor = 'rgba(59, 130, 246, 0.3)'; }}>
-              📄 Отчёт
-            </a>
-            <a href="/instruction" target="_blank" rel="noopener noreferrer" style={{ 
-              color: '#3b82f6', 
-              textDecoration: 'none', 
-              fontSize: '0.85rem',
-              padding: '6px 10px',
-              borderRadius: '4px',
-              background: 'rgba(59, 130, 246, 0.1)',
-              border: '1px solid rgba(59, 130, 246, 0.3)',
-              transition: 'all 0.2s',
-              whiteSpace: 'nowrap'
-            }} onMouseEnter={(e) => { e.target.style.background = 'rgba(59, 130, 246, 0.2)'; e.target.style.borderColor = 'rgba(59, 130, 246, 0.5)'; }} onMouseLeave={(e) => { e.target.style.background = 'rgba(59, 130, 246, 0.1)'; e.target.style.borderColor = 'rgba(59, 130, 246, 0.3)'; }}>
-              📋 Инструкция
-            </a>
-            <a href="/tech_doc" target="_blank" rel="noopener noreferrer" style={{ 
-              color: '#3b82f6', 
-              textDecoration: 'none', 
-              fontSize: '0.85rem',
-              padding: '6px 10px',
-              borderRadius: '4px',
-              background: 'rgba(59, 130, 246, 0.1)',
-              border: '1px solid rgba(59, 130, 246, 0.3)',
-              transition: 'all 0.2s',
-              whiteSpace: 'nowrap'
-            }} onMouseEnter={(e) => { e.target.style.background = 'rgba(59, 130, 246, 0.2)'; e.target.style.borderColor = 'rgba(59, 130, 246, 0.5)'; }} onMouseLeave={(e) => { e.target.style.background = 'rgba(59, 130, 246, 0.1)'; e.target.style.borderColor = 'rgba(59, 130, 246, 0.3)'; }}>
-              🔧 Тех.док
-            </a>
-          </div>
-          <LockedSection isGuestMode={isGuestMode} title="Guest Mode - Actions locked">
-          <div className="header-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', width: '100%', marginTop: '8px' }}>
+          <div className="header-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
             {events.length > 0 && (
               <>
                 {selectedEvents.length === events.length ? (
@@ -900,7 +670,7 @@ export default function ShopifyPage() {
               }}
               title="Download integration logs (Shopify→Bitrix and Bitrix→Shopify) as .txt file"
             >
-              📥 Скачать логи
+              📜 Скачать логи
             </button>
             {bitrixEvents.length > 0 && (
               <>
@@ -946,15 +716,14 @@ export default function ShopifyPage() {
             <button
               onClick={handleSendToShopify}
               className="btn"
-              disabled={isSendingToShopify || selectedBitrixEvents.length === 0 || isGuestMode}
+              disabled={isSendingToShopify || selectedBitrixEvents.length === 0}
               style={{
-                background: (selectedBitrixEvents.length > 0 && !isGuestMode) ? '#059669' : '#6b7280',
+                background: selectedBitrixEvents.length > 0 ? '#059669' : '#6b7280',
                 border: 'none',
                 padding: '8px 16px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: (selectedBitrixEvents.length > 0 && !isGuestMode) ? 'pointer' : 'not-allowed',
-                opacity: (isSendingToShopify || selectedBitrixEvents.length === 0 || isGuestMode) ? 0.5 : 1,
+                cursor: selectedBitrixEvents.length > 0 ? 'pointer' : 'not-allowed',
                 minWidth: '220px',
                 whiteSpace: 'nowrap',
                 flexShrink: 0
@@ -985,7 +754,6 @@ export default function ShopifyPage() {
               {(isLoading || isBitrixLoading || isSuccessLoading) ? 'Refreshing...' : '🔄 Refresh'}
             </button>
           </div>
-          </LockedSection>
         </header>
 
         {sendResult && (
@@ -1009,8 +777,8 @@ export default function ShopifyPage() {
               <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали ошибок:</div>
                 {sendResult.details.map((err, idx) => (
-                  <div key={idx} style={{ 
-                    fontSize: '0.8rem', 
+                  <div key={idx} style={{
+                    fontSize: '0.8rem',
                     marginBottom: '6px',
                     padding: '6px 8px',
                     background: 'rgba(0, 0, 0, 0.2)',
@@ -1050,8 +818,8 @@ export default function ShopifyPage() {
               <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Результаты отправки:</div>
                 {sendResult.results.map((result, idx) => (
-                  <div key={idx} style={{ 
-                    fontSize: '0.8rem', 
+                  <div key={idx} style={{
+                    fontSize: '0.8rem',
                     marginBottom: '6px',
                     padding: '6px 8px',
                     background: result.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
@@ -1112,7 +880,6 @@ export default function ShopifyPage() {
         <WebhookInfo onBitrixUrlChange={setBitrixWebhookUrl} />
 
         {/* Sync Certificates Section */}
-        <LockedSection isGuestMode={isGuestMode} title="Guest Mode - Sync operations locked">
         <div style={{
           marginTop: '30px',
           padding: '20px',
@@ -1123,19 +890,18 @@ export default function ShopifyPage() {
           <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.3rem' }}>
             Синхронизация товаров
           </h2>
-          
+
           <div style={{ marginBottom: '16px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <button
               onClick={handleSyncCertificates}
-              disabled={isSyncingCertificates || isGuestMode}
+              disabled={isSyncingCertificates}
               style={{
-                background: (isSyncingCertificates || isGuestMode) ? '#475569' : '#059669',
+                background: isSyncingCertificates ? '#6b7280' : '#059669',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: (isSyncingCertificates || isGuestMode) ? 'not-allowed' : 'pointer',
-                opacity: (isSyncingCertificates || isGuestMode) ? 0.5 : 1,
+                cursor: isSyncingCertificates ? 'not-allowed' : 'pointer',
                 fontSize: '1rem',
                 fontWeight: 500,
                 minWidth: '200px',
@@ -1150,13 +916,12 @@ export default function ShopifyPage() {
               onClick={handleCreateCertificates}
               disabled={isCreatingCertificates}
               style={{
-                background: (isCreatingCertificates || isGuestMode) ? '#475569' : '#3b82f6',
+                background: isCreatingCertificates ? '#6b7280' : '#3b82f6',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: (isCreatingCertificates || isGuestMode) ? 'not-allowed' : 'pointer',
-                opacity: (isCreatingCertificates || isGuestMode) ? 0.5 : 1,
+                cursor: isCreatingCertificates ? 'not-allowed' : 'pointer',
                 fontSize: '1rem',
                 fontWeight: 500,
                 minWidth: '200px',
@@ -1169,7 +934,7 @@ export default function ShopifyPage() {
             </button>
             <button
               onClick={handleUpdateCertificate500}
-              disabled={isUpdatingCert500 || isGuestMode}
+              disabled={isUpdatingCert500}
               style={{
                 padding: '10px 12px',
                 background: isUpdatingCert500 ? '#475569' : '#14b8a6',
@@ -1190,9 +955,9 @@ export default function ShopifyPage() {
           </div>
 
           <div style={{ marginTop: '16px' }}>
-            <div style={{ 
-              color: '#94a3b8', 
-              fontSize: '0.9rem', 
+            <div style={{
+              color: '#94a3b8',
+              fontSize: '0.9rem',
               marginBottom: '12px',
               fontWeight: 500
             }}>
@@ -1214,171 +979,30 @@ export default function ShopifyPage() {
                   E-Certificate, Gift certificate FBFC, Printed Gift Certificate
                 </div>
               </div>
-              <div style={{
-                padding: '12px',
-                background: 'rgba(16, 185, 129, 0.1)',
-                borderRadius: '6px',
-                border: '1px solid rgba(16, 185, 129, 0.3)'
-              }}>
-                <div style={{ color: '#f1f5f9', fontWeight: 500, marginBottom: '12px' }}>Категории товаров</div>
-                
-                {/* Category selector */}
-                <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 500 }}>
-                    Категория (SKU):
-                  </label>
-                  <select
-                    value={selectedCategory}
-                    onChange={(e) => !isGuestMode && setSelectedCategory(e.target.value)}
-                    disabled={isGuestMode}
-                    style={{
-                      padding: '6px 10px',
-                      borderRadius: '4px',
-                      border: '1px solid rgba(59, 130, 246, 0.3)',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      color: '#f1f5f9',
-                      fontSize: '0.9rem',
-                      width: '100%',
-                      cursor: isGuestMode ? 'not-allowed' : 'pointer',
-                      opacity: isGuestMode ? 0.5 : 1
-                    }}
-                  >
-                    <option value="category-a-f">A-F (SKU начинается с A, B, C, D, E, F)</option>
-                    <option value="category-g-m">G-M (SKU начинается с G, H, I, J, K, L, M)</option>
-                    <option value="category-n-s">N-S (SKU начинается с N, O, P, Q, R, S)</option>
-                    <option value="category-t-z">T-Z (SKU начинается с T, U, V, W, X, Y, Z)</option>
-                  </select>
-                </div>
-
-                {/* Section ID display (hardcoded mapping) */}
-                <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 500 }}>
-                    Раздел (SECTION_ID):
-                  </label>
-                  <div style={{
-                    padding: '8px 12px',
-                    borderRadius: '4px',
-                    border: '1px solid rgba(59, 130, 246, 0.3)',
-                    background: 'rgba(15, 23, 42, 0.6)',
-                    color: '#f1f5f9',
-                    fontSize: '0.9rem',
-                    fontWeight: 500
-                  }}>
-                    {getSectionIdForCategory(selectedCategory)}
-                    <span style={{ color: '#64748b', fontSize: '0.85rem', marginLeft: '8px' }}>
-                      ({selectedCategory === 'category-a-f' && 'A-F → 36' ||
-                        selectedCategory === 'category-g-m' && 'G-M → 38' ||
-                        selectedCategory === 'category-n-s' && 'N-S → 40' ||
-                        selectedCategory === 'category-t-z' && 'T-Z → 42'})
-                    </span>
-                  </div>
-                  <div style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '-4px' }}>
-                    ID раздела в Bitrix автоматически определяется по категории
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleCreateCategory}
-                  disabled={isCreatingCategory || isGuestMode}
-                  style={{
-                    marginTop: '8px',
-                    background: (isCreatingCategory || isGuestMode) ? '#475569' : '#10b981',
-                    border: 'none',
-                    padding: '8px 16px',
-                    borderRadius: '6px',
-                    color: 'white',
-                    cursor: (isCreatingCategory || isGuestMode) ? 'not-allowed' : 'pointer',
-                    opacity: (isCreatingCategory || isGuestMode) ? 0.5 : 1,
-                    fontSize: '0.9rem',
-                    fontWeight: 500,
-                    width: '100%'
-                  }}
-                  title={`Создать товары категории ${selectedCategory} из Shopify`}
-                >
-                  {isCreatingCategory ? '⏳ Создание...' : `➕ Создать товары ${selectedCategory.toUpperCase().replace('CATEGORY-', '')}`}
-                </button>
-                
-                {/* Progress display */}
-                {syncProgress && (
-                  <div style={{
-                    marginTop: '12px',
-                    padding: '12px',
-                    background: 'rgba(59, 130, 246, 0.1)',
-                    borderRadius: '6px',
-                    border: '1px solid rgba(59, 130, 246, 0.3)'
-                  }}>
-                    <div style={{ color: '#f1f5f9', fontSize: '0.9rem', fontWeight: 500, marginBottom: '8px' }}>
-                      {syncProgress.message}
-                    </div>
-                    {syncProgress.total > 0 && (
-                      <>
-                        <div style={{ 
-                          width: '100%', 
-                          height: '8px', 
-                          background: 'rgba(15, 23, 42, 0.6)', 
-                          borderRadius: '4px',
-                          overflow: 'hidden',
-                          marginBottom: '8px'
-                        }}>
-                          <div style={{
-                            width: `${(syncProgress.processed / syncProgress.total) * 100}%`,
-                            height: '100%',
-                            background: '#3b82f6',
-                            transition: 'width 0.3s ease'
-                          }} />
-                        </div>
-                        <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
-                          Обработано: {syncProgress.processed} / {syncProgress.total}
-                          {syncProgress.created > 0 && ` | Создано: ${syncProgress.created}`}
-                          {syncProgress.updated > 0 && ` | Обновлено: ${syncProgress.updated}`}
-                          {syncProgress.errors > 0 && ` | Ошибок: ${syncProgress.errors}`}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
             </div>
           </div>
 
-          {(syncResult || createResult || createCategoryResult) && (
+          {(syncResult || createResult) && (
             <div style={{
               marginTop: '20px',
               padding: '16px',
               borderRadius: '8px',
-              background: (syncResult || createResult || createCategoryResult)?.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-              border: `1px solid ${(syncResult || createResult || createCategoryResult)?.success ? '#059669' : '#ef4444'}`,
-              color: (syncResult || createResult || createCategoryResult)?.success ? '#059669' : '#ef4444'
+              background: (syncResult || createResult)?.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              border: `1px solid ${(syncResult || createResult)?.success ? '#059669' : '#ef4444'}`,
+              color: (syncResult || createResult)?.success ? '#059669' : '#ef4444'
             }}>
               <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-                {syncResult 
+                {syncResult
                   ? (syncResult.success ? '✅ Синхронизация завершена' : '❌ Ошибка синхронизации')
-                  : createResult
-                  ? (createResult.success ? '✅ Создание завершено' : '❌ Ошибка создания')
-                  : (createCategoryResult.success ? `✅ Создание категории ${createCategoryResult.category?.toUpperCase().replace('CATEGORY-', '') || ''} завершено` : `❌ Ошибка создания категории`)
+                  : (createResult.success ? '✅ Создание завершено' : '❌ Ошибка создания')
                 }
               </div>
-              {((syncResult || createResult)?.summary && (
+              {((syncResult || createResult)?.summary) && (
                 <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                  Всего вариантов: {(syncResult || createResult).summary.total} | 
-                  Создано документов: {(syncResult || createResult).summary.created} | 
-                  Обновлено: {(syncResult || createResult).summary.updated} | 
+                  Всего вариантов: {(syncResult || createResult).summary.total} |
+                  Создано документов: {(syncResult || createResult).summary.created} |
+                  Обновлено: {(syncResult || createResult).summary.updated} |
                   Ошибок: {(syncResult || createResult).summary.errors}
-                </div>
-              ))}
-              {createCategoryResult?.summary && (
-                <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                  Категория: {createCategoryResult.category?.toUpperCase().replace('CATEGORY-', '') || 'N/A'} | 
-                  Всего товаров: {createCategoryResult.summary.total} | 
-                  Создано: {createCategoryResult.summary.created} | 
-                  Обновлено: {createCategoryResult.summary.updated} | 
-                  Пропущено (qty=0): {createCategoryResult.summary.skipped} | 
-                  Ошибок: {createCategoryResult.summary.errors}
-                  {createCategoryResult.sectionId && (
-                    <div style={{ marginTop: '4px', fontSize: '0.85rem' }}>
-                      Раздел (SECTION_ID): {createCategoryResult.sectionId}
-                    </div>
-                  )}
                 </div>
               )}
               {((syncResult || createResult)?.certificates) && Object.keys((syncResult || createResult).certificates).length > 0 && (
@@ -1443,7 +1067,6 @@ export default function ShopifyPage() {
             </div>
           )}
         </div>
-        </LockedSection>
 
         {/* Events Lists - Three fixed-width columns: Shopify → Bitrix, Bitrix → Shopify, Success Operations */}
         <div style={{
@@ -1458,13 +1081,13 @@ export default function ShopifyPage() {
               Shopify → Middleware → Bitrix
             </h2>
             <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-          <EventsList
-            events={events}
-            selectedEvents={selectedEvents}
-            onSelectionChange={setSelectedEvents}
-            onPreviewEvent={handlePreviewEvent}
-            isLoading={isInitialFetch && isLoading}
-          />
+              <EventsList
+                events={events}
+                selectedEvents={selectedEvents}
+                onSelectionChange={setSelectedEvents}
+                onPreviewEvent={handlePreviewEvent}
+                isLoading={isInitialFetch && isLoading}
+              />
             </div>
           </div>
 
@@ -1485,18 +1108,18 @@ export default function ShopifyPage() {
               }}>
                 <div style={{ fontWeight: 600, marginBottom: '8px' }}>
                   {sendToShopifyResult.message}
-                        </div>
+                </div>
                 {sendToShopifyResult.total !== undefined && (
                   <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
                     Всего: {sendToShopifyResult.total} | Успешно: {sendToShopifyResult.successful || 0} | Ошибок: {sendToShopifyResult.failed || 0}
-                        </div>
+                  </div>
                 )}
                 {sendToShopifyResult.details && sendToShopifyResult.details.length > 0 && (
                   <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendToShopifyResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
                     <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали ошибок:</div>
                     {sendToShopifyResult.details.map((err, idx) => (
-                      <div key={idx} style={{ 
-                        fontSize: '0.8rem', 
+                      <div key={idx} style={{
+                        fontSize: '0.8rem',
                         marginBottom: '6px',
                         padding: '6px 8px',
                         background: 'rgba(0, 0, 0, 0.2)',
@@ -1510,8 +1133,8 @@ export default function ShopifyPage() {
                     ))}
                   </div>
                 )}
-                </div>
-              )}
+              </div>
+            )}
             <div style={{ flex: '1 1 auto', minHeight: 0 }}>
               <BitrixEventsList
                 events={bitrixEvents}
@@ -1519,7 +1142,6 @@ export default function ShopifyPage() {
                 onSelectionChange={setSelectedBitrixEvents}
                 onPreviewEvent={handleBitrixPreviewEvent}
                 isLoading={isInitialFetch && isBitrixLoading}
-                isGuestMode={isGuestMode}
               />
             </div>
           </div>
@@ -1536,48 +1158,42 @@ export default function ShopifyPage() {
                 onSelectionChange={setSelectedSuccessOperations}
                 onPreviewOperation={handleSuccessPreviewOperation}
                 isLoading={isInitialFetch && isSuccessLoading}
-                isGuestMode={isGuestMode}
               />
             </div>
           </div>
         </div>
 
         {/* Data Preview - Wide block below */}
-        {((previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation)) && (
-          <LockedSection isGuestMode={isGuestMode} title="Guest Mode - Data preview locked">
-            <div style={{ marginTop: '20px', width: '100%' }}>
-              {previewData && previewEvent && !successPreviewOperation && (
-                <DataPreview
-                  shopifyData={previewData.shopifyData}
-                  bitrixData={previewData.bitrixData}
-                  eventId={previewEvent.id}
-                  onSendEvent={handleSendPreviewEvent}
-                  isSending={isSending}
-                  isGuestMode={isGuestMode}
-                />
-              )}
-              {bitrixPreviewData && bitrixPreviewEvent && (
-                <DataPreview
-                  shopifyData={bitrixPreviewData.shopifyData}
-                  bitrixData={bitrixPreviewData.bitrixData}
-                  eventId={bitrixPreviewEvent.dealId || bitrixPreviewEvent.id}
-                  eventType="bitrix"
-                  isGuestMode={isGuestMode}
-                />
-              )}
-              {previewData && successPreviewOperation && (
-                <DataPreview
-                  shopifyData={previewData.shopifyData}
-                  bitrixData={previewData.bitrixData}
-                  eventId={successPreviewOperation.dealId || successPreviewOperation.id}
-                  eventType="success"
-                  operation={successPreviewOperation}
-                  isGuestMode={isGuestMode}
-                />
-              )}
-            </div>
-          </LockedSection>
-        )}
+        {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation) ? (
+          <div style={{ marginTop: '20px', width: '100%' }}>
+            {previewData && previewEvent && !successPreviewOperation && (
+              <DataPreview
+                shopifyData={previewData.shopifyData}
+                bitrixData={previewData.bitrixData}
+                eventId={previewEvent.id}
+                onSendEvent={handleSendPreviewEvent}
+                isSending={isSending}
+              />
+            )}
+            {bitrixPreviewData && bitrixPreviewEvent && (
+              <DataPreview
+                shopifyData={bitrixPreviewData.shopifyData}
+                bitrixData={bitrixPreviewData.bitrixData}
+                eventId={bitrixPreviewEvent.dealId || bitrixPreviewEvent.id}
+                eventType="bitrix"
+              />
+            )}
+            {previewData && successPreviewOperation && (
+              <DataPreview
+                shopifyData={previewData.shopifyData}
+                bitrixData={previewData.bitrixData}
+                eventId={successPreviewOperation.dealId || successPreviewOperation.id}
+                eventType="success"
+                operation={successPreviewOperation}
+              />
+            )}
+          </div>
+        ) : null}
       </main>
     </>
   );
