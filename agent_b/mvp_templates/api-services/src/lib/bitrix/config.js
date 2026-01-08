@@ -9,7 +9,7 @@ export const BITRIX_CONFIG = {
 
   // Default stage IDs (matching Bitrix24 stages)
   STAGES: {
-    PAID: 'WON', // Success stage for paid orders
+    PAID: 'NEW', // All orders from Shopify start as NEW (manager processes manually)
     PENDING: 'NEW', // New stage for pending payment
     PREPARATION: 'C2:PREPARATION', // Preparation stage (for partially refunded - order still active)
     REFUNDED: 'LOSE', // Loss stage for fully refunded
