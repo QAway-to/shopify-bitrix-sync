@@ -30,7 +30,7 @@ async function verifyDeal(dealId) {
       console.log(`[SHOPIFY WEBHOOK] ✅ Deal verified: ID=${dealId}, TITLE=${dealResp.result.TITLE}, OPPORTUNITY=${dealResp.result.OPPORTUNITY}`);
       return dealResp.result;
     }
-    
+
     console.warn(`[SHOPIFY WEBHOOK] ⚠️ Deal verification failed: Deal ${dealId} not found in Bitrix`);
     return null;
   } catch (error) {
@@ -92,12 +92,12 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[SHOPIFY WEBHOOK] Creating deal attempt ${attempt}/${maxRetries} for order ${shopifyOrderId}`);
-      
+
       // ✅ CRITICAL: Aggressive duplicate check BEFORE creation with multiple retries
       // This prevents race conditions when multiple webhooks arrive simultaneously
       let existingDealId = null;
       const maxPreCreateChecks = 3;
-      
+
       for (let preCheck = 1; preCheck <= maxPreCreateChecks; preCheck++) {
         const existingCheckResp = await callBitrix('/crm.deal.list.json', {
           filter: { 'UF_CRM_1742556489': shopifyOrderId },
@@ -108,7 +108,7 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
           // Sort by ID to get the oldest deal
           const sortedDeals = existingCheckResp.result.sort((a, b) => Number(a.ID) - Number(b.ID));
           existingDealId = sortedDeals[0].ID;
-          
+
           if (existingCheckResp.result.length > 1) {
             console.warn(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ MULTIPLE DEALS FOUND (pre-create check ${preCheck}): ${existingCheckResp.result.length} deals!`);
             console.warn(`[SHOPIFY WEBHOOK] Deal IDs: ${existingCheckResp.result.map(d => d.ID).join(', ')}`);
@@ -118,30 +118,30 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
           }
           break; // Exit retry loop - deal exists
         }
-        
+
         // No deal found - wait a bit before next check (in case deal is being created by another request)
         if (preCheck < maxPreCreateChecks) {
           const waitTime = 50 * preCheck; // 50ms, 100ms
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
-      
+
       if (existingDealId) {
         // Verify the found deal
         const verifiedDeal = await verifyDeal(existingDealId);
-        
-        return { 
-          success: true, 
-          dealId: existingDealId, 
+
+        return {
+          success: true,
+          dealId: existingDealId,
           wasDuplicate: true,
           attempt,
           verifiedDeal
         };
       }
-      
+
       // ✅ No existing deal found after all checks - safe to create
       console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxPreCreateChecks} pre-create checks, proceeding with creation`);
-      
+
       // ✅ Create deal first (Bitrix API doesn't support rows parameter in crm.deal.add.json)
       // Then add product rows separately via crm.deal.productrows.set.json (like the working script)
       const dealAddResp = await callBitrix('/crm.deal.add.json', {
@@ -152,16 +152,16 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
       if (dealAddResp.result) {
         const dealId = dealAddResp.result;
         console.log(`[SHOPIFY WEBHOOK] ✅ Deal created successfully on attempt ${attempt}: ${dealId}`);
-        
+
         // ✅ CRITICAL: Aggressive duplicate check after creation with multiple retries
         // Wait longer for Bitrix to index the new deal, then check multiple times
         let duplicateFound = false;
         let firstDealId = dealId;
-        
+
         for (let dupCheck = 1; dupCheck <= 3; dupCheck++) {
           const waitTime = 150 * dupCheck; // 150ms, 300ms, 450ms
           await new Promise(resolve => setTimeout(resolve, waitTime));
-          
+
           const duplicateCheckResp = await callBitrix('/crm.deal.list.json', {
             filter: { 'UF_CRM_1742556489': shopifyOrderId },
             select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
@@ -171,12 +171,12 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
             duplicateFound = true;
             console.warn(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ DUPLICATE DETECTED (check ${dupCheck}): ${duplicateCheckResp.result.length} deals for order ${shopifyOrderId}!`);
             console.warn(`[SHOPIFY WEBHOOK] Deal IDs: ${duplicateCheckResp.result.map(d => d.ID).join(', ')}`);
-            
+
             // Sort by ID to get the oldest (first created) deal
             const sortedDeals = duplicateCheckResp.result.sort((a, b) => Number(a.ID) - Number(b.ID));
             firstDealId = sortedDeals[0].ID;
             console.warn(`[SHOPIFY WEBHOOK] Using the oldest deal: ${firstDealId}`);
-            
+
             // If this is not the oldest deal, we should delete the duplicate (but user said no deletion)
             // So we just use the oldest one and mark as duplicate
             if (firstDealId !== dealId) {
@@ -185,11 +185,11 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
             break; // Exit retry loop
           }
         }
-        
+
         if (duplicateFound) {
           // Use the oldest deal to maintain consistency
           const verifiedDeal = await verifyDeal(firstDealId);
-          
+
           // Add product rows to the oldest deal
           if (productRows && productRows.length > 0) {
             try {
@@ -203,28 +203,28 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
               console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to set product rows for duplicate deal:`, err);
             }
           }
-          
-          return { 
-            success: true, 
+
+          return {
+            success: true,
             dealId: firstDealId,
             wasDuplicate: true, // Mark as duplicate since multiple deals exist
             attempt,
             verifiedDeal
           };
         }
-        
+
         // ✅ CRITICAL: Add product rows AFTER deal creation (like the working script)
         // Bitrix API requires separate call to crm.deal.productrows.set.json
         if (productRows && productRows.length > 0) {
           try {
             console.log(`[SHOPIFY WEBHOOK] 🔗 Adding ${productRows.length} product rows to deal ${dealId} via crm.deal.productrows.set.json`);
             console.log(`[SHOPIFY WEBHOOK]   First product row:`, JSON.stringify(productRows[0], null, 2));
-            
+
             const productRowsResp = await callBitrix('/crm.deal.productrows.set.json', {
               id: dealId,
               rows: productRows,
             });
-            
+
             if (productRowsResp.result === true || productRowsResp.result) {
               console.log(`[SHOPIFY WEBHOOK] ✅ Product rows successfully set for deal ${dealId}`);
               // Log which products were linked
@@ -245,7 +245,7 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
         } else {
           console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to set (deal created without products)`);
         }
-        
+
         // Verify deal exists and get details
         const verifiedDeal = await verifyDeal(dealId);
         if (verifiedDeal) {
@@ -260,9 +260,9 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
         } else {
           console.warn(`[SHOPIFY WEBHOOK] ⚠️ Deal ${dealId} was created but verification failed - deal may have been deleted`);
         }
-        
-        return { 
-          success: true, 
+
+        return {
+          success: true,
           dealId,
           wasDuplicate: false,
           attempt,
@@ -273,7 +273,7 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
       // Check for duplicate error in response
       if (dealAddResp.error) {
         const errorInfo = classifyBitrixError(dealAddResp);
-        
+
         // Log error with classification
         console.error(`[SHOPIFY WEBHOOK] ❌ Bitrix API error (${errorInfo.type}): ${errorInfo.message}`, {
           errorCode: errorInfo.code,
@@ -281,15 +281,15 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
           attempt,
           dealFields: Object.keys(dealFields)
         });
-        
+
         // Handle duplicate errors
         if (errorInfo.type === 'DUPLICATE') {
           console.log(`[SHOPIFY WEBHOOK] ⚠️ Duplicate detected on attempt ${attempt}, finding existing deal`);
-          
+
           // Wait a bit for Bitrix to commit the transaction (exponential backoff)
           const waitTime = Math.min(100 * attempt, 500);
           await new Promise(resolve => setTimeout(resolve, waitTime));
-          
+
           // Find existing deal
           const existingDealResp = await callBitrix('/crm.deal.list.json', {
             filter: { 'UF_CRM_1742556489': shopifyOrderId },
@@ -299,23 +299,23 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
           if (existingDealResp.result && existingDealResp.result.length > 0) {
             const dealId = existingDealResp.result[0].ID;
             console.log(`[SHOPIFY WEBHOOK] ✅ Found existing deal ${dealId} after duplicate error (attempt ${attempt})`);
-            
+
             // Verify the found deal
             const verifiedDeal = await verifyDeal(dealId);
-            
-            return { 
-              success: true, 
-              dealId, 
+
+            return {
+              success: true,
+              dealId,
               wasDuplicate: true,
               attempt,
               verifiedDeal
             };
           }
-          
+
           // Deal not found yet, might be in process - retry
           console.log(`[SHOPIFY WEBHOOK] Deal not found yet after duplicate error, will retry`);
         }
-        
+
         // For validation errors, don't retry - log and throw
         if (errorInfo.type === 'VALIDATION') {
           console.error(`[SHOPIFY WEBHOOK] ❌ Validation error - stopping retries:`, {
@@ -329,7 +329,7 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
           error.errorDetails = errorInfo.details;
           throw error;
         }
-        
+
         // For permission errors, don't retry - log and throw
         if (errorInfo.type === 'PERMISSION') {
           console.error(`[SHOPIFY WEBHOOK] ❌ Permission error - stopping retries:`, {
@@ -346,11 +346,11 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
 
       // If not a duplicate error, throw to be handled by retry logic
       throw new Error(`Failed to create deal: ${JSON.stringify(dealAddResp)}`);
-      
+
     } catch (error) {
       const errorType = error.errorType || 'UNKNOWN';
       const errorMsg = error.message.toLowerCase();
-      
+
       // Don't retry validation or permission errors
       if (errorType === 'VALIDATION' || errorType === 'PERMISSION') {
         console.error(`[SHOPIFY WEBHOOK] ❌ ${errorType} error - not retrying:`, {
@@ -361,18 +361,18 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
         });
         throw error;
       }
-      
+
       // Check if error message indicates duplicate
-      const isDuplicateInMessage = 
-        errorMsg.includes('duplicate') || 
+      const isDuplicateInMessage =
+        errorMsg.includes('duplicate') ||
         errorMsg.includes('already exists') ||
         errorMsg.includes('уже существует');
-      
+
       if (isDuplicateInMessage) {
         // Wait and retry finding existing deal
         const waitTime = Math.min(200 * attempt, 1000);
         await new Promise(resolve => setTimeout(resolve, waitTime));
-        
+
         const existingDealResp = await callBitrix('/crm.deal.list.json', {
           filter: { 'UF_CRM_1742556489': shopifyOrderId },
           select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
@@ -381,13 +381,13 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
         if (existingDealResp.result && existingDealResp.result.length > 0) {
           const dealId = existingDealResp.result[0].ID;
           console.log(`[SHOPIFY WEBHOOK] ✅ Found existing deal ${dealId} from error message (attempt ${attempt})`);
-          
+
           // Verify the found deal
           const verifiedDeal = await verifyDeal(dealId);
-          
-          return { 
-            success: true, 
-            dealId, 
+
+          return {
+            success: true,
+            dealId,
             wasDuplicate: true,
             attempt,
             verifiedDeal
@@ -413,7 +413,7 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
-  
+
   // Should never reach here, but just in case
   throw new Error(`Failed to create deal after ${maxRetries} attempts`);
 }
@@ -424,7 +424,7 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
  */
 async function handleOrderCreated(order) {
   const shopifyOrderId = String(order.id);
-  
+
   console.log(`[SHOPIFY WEBHOOK] Handling order created: ${order.name || order.id}`);
   console.log(`[SHOPIFY WEBHOOK] Order data:`, {
     id: order.id,
@@ -439,21 +439,21 @@ async function handleOrderCreated(order) {
   // This prevents race conditions when multiple webhooks arrive simultaneously
   let existingDeal = null;
   const maxDuplicateChecks = 3;
-  
+
   for (let checkAttempt = 1; checkAttempt <= maxDuplicateChecks; checkAttempt++) {
     try {
       console.log(`[SHOPIFY WEBHOOK] 🔍 Duplicate check attempt ${checkAttempt}/${maxDuplicateChecks} for order ${shopifyOrderId}`);
-      
-    const existingDealResp = await callBitrix('/crm.deal.list.json', {
-      filter: { 'UF_CRM_1742556489': shopifyOrderId },
-      select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
-    });
 
-    if (existingDealResp.result && existingDealResp.result.length > 0) {
+      const existingDealResp = await callBitrix('/crm.deal.list.json', {
+        filter: { 'UF_CRM_1742556489': shopifyOrderId },
+        select: ['ID', 'TITLE', 'OPPORTUNITY', 'STAGE_ID'],
+      });
+
+      if (existingDealResp.result && existingDealResp.result.length > 0) {
         // Found existing deal(s) - use the first one
         existingDeal = existingDealResp.result[0];
         console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists (check ${checkAttempt}): ${existingDeal.ID}`);
-        
+
         // If multiple deals found, log warning but use first
         if (existingDealResp.result.length > 1) {
           console.warn(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ MULTIPLE DEALS FOUND: ${existingDealResp.result.length} deals for order ${shopifyOrderId}!`);
@@ -462,7 +462,7 @@ async function handleOrderCreated(order) {
         }
         break; // Exit retry loop - deal exists
       }
-      
+
       // No deal found - wait a bit before next check (in case deal is being created)
       if (checkAttempt < maxDuplicateChecks) {
         const waitTime = 50 * checkAttempt; // 50ms, 100ms, 150ms
@@ -480,38 +480,38 @@ async function handleOrderCreated(order) {
 
   // ✅ If deal exists, update it instead of creating duplicate
   if (existingDeal) {
-      const dealId = existingDeal.ID;
-      
-      console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists for Shopify order ${shopifyOrderId}: Deal ID ${dealId}`);
-      console.log(`[SHOPIFY WEBHOOK] Skipping creation to prevent duplicate. Updating existing deal instead.`);
-      
-      // Update existing deal instead of creating duplicate
-      const { dealFields, productRows } = await mapShopifyOrderToBitrixDeal(order);
-      
-      // Upsert contact (non-blocking)
-      let contactId = null;
-      try {
-        const bitrixBase = getBitrixWebhookBase();
-        contactId = await upsertBitrixContact(bitrixBase, order);
-        if (contactId) {
-          dealFields.CONTACT_ID = contactId;
-        }
-      } catch (contactError) {
-        console.error('[SHOPIFY WEBHOOK] Contact upsert failed (non-blocking):', contactError);
+    const dealId = existingDeal.ID;
+
+    console.log(`[SHOPIFY WEBHOOK] ⚠️ Deal already exists for Shopify order ${shopifyOrderId}: Deal ID ${dealId}`);
+    console.log(`[SHOPIFY WEBHOOK] Skipping creation to prevent duplicate. Updating existing deal instead.`);
+
+    // Update existing deal instead of creating duplicate
+    const { dealFields, productRows } = await mapShopifyOrderToBitrixDeal(order);
+
+    // Upsert contact (non-blocking)
+    let contactId = null;
+    try {
+      const bitrixBase = getBitrixWebhookBase();
+      contactId = await upsertBitrixContact(bitrixBase, order);
+      if (contactId) {
+        dealFields.CONTACT_ID = contactId;
       }
+    } catch (contactError) {
+      console.error('[SHOPIFY WEBHOOK] Contact upsert failed (non-blocking):', contactError);
+    }
 
     // Validate before update
     const validation = validateDealFields(dealFields);
     if (validation.warnings.length > 0) {
       console.warn(`[SHOPIFY WEBHOOK] ⚠️ Validation warnings before update:`, validation.warnings);
-      }
+    }
 
-      // Update deal fields
-      await callBitrix('/crm.deal.update.json', {
-        id: dealId,
-        fields: dealFields,
-      });
-      console.log(`[SHOPIFY WEBHOOK] ✅ Existing deal ${dealId} updated`);
+    // Update deal fields
+    await callBitrix('/crm.deal.update.json', {
+      id: dealId,
+      fields: dealFields,
+    });
+    console.log(`[SHOPIFY WEBHOOK] ✅ Existing deal ${dealId} updated`);
 
     // Verify updated deal
     const verifiedDeal = await verifyDeal(dealId);
@@ -539,28 +539,34 @@ async function handleOrderCreated(order) {
       console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to store success operation (non-blocking):`, storeError);
     }
 
-      // Update product rows
-      if (productRows.length > 0) {
-        try {
-          await callBitrix('/crm.deal.productrows.set.json', {
-            id: dealId,
-            rows: productRows,
-          });
-          console.log(`[SHOPIFY WEBHOOK] Product rows updated for deal ${dealId}: ${productRows.length} rows`);
-        } catch (productRowsError) {
-          console.error(`[SHOPIFY WEBHOOK] Product rows update error (non-blocking):`, productRowsError);
-        }
+    // Update product rows
+    if (productRows.length > 0) {
+      try {
+        await callBitrix('/crm.deal.productrows.set.json', {
+          id: dealId,
+          rows: productRows,
+        });
+        console.log(`[SHOPIFY WEBHOOK] Product rows updated for deal ${dealId}: ${productRows.length} rows`);
+      } catch (productRowsError) {
+        console.error(`[SHOPIFY WEBHOOK] Product rows update error (non-blocking):`, productRowsError);
       }
+    }
 
-      return dealId;
+    return dealId;
   }
-  
+
   // ✅ No existing deal found after all checks - proceed with creation
   console.log(`[SHOPIFY WEBHOOK] ✅ No existing deal found after ${maxDuplicateChecks} checks, proceeding with creation`);
 
   // Map order to Bitrix deal
   const { dealFields, productRows } = await mapShopifyOrderToBitrixDeal(order);
-  
+
+  // ✅ VARIANT B: Force NEW stage for order CREATION (regardless of payment status)
+  // Updates will still use real stage mapping. This ensures new deals start in NEW stage.
+  const originalStageId = dealFields.STAGE_ID;
+  dealFields.STAGE_ID = 'NEW';
+  console.log(`[SHOPIFY WEBHOOK] ✅ Forced STAGE_ID to 'NEW' for creation (original from mapper: '${originalStageId}')`);
+
   console.log(`[SHOPIFY WEBHOOK] Mapped dealFields:`, JSON.stringify(dealFields, null, 2));
   console.log(`[SHOPIFY WEBHOOK] Mapped productRows count:`, productRows.length);
   if (productRows.length > 0) {
@@ -617,7 +623,7 @@ async function handleOrderCreated(order) {
     CURRENCY_ID: dealFields.CURRENCY_ID,
     UF_CRM_1742556489: dealFields.UF_CRM_1742556489
   });
-  
+
   let createResult;
   try {
     // ✅ Pass productRows to createDealWithRetry so they're included in crm.deal.add.json
@@ -634,7 +640,7 @@ async function handleOrderCreated(order) {
     });
     throw createError; // Re-throw to be caught by outer handler
   }
-  
+
   if (!createResult || !createResult.success) {
     const errorMsg = createResult?.error || 'Failed to create deal after retries';
     console.error(`[SHOPIFY WEBHOOK] ❌❌❌ CRITICAL: createResult indicates failure:`, createResult);
@@ -643,7 +649,7 @@ async function handleOrderCreated(order) {
 
   const dealId = createResult.dealId;
   const verifiedDeal = createResult.verifiedDeal;
-  
+
   if (createResult.wasDuplicate) {
     console.log(`[SHOPIFY WEBHOOK] ✅ Deal was duplicate, using existing: ${dealId} (found on attempt ${createResult.attempt})`);
   } else {
@@ -715,7 +721,7 @@ async function handleOrderUpdated(order) {
   // ✅ Use mapShopifyOrderToBitrixDeal to get ALL fields AND productRows consistently (same as create)
   // This ensures OPPORTUNITY, payment status, stage, productRows with PRODUCT_ID are all calculated correctly
   const { dealFields: mappedFields, productRows: mappedProductRows } = await mapShopifyOrderToBitrixDeal(order);
-  
+
   // ✅ Log product rows mapping for UPDATE (same as CREATE)
   console.log(`[SHOPIFY WEBHOOK] 📦 Product rows from orderMapper for UPDATE:`);
   console.log(`  - Total product rows: ${mappedProductRows.length}`);
@@ -729,13 +735,13 @@ async function handleOrderUpdated(order) {
       }
     });
   }
-  
+
   // ✅ Simplified logic (matching backup repository): Check cancellation and refunds
   const financialStatus = order?.financial_status || '';
   const statusLower = financialStatus?.toLowerCase() || '';
   const cancelledAt = order?.cancelled_at;
   const cancelReason = order?.cancel_reason;
-  
+
   // ✅ CRITICAL: Log cancelled_at value for debugging
   console.log(`[SHOPIFY WEBHOOK] 🔍 Cancellation check for order ${shopifyOrderId}:`);
   console.log(`  - cancelled_at: ${cancelledAt} (type: ${typeof cancelledAt})`);
@@ -768,7 +774,7 @@ async function handleOrderUpdated(order) {
   // ✅ CRITICAL: If order is empty (0 amount, no active items), it's ALWAYS cancelled
   // This covers cases where cancelled_at/cancel_reason might not be in webhook, but order is clearly cancelled
   const isCancelledByEmpty = isOrderEmpty;
-  
+
   const isCancelled = isCancelledByStatus || isCancelledByField || isCancelledByReason || isCancelledByEmpty;
 
   // ✅ SIMPLIFIED: Full refund - refunded → always LOSE (matching backup repository)
@@ -814,7 +820,7 @@ async function handleOrderUpdated(order) {
   console.log(`  - Order Total (UF_CRM_1741634415367): ${mappedFields.UF_CRM_1741634415367}`);
   console.log(`  - Paid Amount (UF_CRM_1741634439258): ${mappedFields.UF_CRM_1741634439258}`);
   console.log(`  - Financial Status: ${financialStatus} → Stage: ${mappedFields.STAGE_ID}`);
-  
+
   // ✅ CRITICAL: Verify cancellation/refund is mapped correctly
   // Note: orderMapper.js should already handle this, but we double-check here
   // Priority: cancelled > full refund > partial refund
@@ -832,10 +838,10 @@ async function handleOrderUpdated(order) {
     console.error(`[SHOPIFY WEBHOOK] Forcing STAGE_ID to C2:PREPARATION to fix the issue.`);
     mappedFields.STAGE_ID = 'C2:PREPARATION';
   }
-  
+
   const currentAmount = Number(deal.OPPORTUNITY || 0);
   const newAmount = Number(mappedFields.OPPORTUNITY || 0);
-  
+
   console.log(`[SHOPIFY WEBHOOK] 💰 Amount comparison:`);
   console.log(`  - Current in Bitrix: ${currentAmount}`);
   console.log(`  - New from mapper (sum of active items): ${newAmount}`);
@@ -849,14 +855,14 @@ async function handleOrderUpdated(order) {
   // Priority: cancelled_at (HIGHEST) > cancelled > full refund > partial refund
   let correctStageId = mappedFields.STAGE_ID;
   let correctPaymentStatus = mappedFields.UF_CRM_1739183959976;
-  
+
   // ✅ HIGHEST PRIORITY: If cancelled_at is NOT empty -> it's CANCELLATION -> set status LOSE
   // Check multiple ways cancelled_at might be set (null, undefined, empty string, etc.)
   const hasCancelledAt = cancelledAt !== null && cancelledAt !== undefined && cancelledAt !== '';
   console.log(`[SHOPIFY WEBHOOK] 🔍 cancelled_at check result: hasCancelledAt=${hasCancelledAt}, cancelledAt="${cancelledAt}"`);
   console.log(`[SHOPIFY WEBHOOK] 🔍 Status checks: isCancelled=${isCancelled}, isFullRefund=${isFullRefund}, isPartialRefund=${isPartialRefund}`);
   console.log(`[SHOPIFY WEBHOOK] 🔍 Mapped STAGE_ID from orderMapper: "${mappedFields.STAGE_ID}"`);
-  
+
   if (hasCancelledAt) {
     correctStageId = 'LOSE';
     correctPaymentStatus = '58'; // Unpaid
@@ -877,7 +883,7 @@ async function handleOrderUpdated(order) {
     correctPaymentStatus = '60'; // 10% prepayment (частичная оплата)
     console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to C2:PREPARATION for partial refund order ${shopifyOrderId}`);
   }
-  
+
   console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctStageId: "${correctStageId}"`);
   console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctPaymentStatus: "${correctPaymentStatus}"`);
 
@@ -890,24 +896,24 @@ async function handleOrderUpdated(order) {
     UF_CRM_1741634415367: mappedFields.UF_CRM_1741634415367, // Order total
     UF_CRM_1741634439258: mappedFields.UF_CRM_1741634439258, // Paid amount
   };
-  
+
   // Update shipping price if present
   if (mappedFields.UF_CRM_67BEF8B2AA721 !== undefined) {
     fields.UF_CRM_67BEF8B2AA721 = mappedFields.UF_CRM_67BEF8B2AA721; // Delivery price
   }
-  
+
   // Update delivery method if present
   if (mappedFields.UF_CRM_1739183302609) {
     fields.UF_CRM_1739183302609 = mappedFields.UF_CRM_1739183302609; // Delivery method
   }
-  
+
   // Update order type if present
   if (mappedFields.UF_CRM_1739183268662) {
     fields.UF_CRM_1739183268662 = mappedFields.UF_CRM_1739183268662; // Order type
   }
-  
+
   // Note: CATEGORY_ID is immutable after creation, so we don't update it
-  
+
   // ✅ ALWAYS update deal fields (even if values are the same, ensures sync and triggers update event)
   console.log(`[SHOPIFY WEBHOOK] Updating deal ${dealId} with fields:`, Object.keys(fields));
   console.log(`[SHOPIFY WEBHOOK] Field values:`, {
@@ -922,20 +928,20 @@ async function handleOrderUpdated(order) {
     PaymentStatus: fields.UF_CRM_1739183959976,
     OPPORTUNITY: fields.OPPORTUNITY
   });
-  
+
   try {
     const updateResponse = await callBitrix('/crm.deal.update.json', {
       id: dealId,
       fields,
     });
-    
+
     console.log(`[SHOPIFY WEBHOOK] ✅ Bitrix API response:`, JSON.stringify(updateResponse, null, 2));
-    
+
     // ✅ CRITICAL: Check if Bitrix returned an error
     if (updateResponse && updateResponse.error) {
       console.error(`[SHOPIFY WEBHOOK] ❌ Bitrix API ERROR:`, updateResponse.error);
       console.error(`[SHOPIFY WEBHOOK] ❌ Error details:`, updateResponse.error_description || updateResponse.error_description);
-  } else {
+    } else {
       console.log(`[SHOPIFY WEBHOOK] ✅ Deal ${dealId} updated successfully`);
     }
   } catch (error) {
@@ -957,7 +963,7 @@ async function handleOrderUpdated(order) {
   // 4. ✅ ALWAYS update product rows (including shipping) to reflect any changes
   // ✅ Use productRows from mapShopifyOrderToBitrixDeal (already mapped above, no need to remap)
   const productRows = mappedProductRows || [];
-  
+
   console.log(`[SHOPIFY WEBHOOK] 📦 Updating product rows for deal ${dealId}:`);
   console.log(`  - Total product rows: ${productRows.length}`);
   console.log(`  - Line items in order: ${order.line_items?.length || 0}`);
@@ -970,18 +976,18 @@ async function handleOrderUpdated(order) {
       console.log(`  - ⚠️ WARNING: Some items were refunded/removed (${totalQuantity - totalCurrentQuantity} items removed)`);
     }
   }
-  
+
   // ✅ Update product rows with detailed logging (same format as CREATE)
   if (productRows.length > 0) {
     try {
       console.log(`[SHOPIFY WEBHOOK] 🔗 Updating ${productRows.length} product rows for deal ${dealId} via crm.deal.productrows.set.json`);
       console.log(`[SHOPIFY WEBHOOK]   First product row:`, JSON.stringify(productRows[0], null, 2));
-      
+
       const productRowsResp = await callBitrix('/crm.deal.productrows.set.json', {
         id: dealId, // ✅ dealId is now a number, not a string
         rows: productRows,
       });
-      
+
       if (productRowsResp.result === true || productRowsResp.result) {
         console.log(`[SHOPIFY WEBHOOK] ✅ Product rows successfully updated for deal ${dealId}`);
         // Log which products were linked
@@ -1011,7 +1017,7 @@ async function handleOrderUpdated(order) {
         productRowsCount: productRows.length
       });
     }
-    } else {
+  } else {
     // If no product rows (e.g., all items removed/refunded), clear rows to keep Bitrix in sync
     console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to update (all items may be refunded/removed). Clearing product rows in Bitrix.`);
     try {
@@ -1020,12 +1026,12 @@ async function handleOrderUpdated(order) {
         rows: [],
       });
       console.log(`[SHOPIFY WEBHOOK] ✅ Product rows cleared for deal ${dealId} (no active items)`);
-    try {
-      const rowsVerify = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
-      console.log(`[SHOPIFY WEBHOOK] ✅ Product rows verification after clear for deal ${dealId}:`, rowsVerify?.result || rowsVerify);
-    } catch (verifyErr) {
-      console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify product rows after clear for deal ${dealId}:`, verifyErr);
-    }
+      try {
+        const rowsVerify = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
+        console.log(`[SHOPIFY WEBHOOK] ✅ Product rows verification after clear for deal ${dealId}:`, rowsVerify?.result || rowsVerify);
+      } catch (verifyErr) {
+        console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify product rows after clear for deal ${dealId}:`, verifyErr);
+      }
     } catch (clearError) {
       console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to clear product rows:`, clearError);
     }
@@ -1062,7 +1068,7 @@ export default async function handler(req, res) {
     'x-shopify-topic': req.headers['x-shopify-topic'],
     'content-type': req.headers['content-type']
   });
-  
+
   if (req.method !== 'POST') {
     console.log(`[SHOPIFY WEBHOOK] ❌ Method not allowed: ${req.method}`);
     res.status(405).end('Method not allowed');
@@ -1097,7 +1103,7 @@ export default async function handler(req, res) {
   console.log(`[SHOPIFY WEBHOOK] Topic: ${topic || 'undefined'}`);
   console.log(`[SHOPIFY WEBHOOK] Order ID: ${order?.id || 'N/A'}`);
   console.log(`[SHOPIFY WEBHOOK] Order Name: ${order?.name || 'N/A'}`);
-  
+
   // ✅ CRITICAL: Log financial_status and cancellation/refund status for debugging
   const financialStatus = order?.financial_status || 'N/A';
   const statusLower = financialStatus?.toLowerCase() || '';
@@ -1105,7 +1111,7 @@ export default async function handler(req, res) {
   const isRefunded = statusLower === 'refunded';
   const isLost = isCancelled || isRefunded;
   console.log(`[SHOPIFY WEBHOOK] ⚠️ Financial Status: ${financialStatus} ${isLost ? `(${isCancelled ? 'CANCELLED/VOIDED' : 'REFUNDED'} - should update to LOSE)` : ''}`);
-  
+
   console.log(`[SHOPIFY WEBHOOK] Order Data Summary:`, {
     id: order?.id,
     name: order?.name,
@@ -1137,11 +1143,11 @@ export default async function handler(req, res) {
     // ✅ PROCESS: Handle order events (create or update)
     let dealId = null;
     try {
-    if (topic === 'orders/create') {
+      if (topic === 'orders/create') {
         console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/create event...`);
         dealId = await handleOrderCreated(order);
         console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/create event. Deal ID: ${dealId || 'N/A'}`);
-    } else if (topic === 'orders/updated') {
+      } else if (topic === 'orders/updated') {
         console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/updated event...`);
         dealId = await handleOrderUpdated(order);
         console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/updated event. Deal ID: ${dealId || 'N/A'}`);
@@ -1151,12 +1157,12 @@ export default async function handler(req, res) {
         console.log(`[SHOPIFY WEBHOOK] ⚠️ Cancellation webhook received - treating as update with cancelled status`);
         dealId = await handleOrderUpdated(order);
         console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/cancelled event. Deal ID: ${dealId || 'N/A'}`);
-    } else {
+      } else {
         // For other topics just log and return 200 (don't block)
         console.log(`[SHOPIFY WEBHOOK] ⚠️ Unhandled topic: ${topic}, skipping Bitrix processing`);
-    }
+      }
 
-    res.status(200).end('OK');
+      res.status(200).end('OK');
     } catch (handlerError) {
       // ✅ CRITICAL: Log detailed error information
       console.error(`[SHOPIFY WEBHOOK] ❌❌❌ CRITICAL ERROR in handler for topic "${topic}":`, handlerError);
@@ -1176,11 +1182,11 @@ export default async function handler(req, res) {
         errorCode: handlerError.code,
         shopifyOrderId: order?.id
       });
-      
+
       // Still return 200 to prevent Shopify from retrying (we'll handle errors internally)
       // But log extensively for debugging
-      res.status(200).json({ 
-        success: false, 
+      res.status(200).json({
+        success: false,
         error: handlerError.message,
         errorType: handlerError.errorType || 'UNKNOWN',
         orderId: order?.id,
@@ -1199,8 +1205,8 @@ export default async function handler(req, res) {
       orderName: order?.name
     });
     // Return 200 to prevent Shopify retries, but log error
-    res.status(200).json({ 
-      success: false, 
+    res.status(200).json({
+      success: false,
       error: 'Unexpected error',
       message: e.message,
       topic: topic
