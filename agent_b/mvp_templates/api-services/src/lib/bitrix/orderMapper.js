@@ -174,7 +174,12 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     0
   );
 
-  // Determine category based on order tags (pre-order tags → cat_8, otherwise cat_2)
+  // Determine category based on order source (POS vs Site) and tags (pre-order vs stock)
+  // Source detection: source_name === 'pos' or 'shopify_draft_order' → POS (shop)
+  // Otherwise → site
+  const sourceName = order.source_name?.toLowerCase() || '';
+  const isPOS = sourceName === 'pos' || sourceName === 'point_of_sale';
+
   const orderTags = Array.isArray(order.tags)
     ? order.tags
     : (order.tags ? String(order.tags).split(',').map(t => t.trim()) : []);
@@ -184,8 +189,19 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     preorderTags.some(preorderTag => tag.toLowerCase() === preorderTag.toLowerCase())
   );
 
-  const categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
-  console.log(`[ORDER MAPPER] Category determined: ${categoryId} (${hasPreorderTag ? 'Pre-order' : 'Stock'}) based on tags:`, orderTags);
+  // Category logic:
+  // POS + Stock → 0 (Stock in the shop)
+  // POS + Pre-order → 4 (Pre-order in the shop)
+  // Site + Stock → 2 (Stock site)
+  // Site + Pre-order → 8 (Pre-order site)
+  let categoryId;
+  if (isPOS) {
+    categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_SHOP_PREORDER : BITRIX_CONFIG.CATEGORY_SHOP_STOCK;
+  } else {
+    categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
+  }
+
+  console.log(`[ORDER MAPPER] Category determined: ${categoryId} (Source: ${isPOS ? 'POS' : 'Site'}, Type: ${hasPreorderTag ? 'Pre-order' : 'Stock'}) based on source_name: "${sourceName}", tags:`, orderTags);
 
   // Customer name
   const customerName = order.customer
