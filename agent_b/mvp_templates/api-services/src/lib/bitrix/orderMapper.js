@@ -556,9 +556,73 @@ export async function mapShopifyOrderToBitrixDeal(order) {
         }
       }
 
-      // No other fallbacks per requirement. If not found, skip row.
+      // ✅ ON-DEMAND PRODUCT CREATION: If product not found, auto-create in Bitrix
+      if (!productId && item.variant_id) {
+        console.log(`[ORDER MAPPER] 🔧 ON-DEMAND: Product not found, attempting to auto-create from variant_id: ${item.variant_id}`);
+
+        try {
+          const { callBitrix } = await import('./client.js');
+          const variantIdStr = String(item.variant_id);
+
+          // Check if product already exists by XML_ID (variant_id)
+          const existingProductResp = await callBitrix('/crm.product.list.json', {
+            filter: { 'XML_ID': variantIdStr },
+            select: ['ID', 'NAME', 'CODE', 'XML_ID']
+          });
+
+          if (existingProductResp.result && existingProductResp.result.length > 0) {
+            // Product exists by XML_ID
+            productId = existingProductResp.result[0].ID;
+            mappingMethod = 'xml_id_lookup';
+            console.log(`[ORDER MAPPER] ✅ ON-DEMAND: Found existing product by XML_ID: ${variantIdStr} -> Product ID: ${productId}`);
+          } else {
+            // Create new product in Bitrix
+            const sku = item.sku || '';
+            const price = parseFloat(item.price || 0);
+            const variantTitle = item.variant_title || '';
+            const productTitle = item.title || 'Unknown Product';
+            const fullTitle = variantTitle && variantTitle !== 'Default Title'
+              ? `${productTitle} - ${variantTitle}`
+              : productTitle;
+
+            const createProductResp = await callBitrix('/crm.product.add.json', {
+              fields: {
+                NAME: fullTitle,
+                CODE: sku || variantIdStr,
+                XML_ID: variantIdStr, // variant_id as XML_ID for mapping
+                PRICE: price,
+                CURRENCY_ID: 'EUR',
+                SECTION_ID: 38, // Main catalog section
+                ACTIVE: 'Y',
+                DESCRIPTION: `Auto-created from Shopify order. SKU: ${sku || 'N/A'}, variant_id: ${variantIdStr}`
+              }
+            });
+
+            if (createProductResp.result) {
+              productId = createProductResp.result;
+              mappingMethod = 'on_demand_created';
+              console.log(`[ORDER MAPPER] ✅ ON-DEMAND: Created new product: ${fullTitle} -> Product ID: ${productId}`);
+              console.log(JSON.stringify({
+                event: 'ON_DEMAND_PRODUCT_CREATED',
+                variantId: variantIdStr,
+                sku,
+                fullTitle,
+                price,
+                bitrixProductId: productId,
+                timestamp: new Date().toISOString()
+              }));
+            } else {
+              console.error(`[ORDER MAPPER] ❌ ON-DEMAND: Failed to create product:`, createProductResp.error || 'Unknown error');
+            }
+          }
+        } catch (onDemandError) {
+          console.error(`[ORDER MAPPER] ❌ ON-DEMAND: Error creating product:`, onDemandError.message);
+        }
+      }
+
+      // Final check - if still no productId, skip
       if (!productId) {
-        console.error(`[ORDER MAPPER] ❌❌❌ CRITICAL: NO PRODUCT_ID FOUND (SKU/XML_ID or variant_id required). Item: "${item.title || 'N/A'}" (SKU: "${item.sku || 'N/A'}", variant_id: ${item.variant_id || 'N/A'})`);
+        console.error(`[ORDER MAPPER] ❌❌❌ CRITICAL: NO PRODUCT_ID FOUND and auto-create failed. Item: "${item.title || 'N/A'}" (SKU: "${item.sku || 'N/A'}", variant_id: ${item.variant_id || 'N/A'})`);
         console.error(`[ORDER MAPPER]   ⚠️ This item will NOT be added to deal (no PRODUCT_ID available)`);
       }
 
