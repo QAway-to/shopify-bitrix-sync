@@ -4,7 +4,7 @@
  */
 
 import { callBitrix } from './client.js';
-import { updateSkuMapping, updateSkuMappingSilent, getCategoryByHandle, findProductIdBySku, findProductIdByVariantId, updateVariantIdMapping } from './mappingUtils.js';
+import { updateSkuMapping, updateSkuMappingSilent, getCategoryByHandle, getSectionIdByCategory, findProductIdBySku, findProductIdByVariantId, updateVariantIdMapping } from './mappingUtils.js';
 
 /**
  * Create product in Bitrix catalog
@@ -163,12 +163,12 @@ export async function findProductIdByTitle(title) {
 
   try {
     console.log(`[BITRIX PRODUCTS] 🔍 Searching in Bitrix API for product by title: "${title}"`);
-    
+
     // Extract base product name (remove size/variant info)
     // Example: "E-Certificate | Size: €30 | Brand: FBFC" -> "E-Certificate"
     const baseTitle = title.split('|')[0].trim();
     const cleanTitle = baseTitle.split('-')[0].trim(); // Remove variant info like "E-Certificate - 30"
-    
+
     // Try exact match first (full title)
     let response = await callBitrix('crm.product.list', {
       filter: { NAME: title },
@@ -221,16 +221,16 @@ export async function findProductIdByTitle(title) {
       const titleLower = title.toLowerCase();
       const baseTitleLower = baseTitle.toLowerCase();
       const cleanTitleLower = cleanTitle.toLowerCase();
-      
+
       const bestMatch = response.result.find(p => {
         const pName = p.NAME.toLowerCase();
-        return pName === titleLower || 
-               pName === baseTitleLower || 
-               pName === cleanTitleLower ||
-               pName.includes(cleanTitleLower) ||
-               cleanTitleLower.includes(pName);
+        return pName === titleLower ||
+          pName === baseTitleLower ||
+          pName === cleanTitleLower ||
+          pName.includes(cleanTitleLower) ||
+          cleanTitleLower.includes(pName);
       });
-      
+
       if (bestMatch) {
         const productId = parseInt(bestMatch.ID);
         console.log(`[BITRIX PRODUCTS] ✅ Found by partial match: "${title}" -> Product ID: ${productId} (matched: "${bestMatch.NAME}")`);
@@ -557,7 +557,7 @@ export async function syncCertificateVariant(variantData, handle, handleToProduc
           price: parseFloat(price) || 0,
           sku: sku
         });
-        
+
         // ✅ CRITICAL: Update mapping cache after creating product
         updateSkuMapping(sku, productId);
         console.log(`[BITRIX PRODUCTS] ✅ Updated mapping cache: ${sku} -> ${productId}`);
@@ -571,7 +571,7 @@ export async function syncCertificateVariant(variantData, handle, handleToProduc
       }
     } else {
       console.log(`[BITRIX PRODUCTS] Product exists: ${productName} (SKU: ${sku}, ID: ${productId})`);
-      
+
       // ✅ Ensure mapping is in cache (might have been found via API)
       updateSkuMapping(sku, productId);
     }
@@ -579,7 +579,7 @@ export async function syncCertificateVariant(variantData, handle, handleToProduc
     // 3. Sync inventory: compare Shopify quantity with Bitrix stock
     let documentId = null;
     const shopifyQty = inventory_quantity || 0;
-    
+
     // Get current stock from Bitrix
     const currentStock = await getCurrentStock(productId);
     const difference = shopifyQty - currentStock;
@@ -664,7 +664,7 @@ export async function syncProductVariant(productData, createNew = true, sectionI
     if (!productId) {
       if (createNew) {
         console.log(`[BITRIX PRODUCTS] Creating product: ${productName} (SKU: ${skuClean})`);
-        
+
         // Prepare product fields
         const productFields = {
           name: productName,
@@ -673,7 +673,7 @@ export async function syncProductVariant(productData, createNew = true, sectionI
         };
 
         productId = await createBitrixProduct(productFields, 14, sectionId);
-        
+
         // Update product with additional properties if available
         if (productData.brand || productData.category) {
           const updateFields = {};
@@ -683,7 +683,7 @@ export async function syncProductVariant(productData, createNew = true, sectionI
           if (productData.category) {
             updateFields.PROPERTY_104 = productData.category; // Category
           }
-          
+
           if (Object.keys(updateFields).length > 0) {
             try {
               await updateBitrixProductFields(productId, updateFields);
@@ -693,7 +693,7 @@ export async function syncProductVariant(productData, createNew = true, sectionI
             }
           }
         }
-        
+
         // ✅ CRITICAL: Update mapping cache after creating product
         updateSkuMapping(skuClean, productId);
         console.log(`[BITRIX PRODUCTS] ✅ Updated mapping cache: ${skuClean} -> ${productId}`);
@@ -707,7 +707,7 @@ export async function syncProductVariant(productData, createNew = true, sectionI
       }
     } else {
       console.log(`[BITRIX PRODUCTS] Product exists: ${productName} (SKU: ${skuClean}, ID: ${productId})`);
-      
+
       // ✅ Ensure mapping is in cache (might have been found via API)
       updateSkuMapping(skuClean, productId);
     }
@@ -716,7 +716,7 @@ export async function syncProductVariant(productData, createNew = true, sectionI
     let documentId = null;
     let documentType = null;
     const shopifyQty = qty || 0;
-    
+
     if (shopifyQty > 0) {
       // Get current stock from Bitrix
       const currentStock = await getCurrentStock(productId);
@@ -778,7 +778,7 @@ export async function syncProductVariant(productData, createNew = true, sectionI
  * @param {number} sectionId - Section ID (folder) where to create product
  * @returns {Promise<Object>} Sync result
  */
-export async function syncProductVariantOptimized(productData, createNew = true, sectionId = 32) {
+export async function syncProductVariantOptimized(productData, createNew = true, sectionId = null) {
   const { product_title, sku, price, qty, variant_id, variant_title } = productData;
 
   // variant_id is REQUIRED (unique identifier from Shopify)
@@ -792,7 +792,11 @@ export async function syncProductVariantOptimized(productData, createNew = true,
 
   const variantIdStr = String(variant_id);
   const skuClean = sku ? sku.trim() : null;
-  
+
+  // Auto-determine sectionId from SKU if not provided
+  // A-F → 36, G-M → 38, N-S → 40, T-Z → 42
+  const actualSectionId = sectionId || getSectionIdByCategory(skuClean || variantIdStr);
+
   // Build product name with variant_title (Size) if available
   // Use product_title if available, otherwise fallback to SKU or variant_id
   const baseName = product_title || skuClean || `Product ${variantIdStr}`;
@@ -811,7 +815,7 @@ export async function syncProductVariantOptimized(productData, createNew = true,
       if (createNew) {
         isNewProduct = true;
         console.log(`[BITRIX PRODUCTS] Creating product: ${productName} (variant_id: ${variantIdStr}, SKU: ${skuClean || 'N/A'})`);
-        
+
         // Extract color from variant_title or product_title if available
         let color = null;
         if (variant_title) {
@@ -832,8 +836,8 @@ export async function syncProductVariantOptimized(productData, createNew = true,
           color: color
         };
 
-        productId = await createBitrixProduct(productFields, 14, sectionId);
-        
+        productId = await createBitrixProduct(productFields, 14, actualSectionId);
+
         // Update product with additional properties if available
         if (productData.brand || productData.category) {
           const updateFields = {};
@@ -843,7 +847,7 @@ export async function syncProductVariantOptimized(productData, createNew = true,
           if (productData.category) {
             updateFields.PROPERTY_104 = productData.category;
           }
-          
+
           if (Object.keys(updateFields).length > 0) {
             try {
               await updateBitrixProductFields(productId, updateFields);
@@ -852,7 +856,7 @@ export async function syncProductVariantOptimized(productData, createNew = true,
             }
           }
         }
-        
+
         // Update mapping cache by variant_id (not SKU!)
         updateVariantIdMapping(variantIdStr, productId);
       } else {
@@ -862,16 +866,16 @@ export async function syncProductVariantOptimized(productData, createNew = true,
           error: 'Product not found and createNew=false'
         };
       }
-      } else {
-        // Ensure mapping is in cache by variant_id
-        updateVariantIdMapping(variantIdStr, productId);
-      }
+    } else {
+      // Ensure mapping is in cache by variant_id
+      updateVariantIdMapping(variantIdStr, productId);
+    }
 
     // 3. Sync inventory (OPTIMIZED: skip stock check for new products)
     let documentId = null;
     let documentType = null;
     const shopifyQty = qty || 0;
-    
+
     if (shopifyQty > 0) {
       if (isNewProduct) {
         // For new products, stock is 0, so difference = qty (OPTIMIZED: skip API call)

@@ -20,14 +20,14 @@ function initServerModules() {
   if (serverModulesInitialized || !isServer) {
     return;
   }
-  
+
   try {
     // Dynamic import for server-only modules
     // This will be evaluated at runtime on server only
     const fs = eval('require')('fs');
     const path = eval('require')('path');
     const url = eval('require')('url');
-    
+
     readFileSync = fs.readFileSync;
     writeFileSync = fs.writeFileSync;
     existsSync = fs.existsSync;
@@ -35,14 +35,14 @@ function initServerModules() {
     join = path.join;
     dirname = path.dirname;
     fileURLToPath = url.fileURLToPath;
-    
+
     // Get current directory in ES modules
     const __filename = fileURLToPath(import.meta.url);
     __dirname = dirname(__filename);
-    
+
     // Mappings directory - use .data for persistent storage on Render (same as other data)
     MAPPINGS_DIR = join(process.cwd(), '.data', 'mappings');
-    
+
     serverModulesInitialized = true;
   } catch (error) {
     // If initialization fails, set to null
@@ -82,8 +82,8 @@ export function getCategoryByHandle(handleOrSku) {
   const firstChar = handleOrSku.toLowerCase().charAt(0);
 
   // Certificates (special category)
-  if (handleOrSku.includes('certificate') || handleOrSku.startsWith('e-certificate') || 
-      handleOrSku.startsWith('gift-certificate') || handleOrSku.startsWith('printed-gift')) {
+  if (handleOrSku.includes('certificate') || handleOrSku.startsWith('e-certificate') ||
+    handleOrSku.startsWith('gift-certificate') || handleOrSku.startsWith('printed-gift')) {
     return 'certificates';
   }
 
@@ -103,6 +103,31 @@ export function getCategoryByHandle(handleOrSku) {
 }
 
 /**
+ * Get Bitrix Section ID by category or SKU
+ * Maps alphabetical categories to Bitrix folder sections
+ * @param {string} categoryOrSku - Category name or SKU
+ * @returns {number} Section ID in Bitrix catalog
+ */
+export function getSectionIdByCategory(categoryOrSku) {
+  // If passed a SKU, first get the category
+  let category = categoryOrSku;
+  if (!categoryOrSku?.startsWith('category-') && categoryOrSku !== 'certificates') {
+    category = getCategoryByHandle(categoryOrSku);
+  }
+
+  // Map category to section ID
+  const sectionMap = {
+    'category-a-f': 36,
+    'category-g-m': 38,
+    'category-n-s': 40,
+    'category-t-z': 42,
+    'certificates': 38 // Default to G-M section for certificates
+  };
+
+  return sectionMap[category] || 38; // Default to 38 (G-M) if unknown
+}
+
+/**
  * Load mapping file for a category
  * @param {string} category - Category name
  * @returns {Object} Mapping object (SKU -> Product ID)
@@ -112,9 +137,9 @@ export function loadCategoryMapping(category) {
   if (!isServer || !MAPPINGS_DIR) {
     return {};
   }
-  
+
   const filePath = join(MAPPINGS_DIR, `${category}.json`);
-  
+
   if (!existsSync(filePath)) {
     console.warn(`[MAPPING UTILS] Mapping file not found: ${filePath}, returning empty mapping`);
     return {};
@@ -123,7 +148,7 @@ export function loadCategoryMapping(category) {
   try {
     const content = readFileSync(filePath, 'utf-8');
     const mapping = JSON.parse(content);
-    
+
     // Remove metadata fields
     const cleanMapping = {};
     for (const [key, value] of Object.entries(mapping)) {
@@ -131,7 +156,7 @@ export function loadCategoryMapping(category) {
         cleanMapping[key] = value;
       }
     }
-    
+
     return cleanMapping;
   } catch (error) {
     console.error(`[MAPPING UTILS] Error loading mapping ${category}:`, error);
@@ -165,18 +190,18 @@ export function saveCategoryMapping(category, mapping) {
   if (isServer && !serverModulesInitialized) {
     initServerModules();
   }
-  
+
   // Client-side: no-op
   if (!isServer || !MAPPINGS_DIR) {
     console.warn(`[MAPPING UTILS] Cannot save mapping on client side`);
     return;
   }
-  
+
   const filePath = join(MAPPINGS_DIR, `${category}.json`);
-  
+
   // Add metadata
   const mappingWithMetadata = {
-    _comment: category === 'certificates' 
+    _comment: category === 'certificates'
       ? 'Certificate products mapping - SKU to Bitrix Product ID'
       : `Products ${category} category mapping - SKU to Bitrix Product ID`,
     _updated: new Date().toISOString().split('T')[0],
@@ -207,7 +232,7 @@ export function updateSkuMapping(sku, productId) {
   const mapping = loadCategoryMapping(category);
   mapping[sku] = productId;
   saveCategoryMapping(category, mapping);
-  
+
   console.log(`[MAPPING UTILS] ✅ Updated mapping: ${sku} -> ${productId} in ${category}`);
 }
 
@@ -227,9 +252,102 @@ export function updateSkuMappingSilent(sku, productId) {
 }
 
 /**
+ * Add or update variant_id mapping in category file
+ * @param {string|number} variant_id - Shopify variant_id
+ * @param {number} productId - Bitrix Product ID
+ */
+export function updateVariantIdMapping(variant_id, productId) {
+  const variantIdStr = String(variant_id);
+  // Use first character of variant_id to determine category (fallback to category-a-f)
+  const category = getCategoryByHandle(variantIdStr) || 'category-a-f';
+
+  const mapping = loadCategoryMapping(category);
+  mapping[variantIdStr] = productId;
+  saveCategoryMapping(category, mapping);
+
+  console.log(`[MAPPING UTILS] ✅ Updated variant_id mapping: ${variantIdStr} -> ${productId} in ${category}`);
+}
+
+/**
+ * Find Product ID by variant_id (Shopify unique identifier) using hybrid approach (cache + Bitrix API)
+ * @param {string|number} variant_id - Shopify variant_id to find
+ * @returns {Promise<number|null>} Product ID or null if not found
+ */
+export async function findProductIdByVariantId(variant_id) {
+  if (!variant_id) {
+    return null;
+  }
+
+  const variantIdStr = String(variant_id);
+
+  // 1. Try cache first (fast) - check variant_id mapping
+  const category = getCategoryByHandle(variantIdStr);
+  if (category) {
+    const mapping = loadCategoryMapping(category);
+    if (mapping[variantIdStr]) {
+      console.log(`[MAPPING UTILS] ✅ Found in cache: variant_id ${variantIdStr} -> ${mapping[variantIdStr]}`);
+      return parseInt(mapping[variantIdStr]);
+    }
+  }
+
+  // 2. Try all mappings (fallback)
+  const allMappings = loadAllMappings();
+  if (allMappings[variantIdStr]) {
+    console.log(`[MAPPING UTILS] ✅ Found in all mappings: variant_id ${variantIdStr} -> ${allMappings[variantIdStr]}`);
+    if (category) {
+      updateVariantIdMapping(variantIdStr, allMappings[variantIdStr]);
+    }
+    return parseInt(allMappings[variantIdStr]);
+  }
+
+  // 3. Try Bitrix API (dynamic lookup by XML_ID = variant_id)
+  try {
+    console.log(`[MAPPING UTILS] 🔍 Searching in Bitrix API for variant_id: ${variantIdStr}`);
+    const response = await callBitrix('crm.product.list', {
+      filter: { XML_ID: variantIdStr },
+      select: ['ID', 'NAME', 'CODE', 'XML_ID']
+    });
+
+    console.log(`[MAPPING UTILS] 📋 Bitrix API response for XML_ID="${variantIdStr}":`, JSON.stringify({
+      hasResult: !!response.result,
+      resultLength: response.result?.length || 0,
+      result: response.result || null,
+      error: response.error || null
+    }, null, 2));
+
+    if (response.result && response.result.length > 0) {
+      const product = response.result[0];
+      const productId = parseInt(product.ID);
+      console.log(`[MAPPING UTILS] ✅ Found in Bitrix API: variant_id ${variantIdStr} -> ${productId}`);
+      console.log(`[MAPPING UTILS]   Product details: ID=${productId}, NAME="${product.NAME}", CODE="${product.CODE}", XML_ID="${product.XML_ID}"`);
+
+      // Update cache for future lookups
+      if (category) {
+        updateVariantIdMapping(variantIdStr, productId);
+      }
+
+      return productId;
+    } else {
+      console.warn(`[MAPPING UTILS] ⚠️ No products found in Bitrix with XML_ID="${variantIdStr}"`);
+      console.warn(`[MAPPING UTILS]   Required: Product in Bitrix must have XML_ID field = "${variantIdStr}"`);
+      if (response.error) {
+        console.error(`[MAPPING UTILS]   Bitrix API error:`, response.error);
+      }
+    }
+  } catch (error) {
+    console.error(`[MAPPING UTILS] ❌ Error searching Bitrix API for variant_id ${variantIdStr}:`, error);
+    console.error(`[MAPPING UTILS]   Error details:`, JSON.stringify(error, null, 2));
+  }
+
+  console.warn(`[MAPPING UTILS] ⚠️ Product not found for variant_id: ${variantIdStr}`);
+  return null;
+}
+
+/**
  * Find Product ID by SKU using hybrid approach (cache + Bitrix API)
  * @param {string} sku - SKU to find
  * @returns {Promise<number|null>} Product ID or null if not found
+ * @deprecated Use findProductIdByVariantId instead for new products
  */
 export async function findProductIdBySku(sku) {
   if (!sku || typeof sku !== 'string') {
@@ -257,27 +375,43 @@ export async function findProductIdBySku(sku) {
     return parseInt(allMappings[sku]);
   }
 
-  // 3. Try Bitrix API (dynamic lookup)
+  // 3. Try Bitrix API (dynamic lookup by CODE = SKU)
   try {
     console.log(`[MAPPING UTILS] 🔍 Searching in Bitrix API for SKU: ${sku}`);
     const response = await callBitrix('crm.product.list', {
-      filter: { XML_ID: sku },
+      filter: { CODE: sku },
       select: ['ID', 'NAME', 'CODE', 'XML_ID']
     });
 
+    console.log(`[MAPPING UTILS] 📋 Bitrix API response for CODE="${sku}":`, JSON.stringify({
+      hasResult: !!response.result,
+      resultLength: response.result?.length || 0,
+      result: response.result || null,
+      error: response.error || null
+    }, null, 2));
+
     if (response.result && response.result.length > 0) {
-      const productId = parseInt(response.result[0].ID);
+      const product = response.result[0];
+      const productId = parseInt(product.ID);
       console.log(`[MAPPING UTILS] ✅ Found in Bitrix API: ${sku} -> ${productId}`);
-      
+      console.log(`[MAPPING UTILS]   Product details: ID=${productId}, NAME="${product.NAME}", CODE="${product.CODE}", XML_ID="${product.XML_ID}"`);
+
       // Update cache for future lookups
       if (category) {
         updateSkuMapping(sku, productId);
       }
-      
+
       return productId;
+    } else {
+      console.warn(`[MAPPING UTILS] ⚠️ No products found in Bitrix with CODE="${sku}"`);
+      console.warn(`[MAPPING UTILS]   Required: Product in Bitrix must have CODE field = "${sku}"`);
+      if (response.error) {
+        console.error(`[MAPPING UTILS]   Bitrix API error:`, response.error);
+      }
     }
   } catch (error) {
     console.error(`[MAPPING UTILS] ❌ Error searching Bitrix API for ${sku}:`, error);
+    console.error(`[MAPPING UTILS]   Error details:`, JSON.stringify(error, null, 2));
   }
 
   console.warn(`[MAPPING UTILS] ⚠️ Product not found for SKU: ${sku}`);

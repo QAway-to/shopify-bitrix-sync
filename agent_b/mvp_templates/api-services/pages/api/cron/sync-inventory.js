@@ -1,13 +1,11 @@
 // Server-side cron endpoint for automatic inventory synchronization
 // Runs hourly via external cron service (e.g., Render cron, cron-job.org)
 // Syncs only products with qty > 0 from Shopify (source of truth) to Bitrix
+// Section ID is auto-determined from SKU first letter: A-F→36, G-M→38, N-S→40, T-Z→42
 
 import { getAllProductsFromShopify } from '../../../src/lib/shopify/inventory.js';
 import { syncProductVariantOptimized, getCurrentStock, createOutgoingDocument } from '../../../src/lib/bitrix/products.js';
 import { findProductIdBySku } from '../../../src/lib/bitrix/mappingUtils.js';
-
-// Section ID where products are stored in Bitrix (38 = main catalog)
-const DEFAULT_SECTION_ID = 38;
 
 // Rate limiting settings
 const BATCH_SIZE = 50;
@@ -70,10 +68,11 @@ export default async function handler(req, res) {
             for (const variant of batch) {
                 try {
                     // Sync variant to Bitrix (create if not exists, update stock)
+                    // Section ID is auto-determined from SKU first letter
                     const syncResult = await syncProductVariantOptimized(
                         variant,
-                        true, // createNew = true (create products that don't exist)
-                        DEFAULT_SECTION_ID
+                        true // createNew = true (create products that don't exist)
+                        // sectionId not passed - auto-determined from SKU
                     );
 
                     results.summary.synced++;
