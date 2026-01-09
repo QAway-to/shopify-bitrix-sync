@@ -871,6 +871,26 @@ export async function syncProductVariantOptimized(productData, createNew = true,
       updateVariantIdMapping(variantIdStr, productId);
     }
 
+    // 2.5. Sync price for existing products (if price changed)
+    let priceUpdated = false;
+    const shopifyPrice = parseFloat(price) || 0;
+
+    if (!isNewProduct && productId) {
+      try {
+        // Get current price from Bitrix
+        const productResp = await callBitrix('crm.product.get', { id: productId });
+        const currentPrice = parseFloat(productResp?.result?.PRICE || 0);
+
+        if (Math.abs(currentPrice - shopifyPrice) > 0.01) { // Price differs (with tolerance for float comparison)
+          console.log(`[BITRIX PRODUCTS] 💰 Price update: ${currentPrice} → ${shopifyPrice} for product ${productId}`);
+          await updateBitrixProductFields(productId, { PRICE: shopifyPrice });
+          priceUpdated = true;
+        }
+      } catch (priceError) {
+        console.warn(`[BITRIX PRODUCTS] ⚠️ Could not sync price for product ${productId}:`, priceError.message);
+      }
+    }
+
     // 3. Sync inventory (OPTIMIZED: skip stock check for new products)
     let documentId = null;
     let documentType = null;
@@ -921,7 +941,9 @@ export async function syncProductVariantOptimized(productData, createNew = true,
       productName: productName,
       quantity: shopifyQty,
       documentId: documentId,
-      documentType: documentType
+      documentType: documentType,
+      created: isNewProduct,
+      priceUpdated: priceUpdated
     };
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] ❌ Error syncing product ${skuClean}:`, error);

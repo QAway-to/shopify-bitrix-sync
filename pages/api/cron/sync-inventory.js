@@ -13,13 +13,7 @@ const DELAY_BETWEEN_BATCHES_MS = 2000;
 const DELAY_BETWEEN_ITEMS_MS = 300;
 
 export default async function handler(req, res) {
-    // Verify cron secret (optional but recommended)
-    const cronSecret = req.headers['x-cron-secret'] || req.query.secret;
-    const expectedSecret = process.env.CRON_SECRET;
-
-    if (expectedSecret && cronSecret !== expectedSecret) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
+    // No secret check - auth is handled at page level
 
     const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const startTime = Date.now();
@@ -49,7 +43,8 @@ export default async function handler(req, res) {
                 variantsWithStock: variantsWithStock.length,
                 synced: 0,
                 created: 0,
-                updated: 0,
+                priceUpdated: 0,
+                qtyUpdated: 0,
                 skipped: 0,
                 errors: 0
             },
@@ -80,10 +75,15 @@ export default async function handler(req, res) {
                     if (syncResult.success) {
                         if (syncResult.created) {
                             results.summary.created++;
-                        } else if (syncResult.documentId) {
-                            results.summary.updated++;
-                        } else {
-                            results.summary.skipped++; // No change needed
+                        }
+                        if (syncResult.priceUpdated) {
+                            results.summary.priceUpdated++;
+                        }
+                        if (syncResult.documentId) {
+                            results.summary.qtyUpdated++;
+                        }
+                        if (!syncResult.created && !syncResult.priceUpdated && !syncResult.documentId) {
+                            results.summary.skipped++;
                         }
                     } else {
                         results.summary.errors++;

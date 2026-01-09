@@ -495,32 +495,36 @@ export default function ShopifyPage() {
     }
   };
 
-  // Sync certificates (update quantities only)
-  const handleSyncCertificates = async () => {
+  // Sync all inventory (products with qty > 0, price updates)
+  const handleSyncInventory = async () => {
     setIsSyncingCertificates(true);
     setSyncResult(null);
     setError(null);
 
     try {
-      const response = await fetch('/api/sync/certificates', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+      const response = await fetch('/api/cron/sync-inventory', {
+        method: 'GET',
       });
 
       const data = await response.json();
 
       if (data.success) {
-        setSyncResult(data);
-        console.log('[SYNC] Certificates synced successfully:', data);
+        // Format summary for display
+        const summary = data.summary || {};
+        const resultMessage = `✅ Синхронизировано: ${summary.synced || 0} | Создано: ${summary.created || 0} | Цена: ${summary.priceUpdated || 0} | Кол-во: ${summary.qtyUpdated || 0} | Пропущено: ${summary.skipped || 0} | Ошибок: ${summary.errors || 0}`;
+        setSyncResult({
+          success: true,
+          message: resultMessage,
+          summary: summary
+        });
+        console.log('[SYNC] Inventory synced successfully:', data);
       } else {
-        setError(data.error || 'Failed to sync certificates');
+        setError(data.error || data.message || 'Failed to sync inventory');
         setSyncResult(data);
       }
     } catch (err) {
-      console.error('[SYNC] Error syncing certificates:', err);
-      setError(err.message || 'Failed to sync certificates');
+      console.error('[SYNC] Error syncing inventory:', err);
+      setError(err.message || 'Failed to sync inventory');
     } finally {
       setIsSyncingCertificates(false);
     }
@@ -893,7 +897,7 @@ export default function ShopifyPage() {
 
           <div style={{ marginBottom: '16px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <button
-              onClick={handleSyncCertificates}
+              onClick={handleSyncInventory}
               disabled={isSyncingCertificates}
               style={{
                 background: isSyncingCertificates ? '#6b7280' : '#059669',
