@@ -288,7 +288,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   // Map source name to source ID
   const sourceId = sourceNameToSourceId(order.source_name);
   // SOURCE_DESCRIPTION: use actual source_name if available, otherwise default to 'shopify_draft_order'
-  const sourceName = order.source_name || 'shopify_draft_order';
+  const sourceDescription = order.source_name || 'shopify_draft_order';
 
   // Determine order type based on source and pre-order status
   // Bitrix field: UF_CRM_1739183268662 (enumeration)
@@ -348,7 +348,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     CATEGORY_ID: categoryId, // 2 = Stock (site), 8 = Pre-order (site) - REQUIRED for create, immutable after
     STAGE_ID: stageId,
     SOURCE_ID: sourceId || 'WEB', // Default to 'WEB' if not mapped
-    SOURCE_DESCRIPTION: sourceName || 'shopify_draft_order',
+    SOURCE_DESCRIPTION: sourceDescription || 'shopify_draft_order',
 
     // ✅ Key to Shopify order - REAL Bitrix field
     // UF_CRM_1742556489 (Shopify number) - store stable order.id (numeric Shopify order ID)
