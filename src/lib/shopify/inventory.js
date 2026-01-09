@@ -185,7 +185,7 @@ export async function getCertificatesData() {
       const variants = await getProductVariantsByHandle(handle);
       certificatesData[handle] = variants;
       console.log(`[SHOPIFY INVENTORY] Found ${variants.length} variants for ${handle}`);
-      
+
       // Rate limiting
       await new Promise(resolve => setTimeout(resolve, 300));
     } catch (error) {
@@ -201,18 +201,18 @@ export async function getCertificatesData() {
  * Get all products from Shopify API with pagination
  * @returns {Promise<Array>} Array of all products with variants
  */
-async function getAllProductsFromShopify() {
+export async function getAllProductsFromShopify() {
   const allProducts = [];
   let pageInfo = null;
   let hasNextPage = true;
 
   try {
     const baseUrl = getShopifyAdminBase();
-    
+
     while (hasNextPage) {
       const url = new URL(`${baseUrl}/products.json`);
       url.searchParams.append('limit', '250'); // Max limit per page
-      
+
       if (pageInfo) {
         url.searchParams.append('page_info', pageInfo);
       }
@@ -298,7 +298,7 @@ export async function getCategoryProducts(category) {
 
   try {
     console.log(`[SHOPIFY INVENTORY] Loading products from shopify_all_and_qty_not_zero.json for category ${category}...`);
-    
+
     // Server-only file reading
     const isServer = typeof window === 'undefined';
     if (!isServer) {
@@ -307,7 +307,7 @@ export async function getCategoryProducts(category) {
 
     const fs = eval('require')('fs');
     const path = eval('require')('path');
-    
+
     // Try to read from .data directory first (Render server), then fallback to PythonProject
     const dataDir = path.join(process.cwd(), '.data');
     const pythonProjectPath = path.join(process.cwd(), '..', 'PythonProject');
@@ -325,7 +325,7 @@ export async function getCategoryProducts(category) {
         if (fs.existsSync(filePath)) {
           const fileContent = fs.readFileSync(filePath, 'utf-8');
           allProducts = JSON.parse(fileContent);
-          
+
           // Normalize field names: in JSON file it's 'title', but we use 'product_title' in code
           allProducts = allProducts.map(product => {
             if (product.title && !product.product_title) {
@@ -333,7 +333,7 @@ export async function getCategoryProducts(category) {
             }
             return product;
           });
-          
+
           console.log(`[SHOPIFY INVENTORY] Loaded ${allProducts.length} products from ${filePath}`);
           fileRead = true;
           break;
@@ -352,13 +352,13 @@ export async function getCategoryProducts(category) {
       if (!product.sku || !product.sku.trim()) {
         return false;
       }
-      
+
       const productCategory = getCategoryByHandle(product.sku);
       return productCategory === category;
     });
 
     console.log(`[SHOPIFY INVENTORY] Found ${categoryProducts.length} products for category ${category} out of ${allProducts.length} total`);
-    
+
     return categoryProducts;
   } catch (error) {
     console.error(`[SHOPIFY INVENTORY] Error loading category products for ${category}:`, error);

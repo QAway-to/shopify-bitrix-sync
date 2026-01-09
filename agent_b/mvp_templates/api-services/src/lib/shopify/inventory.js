@@ -3,7 +3,8 @@
  * Handles fetching product variants and inventory quantities from Shopify
  */
 
-import { getShopifyAdminBase } from './adminClient.js';
+import { getShopifyAdminBase, getShopifyAdminToken } from './adminClient.js';
+import { getCategoryByHandle } from '../bitrix/mappingUtils.js';
 
 /**
  * Get product variants with inventory by product title
@@ -34,7 +35,7 @@ export async function getProductVariantsByTitle(productTitle) {
 
       const fetchResponse = await fetch(url.toString(), {
         headers: {
-          'X-Shopify-Access-Token': process.env.SHOPIFY_24_ADMIN,
+          'X-Shopify-Access-Token': getShopifyAdminToken(),
           'Content-Type': 'application/json'
         }
       });
@@ -123,7 +124,7 @@ export async function getProductVariantsByHandle(handle) {
     const fetchResponse = await fetch(url.toString(), {
       method: 'GET',
       headers: {
-        'X-Shopify-Access-Token': process.env.SHOPIFY_24_ADMIN,
+        'X-Shopify-Access-Token': getShopifyAdminToken(),
         'Content-Type': 'application/json'
       }
     });
@@ -184,7 +185,7 @@ export async function getCertificatesData() {
       const variants = await getProductVariantsByHandle(handle);
       certificatesData[handle] = variants;
       console.log(`[SHOPIFY INVENTORY] Found ${variants.length} variants for ${handle}`);
-      
+
       // Rate limiting
       await new Promise(resolve => setTimeout(resolve, 300));
     } catch (error) {
@@ -194,5 +195,174 @@ export async function getCertificatesData() {
   }
 
   return certificatesData;
+}
+
+/**
+ * Get all products from Shopify API with pagination
+ * @returns {Promise<Array>} Array of all products with variants
+ */
+export async function getAllProductsFromShopify() {
+  const allProducts = [];
+  let pageInfo = null;
+  let hasNextPage = true;
+
+  try {
+    const baseUrl = getShopifyAdminBase();
+
+    while (hasNextPage) {
+      const url = new URL(`${baseUrl}/products.json`);
+      url.searchParams.append('limit', '250'); // Max limit per page
+
+      if (pageInfo) {
+        url.searchParams.append('page_info', pageInfo);
+      }
+
+      const fetchResponse = await fetch(url.toString(), {
+        headers: {
+          'X-Shopify-Access-Token': getShopifyAdminToken(),
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!fetchResponse.ok) {
+        const errorText = await fetchResponse.text();
+        throw new Error(`Shopify API error (${fetchResponse.status}): ${errorText}`);
+      }
+
+      const data = await fetchResponse.json();
+      const products = data.products || [];
+
+      // Flatten products into variants array
+      for (const product of products) {
+        for (const variant of product.variants || []) {
+          allProducts.push({
+            product_id: product.id,
+            product_handle: product.handle,
+            product_title: product.title,
+            variant_id: variant.id,
+            variant_title: variant.title || '',
+            sku: variant.sku || null,
+            price: variant.price || '0.00',
+            qty: variant.inventory_quantity || 0,
+            inventory_item_id: variant.inventory_item_id || null,
+            status: variant.inventory_quantity !== null ? 'active' : 'inactive',
+            // Try to extract brand and category from product metafields or tags
+            brand: product.vendor || null,
+            category: product.product_type || null
+          });
+        }
+      }
+
+      // Check for pagination
+      const linkHeader = fetchResponse.headers.get('Link');
+      hasNextPage = false;
+      pageInfo = null;
+
+      if (linkHeader) {
+        const links = linkHeader.split(', ');
+        for (const link of links) {
+          if (link.includes('rel="next"')) {
+            const urlMatch = link.match(/<([^>]+)>/);
+            if (urlMatch) {
+              const nextUrl = new URL(urlMatch[1]);
+              pageInfo = nextUrl.searchParams.get('page_info');
+              hasNextPage = !!pageInfo;
+            }
+          }
+        }
+      }
+
+      // Rate limiting: wait between requests
+      if (hasNextPage) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    console.log(`[SHOPIFY INVENTORY] Fetched ${allProducts.length} product variants from Shopify`);
+    return allProducts;
+  } catch (error) {
+    console.error(`[SHOPIFY INVENTORY] Error fetching all products from Shopify:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get products for a specific category from shopify_all_and_qty_not_zero.json file
+ * @param {string} category - Category name (e.g., 'category-a-f')
+ * @returns {Promise<Array>} Array of products filtered by category
+ */
+export async function getCategoryProducts(category) {
+  if (!category || typeof category !== 'string') {
+    throw new Error('Category is required');
+  }
+
+  try {
+    console.log(`[SHOPIFY INVENTORY] Loading products from shopify_all_and_qty_not_zero.json for category ${category}...`);
+
+    // Server-only file reading
+    const isServer = typeof window === 'undefined';
+    if (!isServer) {
+      throw new Error('getCategoryProducts can only be called on the server');
+    }
+
+    const fs = eval('require')('fs');
+    const path = eval('require')('path');
+
+    // Try to read from .data directory first (Render server), then fallback to PythonProject
+    const dataDir = path.join(process.cwd(), '.data');
+    const pythonProjectPath = path.join(process.cwd(), '..', 'PythonProject');
+    const filePaths = [
+      path.join(dataDir, 'shopify_all_and_qty_not_zero.json'),
+      path.join(pythonProjectPath, 'shopify_all_and_qty_not_zero.json'),
+      path.join(process.cwd(), 'shopify_all_and_qty_not_zero.json')
+    ];
+
+    let allProducts = [];
+    let fileRead = false;
+
+    for (const filePath of filePaths) {
+      try {
+        if (fs.existsSync(filePath)) {
+          const fileContent = fs.readFileSync(filePath, 'utf-8');
+          allProducts = JSON.parse(fileContent);
+
+          // Normalize field names: in JSON file it's 'title', but we use 'product_title' in code
+          allProducts = allProducts.map(product => {
+            if (product.title && !product.product_title) {
+              product.product_title = product.title;
+            }
+            return product;
+          });
+
+          console.log(`[SHOPIFY INVENTORY] Loaded ${allProducts.length} products from ${filePath}`);
+          fileRead = true;
+          break;
+        }
+      } catch (err) {
+        console.warn(`[SHOPIFY INVENTORY] Failed to read ${filePath}:`, err.message);
+      }
+    }
+
+    if (!fileRead) {
+      throw new Error(`shopify_all_and_qty_not_zero.json not found in any of: ${filePaths.join(', ')}`);
+    }
+
+    // Filter products by category (first letter of SKU)
+    const categoryProducts = allProducts.filter(product => {
+      if (!product.sku || !product.sku.trim()) {
+        return false;
+      }
+
+      const productCategory = getCategoryByHandle(product.sku);
+      return productCategory === category;
+    });
+
+    console.log(`[SHOPIFY INVENTORY] Found ${categoryProducts.length} products for category ${category} out of ${allProducts.length} total`);
+
+    return categoryProducts;
+  } catch (error) {
+    console.error(`[SHOPIFY INVENTORY] Error loading category products for ${category}:`, error);
+    throw error;
+  }
 }
 
