@@ -5,7 +5,9 @@
 import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
 import { successAdapter } from '../../../src/lib/adapters/success/index.js';
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
+import { syncAdapter } from '../../../src/lib/adapters/sync/index.js';
 import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
+import { formatCapturedConsoleEntries } from '../../../src/lib/logging/consoleCapture.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -16,7 +18,7 @@ export default async function handler(req, res) {
   try {
     // Collect logs from various sources
     const logs = [];
-    
+
     // Add timestamp
     logs.push('='.repeat(80));
     logs.push(`SHOPIFY-BITRIX INTEGRATION LOGS`);
@@ -42,11 +44,11 @@ export default async function handler(req, res) {
 
     try {
       const events = shopifyAdapter.getAllEvents();
-      
+
       if (events && events.length > 0) {
         logs.push(`Total events: ${events.length}`);
         logs.push('');
-        
+
         // Sort by received_at (most recent first)
         const sortedEvents = [...events].sort((a, b) => {
           const dateA = new Date(a.received_at || a.created_at || 0);
@@ -71,7 +73,7 @@ export default async function handler(req, res) {
           logs.push(`  Total Price: ${totalPrice} ${currency}`);
           logs.push(`  Financial Status: ${financialStatus}`);
           logs.push(`  Line Items: ${lineItemsCount}`);
-          
+
           // Add line items details
           if (event.line_items && event.line_items.length > 0) {
             logs.push(`  Line Items Details:`);
@@ -82,22 +84,22 @@ export default async function handler(req, res) {
               logs.push(`       Price: ${item.price || 'N/A'} ${currency}`);
             });
           }
-          
+
           // ✅ Add Bitrix mapping details (product rows calculation)
           try {
             const { dealFields, productRows } = await mapShopifyOrderToBitrixDeal(event);
             logs.push(`  Bitrix Mapping Details:`);
             logs.push(`    Total Product Rows: ${productRows.length}`);
             logs.push(`    Deal OPPORTUNITY: ${dealFields.OPPORTUNITY || 'N/A'} ${dealFields.CURRENCY_ID || currency}`);
-            
+
             // Count active line items
             const activeLineItems = event.line_items?.filter(item => {
               const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
               return currentQty > 0;
             }) || [];
-            
+
             logs.push(`    Active Line Items: ${activeLineItems.length} (from ${event.line_items?.length || 0} total)`);
-            
+
             // Show product rows breakdown with mapping details
             if (productRows.length > 0) {
               logs.push(`    Product Rows Breakdown:`);
@@ -105,14 +107,14 @@ export default async function handler(req, res) {
                 const hasProductId = row.PRODUCT_ID && row.PRODUCT_ID !== 0;
                 const productName = row.PRODUCT_NAME || 'N/A';
                 const productId = row.PRODUCT_ID || 'N/A';
-                
+
                 if (hasProductId) {
                   logs.push(`      ${index + 1}. PRODUCT_ID=${productId} (linked to catalog) - Price: ${row.PRICE} ${currency}, Qty: ${row.QUANTITY}`);
                 } else {
                   logs.push(`      ${index + 1}. PRODUCT_NAME="${productName}" (NOT linked - custom row) - Price: ${row.PRICE} ${currency}, Qty: ${row.QUANTITY}`);
                 }
               });
-              
+
               // Summary
               const linkedRows = productRows.filter(r => r.PRODUCT_ID && r.PRODUCT_ID !== 0).length;
               const customRows = productRows.length - linkedRows;
@@ -121,7 +123,7 @@ export default async function handler(req, res) {
           } catch (mappingError) {
             logs.push(`  Bitrix Mapping Error: ${mappingError.message}`);
           }
-          
+
           logs.push('');
         }
       } else {
@@ -141,11 +143,11 @@ export default async function handler(req, res) {
 
     try {
       const operations = successAdapter.getAllOperations();
-      
+
       if (operations && operations.length > 0) {
         logs.push(`Total successful operations: ${operations.length}`);
         logs.push('');
-        
+
         // Sort by timestamp (most recent first)
         const sortedOperations = [...operations].sort((a, b) => {
           const dateA = new Date(a.timestamp || a.stored_at || 0);
@@ -173,7 +175,7 @@ export default async function handler(req, res) {
           if (op.updatedFields && Array.isArray(op.updatedFields)) {
             logs.push(`  Updated Fields: ${op.updatedFields.join(', ')}`);
           }
-          
+
           // Add deal data summary
           if (op.dealData) {
             logs.push(`  Deal Data Summary:`);
@@ -182,7 +184,7 @@ export default async function handler(req, res) {
             logs.push(`    STAGE_ID: ${op.dealData.STAGE_ID || 'N/A'}`);
             logs.push(`    CATEGORY_ID: ${op.dealData.CATEGORY_ID || 'N/A'}`);
           }
-          
+
           logs.push('');
         });
       } else {
@@ -202,14 +204,14 @@ export default async function handler(req, res) {
 
     try {
       const operations = successAdapter.getAllOperations();
-      
+
       if (operations && operations.length > 0) {
         const operationsWithRetries = operations.filter(op => op.attempt && op.attempt > 1);
-        
+
         if (operationsWithRetries.length > 0) {
           logs.push(`Total operations with retries: ${operationsWithRetries.length}`);
           logs.push('');
-          
+
           operationsWithRetries.forEach((op, index) => {
             logs.push(`Retry Operation #${index + 1}: ${op.id || op.operationId}`);
             logs.push(`  Type: ${op.operationType || 'N/A'}`);
@@ -241,16 +243,16 @@ export default async function handler(req, res) {
 
     try {
       const operations = successAdapter.getAllOperations();
-      
+
       if (operations && operations.length > 0) {
         const verifiedOperations = operations.filter(op => op.verified === true);
         const unverifiedOperations = operations.filter(op => op.verified === false);
-        
+
         logs.push(`Total operations: ${operations.length}`);
         logs.push(`  Verified: ${verifiedOperations.length}`);
         logs.push(`  Unverified: ${unverifiedOperations.length}`);
         logs.push('');
-        
+
         if (unverifiedOperations.length > 0) {
           logs.push(`Unverified Operations (${unverifiedOperations.length}):`);
           logs.push('');
@@ -284,20 +286,20 @@ export default async function handler(req, res) {
     logs.push('Note: Detailed error logs are available in server-side console output.');
     logs.push('This section tracks operations that may indicate issues:');
     logs.push('');
-    
+
     try {
       const operations = successAdapter.getAllOperations();
-      
+
       if (operations && operations.length > 0) {
         // Check for operations with high retry counts (may indicate issues)
         const highRetryOperations = operations.filter(op => op.attempt && op.attempt >= 3);
-        
+
         // Check for unverified operations (may indicate failures)
         const unverifiedOperations = operations.filter(op => op.verified === false);
-        
+
         // Check for operations with zero product rows (may indicate data issues)
         const zeroProductRowsOperations = operations.filter(op => op.productRowsCount === 0 && op.operationType === 'CREATE');
-        
+
         if (highRetryOperations.length > 0 || unverifiedOperations.length > 0 || zeroProductRowsOperations.length > 0) {
           if (highRetryOperations.length > 0) {
             logs.push(`Operations with high retry counts (${highRetryOperations.length}):`);
@@ -309,7 +311,7 @@ export default async function handler(req, res) {
               logs.push('');
             });
           }
-          
+
           if (zeroProductRowsOperations.length > 0) {
             logs.push(`Operations with zero product rows (${zeroProductRowsOperations.length}):`);
             zeroProductRowsOperations.forEach((op, index) => {
@@ -340,8 +342,56 @@ export default async function handler(req, res) {
     logs.push('For detailed server-side logs (console.log output), check:');
     logs.push('  - Server console output (stdout/stderr)');
     logs.push('  - Application logs in production environment');
-    logs.push('  - Deployment platform logs (Vercel, Render, etc.)');
+    logs.push('  - Deployment platform logs (Render, etc.)');
     logs.push('');
+
+    // ✅ Add INVENTORY SYNC OPERATIONS section
+    logs.push('='.repeat(80));
+    logs.push('INVENTORY SYNC OPERATIONS');
+    logs.push('='.repeat(80));
+    logs.push('');
+
+    try {
+      const syncOps = syncAdapter.getAllOperations();
+
+      if (syncOps && syncOps.length > 0) {
+        logs.push(`Total inventory sync runs: ${syncOps.length}`);
+        logs.push('');
+
+        syncOps.forEach((op, index) => {
+          logs.push(`Sync Run #${index + 1}: ${op.id}`);
+          logs.push(`  Timestamp: ${op.timestamp || 'N/A'}`);
+          logs.push(`  Success: ${op.success ? 'Yes' : 'No'}`);
+          logs.push(`  Duration: ${op.duration || 'N/A'}ms`);
+
+          if (op.summary) {
+            logs.push(`  Summary:`);
+            logs.push(`    Synced: ${op.summary.synced || 0}`);
+            logs.push(`    Created: ${op.summary.created || 0}`);
+            logs.push(`    Price Updated: ${op.summary.priceUpdated || 0}`);
+            logs.push(`    Qty Updated: ${op.summary.qtyUpdated || 0}`);
+            logs.push(`    Skipped: ${op.summary.skipped || 0}`);
+            logs.push(`    Errors: ${op.summary.errors || 0}`);
+          }
+
+          if (op.errors && op.errors.length > 0) {
+            logs.push(`  Error Details (first 5):`);
+            op.errors.slice(0, 5).forEach((err, errIdx) => {
+              logs.push(`    ${errIdx + 1}. SKU: ${err.sku || 'N/A'}, Error: ${err.error || 'Unknown'}`);
+            });
+          }
+
+          logs.push('');
+        });
+      } else {
+        logs.push('No inventory sync runs found.');
+        logs.push('');
+      }
+    } catch (error) {
+      logs.push(`Error collecting inventory sync operations: ${error.message}`);
+      logs.push('');
+    }
+
     logs.push('This log file includes:');
     logs.push('  - Recent webhook events received from Shopify');
     logs.push('  - Event metadata (order ID, amounts, statuses)');
@@ -351,6 +401,33 @@ export default async function handler(req, res) {
     logs.push('  - Retry attempts (operations that required multiple attempts)');
     logs.push('  - Verification results (deals verified after creation/update)');
     logs.push('  - Errors and failures (operations with high retry counts, unverified deals, etc.)');
+    logs.push('  - Inventory sync operations (product/price/qty updates)');
+    logs.push('');
+
+    // ========================================================================
+    // SERVER CONSOLE (CAPTURED stdout/stderr)
+    // ========================================================================
+    logs.push('');
+    logs.push('='.repeat(80));
+    logs.push('SERVER CONSOLE OUTPUT (CAPTURED stdout/stderr)');
+    logs.push('='.repeat(80));
+    logs.push('');
+    logs.push('This section contains recent console.log/warn/error output captured by the app runtime.');
+    logs.push('Tip: search for events like AUTO_ADDRESS_, ADDRESS_UPDATE_, SHOPIFY Admin API error (422), etc.');
+    logs.push('');
+
+    try {
+      const consoleLines = formatCapturedConsoleEntries(5000);
+      if (consoleLines.length === 0) {
+        logs.push('No console output captured yet.');
+      } else {
+        logs.push(`Captured lines: ${consoleLines.length}`);
+        logs.push('');
+        logs.push(...consoleLines);
+      }
+    } catch (e) {
+      logs.push(`Failed to include captured console output: ${e.message}`);
+    }
     logs.push('');
     // ========================================================================
     // BITRIX → SHOPIFY OPERATIONS
@@ -363,11 +440,11 @@ export default async function handler(req, res) {
 
     try {
       const bitrixEvents = bitrixAdapter.getAllEvents();
-      
+
       if (bitrixEvents && bitrixEvents.length > 0) {
         logs.push(`Total Bitrix events: ${bitrixEvents.length}`);
         logs.push('');
-        
+
         // Sort by received_at (most recent first)
         const sortedBitrixEvents = [...bitrixEvents].sort((a, b) => {
           const dateA = new Date(a.received_at || a.created_at || 0);
@@ -386,13 +463,13 @@ export default async function handler(req, res) {
           logs.push(`  Deal ID: ${dealId}`);
           logs.push(`  Topic: ${topic}`);
           logs.push(`  Received At: ${receivedAt}`);
-          
+
           if (event.rawDealData) {
             logs.push(`  Deal Title: ${event.rawDealData.TITLE || 'N/A'}`);
             logs.push(`  Deal Stage: ${event.rawDealData.STAGE_ID || 'N/A'}`);
             logs.push(`  Deal Amount: ${event.rawDealData.OPPORTUNITY || 'N/A'} ${event.rawDealData.CURRENCY_ID || 'EUR'}`);
           }
-          
+
           logs.push('');
         }
       } else {
@@ -420,7 +497,7 @@ export default async function handler(req, res) {
     logs.push('Note: Detailed error logs (console.log output) are available in server-side logs.');
     logs.push('For production environments, check:');
     logs.push('  - Server console output (stdout/stderr)');
-    logs.push('  - Application logs in deployment platform (Vercel, Render, etc.)');
+    logs.push('  - Application logs in deployment platform (Render, etc.)');
     logs.push('');
     logs.push('='.repeat(80));
     logs.push(`End of log file - ${new Date().toISOString()}`);
@@ -432,7 +509,7 @@ export default async function handler(req, res) {
     // Set headers for file download
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="integration-logs-${Date.now()}.txt"`);
-    
+
     res.status(200).send(logText);
   } catch (error) {
     console.error('[LOGS DOWNLOAD] Error:', error);

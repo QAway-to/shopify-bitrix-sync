@@ -6,6 +6,7 @@
 import { getAllProductsFromShopify } from '../../../src/lib/shopify/inventory.js';
 import { syncProductVariantOptimized, getCurrentStock, createOutgoingDocument } from '../../../src/lib/bitrix/products.js';
 import { findProductIdBySku } from '../../../src/lib/bitrix/mappingUtils.js';
+import { syncAdapter } from '../../../src/lib/adapters/sync/index.js';
 
 // Rate limiting settings
 const BATCH_SIZE = 50;
@@ -126,6 +127,13 @@ export default async function handler(req, res) {
         if (results.errors.length > 20) {
             results.errors = results.errors.slice(0, 20);
             results.errorsNote = 'Showing first 20 errors only';
+        }
+
+        // Store sync run to adapter for downloadable logs
+        try {
+            syncAdapter.storeSyncRun(results);
+        } catch (adapterError) {
+            console.error('[CRON SYNC INVENTORY] Error storing to adapter:', adapterError.message);
         }
 
         return res.status(200).json(results);
