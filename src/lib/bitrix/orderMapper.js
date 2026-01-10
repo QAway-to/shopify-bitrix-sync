@@ -148,6 +148,45 @@ function getSectionIdBySku(sku) {
   return map[cat] || 38;
 }
 
+// ============ SHOPIFY IMAGE HELPERS ============
+const SHOPIFY_STORE = "83bfa8-c4.myshopify.com";
+const SHOPIFY_TOKEN = "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";
+
+async function getShopifyImageBase64(variantId) {
+  try {
+    // 1. Get Variant to find image_id and product_id
+    const vUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/variants/${variantId}.json`;
+    const vResp = await fetch(vUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
+    if (!vResp.ok) return null;
+
+    const vData = await vResp.json();
+    const variant = vData.variant;
+
+    if (!variant || !variant.image_id) return null;
+
+    // 2. Get Product Image URL
+    const pUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${variant.product_id}/images/${variant.image_id}.json`;
+    const pResp = await fetch(pUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
+    if (!pResp.ok) return null;
+
+    const pData = await pResp.json();
+    const imageUrl = pData.image ? pData.image.src : null;
+
+    if (!imageUrl) return null;
+
+    // 3. Download and Convert to Base64
+    const imgResp = await fetch(imageUrl);
+    if (!imgResp.ok) return null;
+
+    const arrayBuffer = await imgResp.arrayBuffer();
+    return Buffer.from(arrayBuffer).toString('base64');
+
+  } catch (e) {
+    console.error(`[ORDER MAPPER] Error fetching Shopify image: ${e.message}`);
+    return null;
+  }
+}
+
 /**
  * Map Shopify order to Bitrix24 deal fields and product rows
  * @param {Object} order - Shopify order object
@@ -751,6 +790,27 @@ export async function mapShopifyOrderToBitrixDeal(order) {
                 console.error(`[ORDER MAPPER] ❌ PRE-ORDER: Error adding stock:`, stockError.message);
                 // Continue anyway - product is created, stock issue can be fixed manually
               }
+
+              // 4. Image Sync (New)
+              try {
+                const imageBase64 = await getShopifyImageBase64(item.variant_id);
+                if (imageBase64) {
+                  console.log(`[ORDER MAPPER] 🖼️ Found image for variant ${item.variant_id}, uploading to Bitrix...`);
+                  await callBitrix('/crm.product.update.json', {
+                    id: productId,
+                    fields: {
+                      "PREVIEW_PICTURE": { "fileData": ["image.jpg", imageBase64] },
+                      "DETAIL_PICTURE": { "fileData": ["image.jpg", imageBase64] }
+                    }
+                  });
+                  console.log(`[ORDER MAPPER] ✅ Image uploaded successfully`);
+                } else {
+                  console.log(`[ORDER MAPPER] ℹ️ No image found for variant ${item.variant_id}`);
+                }
+              } catch (imgErr) {
+                console.warn(`[ORDER MAPPER] ⚠️ Failed to sync image: ${imgErr.message}`);
+              }
+
             } else {
               console.error(`[ORDER MAPPER] ❌ ON-DEMAND: Failed to create product:`, createProductResp.error || 'Unknown error');
             }

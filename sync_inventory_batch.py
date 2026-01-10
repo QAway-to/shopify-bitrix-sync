@@ -36,6 +36,25 @@ PROPERTIES = {
     "COLOR": 106
 }
 
+# ============ SIZE ENUM MAPPING (Bitrix property98 values) ============
+SIZE_ENUM_MAP = {
+    "20": 154, "21": 156, "22": 158, "23": 160, "24": 162,
+    "25": 164, "26": 166, "27": 168, "28": 170, "29": 172,
+    "30": 174, "31": 176, "32": 178, "33": 320, "34": 322,
+    "35": 324, "36": 326, "37": 328, "38": 330, "39": 332,
+    "40": 334, "41": 336, "42": 338, "43": 340, "44": 342,
+    "45": 344, "46": 346, "47": 348, "48": 350, "49": 352,
+    "50": 354, "51": 356, "52": 358, "53": 360, "54": 362
+}
+
+def get_size_enum_id(size_text: str) -> Optional[int]:
+    """Convert size text (e.g. '40') to Bitrix enum ID (e.g. 334)"""
+    if not size_text:
+        return None
+    # Clean the size text
+    size_clean = size_text.strip()
+    return SIZE_ENUM_MAP.get(size_clean)
+
 def get_category_by_sku(sku: str) -> str:
     """Get category name based on SKU first letter"""
     if not sku: return 'category-g-m'
@@ -307,7 +326,11 @@ def run_batch_sync(target_variant_id: str = None):
         
         # Determine Properties
         props = {}
-        if variant.get("size"): props[f"PROPERTY_{PROPERTIES['SIZE']}"] = variant["size"]
+        if variant.get("size"):
+            enum_id = get_size_enum_id(variant["size"])
+            if enum_id:
+                props[f"PROPERTY_{PROPERTIES['SIZE']}"] = enum_id
+
         if variant.get("brand"): props[f"PROPERTY_{PROPERTIES['BRAND']}"] = variant["brand"]
         if variant.get("category"): props[f"PROPERTY_{PROPERTIES['CATEGORY']}"] = variant["category"]
         if variant.get("color"): props[f"PROPERTY_{PROPERTIES['COLOR']}"] = variant["color"]
@@ -471,360 +494,6 @@ def run_batch_sync(target_variant_id: str = None):
 
 if __name__ == "__main__":
     # TARGET TEST ID
-    TARGET_ID = "53018467795208"
+    TARGET_ID = "53114068992264"
     run_batch_sync(target_variant_id=TARGET_ID)
 
-SHOPIFY_TOKEN = "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"
-BITRIX_WEBHOOK = "https://bfcshoes.bitrix24.eu/rest/52/zrbhiktlam8mz1yr/"
-
-# ============ SECTION MAPPING ============
-SECTION_MAP = {
-    'category-a-f': 36,
-    'category-g-m': 38,
-    'category-n-s': 40,
-    'category-t-z': 42,
-}
-
-def get_category_by_sku(sku: str) -> str:
-    """Get category name based on SKU first letter"""
-    if not sku: return 'category-g-m'
-    first_char = sku[0].lower()
-    if 'a' <= first_char <= 'f': return 'category-a-f'
-    elif 'g' <= first_char <= 'm': return 'category-g-m'
-    elif 'n' <= first_char <= 's': return 'category-n-s'
-    elif 't' <= first_char <= 'z': return 'category-t-z'
-    return 'category-g-m'
-
-def get_section_id_by_sku(sku: str) -> int:
-    return SECTION_MAP.get(get_category_by_sku(sku), 38)
-
-# ============ SHOPIFY API ============
-def fetch_shopify_products(filter_qty_gt_zero: bool = True) -> List[Dict]:
-    """Fetch all products from Shopify API (Optimized)"""
-    all_variants = []
-    page_info = None
-    has_next = True
-    
-    print("\n[SHOPIFY] Fetching products...")
-    
-    while has_next:
-        url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/products.json?limit=250"
-        if page_info:
-            url += f"&page_info={page_info}"
-        
-        response = requests.get(url, headers={
-            "X-Shopify-Access-Token": SHOPIFY_TOKEN, "Content-Type": "application/json"
-        })
-        
-        if response.status_code != 200:
-            print(f"[SHOPIFY] Error: {response.text}")
-            break
-        
-        data = response.json()
-        for product in data.get("products", []):
-            for variant in product.get("variants", []):
-                qty = variant.get("inventory_quantity", 0)
-                if filter_qty_gt_zero and qty <= 0: continue
-                    
-                all_variants.append({
-                    "product_id": product["id"],
-                    "product_title": product["title"],
-                    "variant_id": str(variant["id"]),
-                    "variant_title": variant.get("title", ""),
-                    "sku": variant.get("sku", ""),
-                    "price": float(variant.get("price", 0)),
-                    "qty": qty
-                })
-        
-        link_header = response.headers.get("Link", "")
-        has_next = False
-        if 'rel="next"' in link_header:
-            try:
-                page_info = link_header.split('page_info=')[1].split('>')[0]
-                has_next = True
-            except: pass
-            
-    print(f"[SHOPIFY] Fetched {len(all_variants)} variants")
-    return all_variants
-
-# ============ BITRIX BATCH API ============
-def call_batch(commands: Dict[str, str], halt_on_error: bool = False) -> Dict:
-    """Execute a batch of commands"""
-    if not commands: return {}
-    
-    url = f"{BITRIX_WEBHOOK}batch"
-    response = requests.post(url, json={
-        "halt": 1 if halt_on_error else 0,
-        "cmd": commands
-    })
-    return response.json()
-
-def execute_batches(commands: List[Tuple[str, str]], batch_size: int = 50):
-    """Execute list of commands in chunks of 50"""
-    total = len(commands)
-    print(f"[BATCH] Executing {total} commands...")
-    
-    for i in range(0, total, batch_size):
-        chunk = commands[i:i+batch_size]
-        batch_cmd = {f"cmd_{j}": cmd for j, (key, cmd) in enumerate(chunk)}
-        
-        try:
-            result = call_batch(batch_cmd)
-            # Check for errors in batch result
-            if result.get("result_error"):
-                print(f"  WARN️ Batch Error: {result['result_error']}")
-        except Exception as e:
-            print(f"  ERR Network Error: {e}")
-            
-        print(f"  Processed {min(i+batch_size, total)}/{total}")
-        time.sleep(0.5) # Slight delay to be safe
-
-# ============ BITRIX API (READ) ============
-def fetch_all_bitrix_products_fast() -> Dict[str, Dict]:
-    """Fetch all products using batch calls to iterate sections"""
-    all_products = {}
-    
-    # Simple recursive fetch for now (batching list calls is complex due to 'next')
-    # Use the existing section logic but maybe fast?
-    # actually, for reading < 5000 items, standard list is fine. 
-    # Let's use the logic from live script but faster
-    
-    for _, section_id in SECTION_MAP.items():
-        start = 0
-        while True:
-            # We can't easily batch "list" calls with pagination in one go
-            # So just do standard requests but with larger pages if supported
-            # Bitrix standard is 50.
-            url = f"{BITRIX_WEBHOOK}crm.product.list"
-            resp = requests.post(url, json={
-                "filter": {"SECTION_ID": section_id},
-                "select": ["ID", "NAME", "PRICE", "CODE", "XML_ID", "SECTION_ID"],
-                "start": start
-            }).json()
-            
-            items = resp.get("result", [])
-            if not items: break
-            
-            for item in items:
-                if item.get("XML_ID"):
-                    all_products[item["XML_ID"]] = item
-            
-            if len(items) < 50: break
-            start += 50
-    
-    print(f"[BITRIX] Indexed {len(all_products)} products")
-    return all_products
-
-def get_current_stocks_batch(product_ids: List[int]) -> Dict[int, int]:
-    """Get stocks for multiple products using batch"""
-    stocks = {}
-    commands = []
-    
-    # Prepare commands
-    for pid in product_ids:
-        cmd = f"catalog.storeproduct.list?filter[PRODUCT_ID]={pid}&select[]=AMOUNT"
-        commands.append((str(pid), cmd))
-    
-    # Execute
-    for i in range(0, len(commands), 50):
-        chunk = commands[i:i+50]
-        batch_cmd = {key: cmd for key, cmd in chunk}
-        
-        resp = call_batch(batch_cmd)
-        results = resp.get("result", {}).get("result", {})
-        
-        for key, data in results.items():
-            pid = int(key)
-            amount = 0
-            if data and "storeProducts" in data and data["storeProducts"]:
-                 amount = int(float(data["storeProducts"][0].get("amount", 0)))
-            stocks[pid] = amount
-            
-        print(f"[STOCK] Loaded {min(i+50, len(commands))}/{len(commands)} stocks")
-        
-    return stocks
-
-# ============ SYNC LOGIC ============
-def run_batch_sync():
-    print("="*60)
-    print("BATCH BATCH INVENTORY SYNC")
-    print("="*60)
-    
-    # 1. Fetch Data
-    shopify_variants = fetch_shopify_products(filter_qty_gt_zero=True)
-    bitrix_products = fetch_all_bitrix_products_fast()
-    
-    # 2. Plan Changes
-    create_payloads = []
-    update_payloads = []
-    ensure_stock_ids = []
-    
-    processed_count = 0
-    
-    print("\n[PLANNING] Calculating differences...")
-    
-    variant_map = {v["variant_id"]: v for v in shopify_variants}
-    
-    # Identify Create vs Update
-    for vid, variant in variant_map.items():
-        if vid in bitrix_products:
-            # Update
-            b_prod = bitrix_products[vid]
-            pid = b_prod["ID"]
-            
-            # Check Price
-            b_price = float(b_prod.get("PRICE", 0) or 0)
-            s_price = variant["price"]
-            
-            if abs(b_price - s_price) > 0.01:
-                cmd = f"crm.product.update?id={pid}&fields[PRICE]={s_price}"
-                update_payloads.append((f"update_{pid}", cmd))
-            
-            # Need to check stock later
-            ensure_stock_ids.append(pid)
-        else:
-            # Create
-            sku = variant["sku"]
-            section_id = get_section_id_by_sku(sku)
-            name = f"{variant['product_title']} - {variant['variant_title']}"
-            
-            fields = {
-                "NAME": name,
-                "PRICE": variant["price"],
-                "CURRENCY_ID": "EUR",
-                "CATALOG_ID": 14,
-                "SECTION_ID": section_id,
-                "CODE": sku,
-                "XML_ID": vid,
-                "ACTIVE": "Y"
-            }
-            # Add to batch
-            # Note: For creates, we can't easily batch 'catalog.document' in same go 
-            # without knowing ID. So we create first, then handle stock in next run? 
-            # Or just do single creates for new items (there are few).
-            # Let's batch creates.
-            fields_json = json.dumps(fields)
-            # cmd expects query params style or json body? Batch usually takes string query
-            # Safer to use http_build_query style or just simple params
-            # crm.product.add?fields[NAME]=... 
-            # For complex fields, pure URL encoding is messy.
-            # Bitrix batch supports referencing? 
-            # Simplest: Just use python loop for creates if they are few.
-            # But user wants batch. 
-            # We will use crm.product.add with query params construction
-            
-            # Constructing URL params manually is annoying.
-            # Let's just create them 1-by-1 for now (only 20 items usually)
-            # Update: User wants 50x speed. 
-            # If we utilize batch correctly we can do it.
-            # Let's skip complex creates batching for now, assume most are updates.
-            create_payloads.append(fields)
-            
-    # 3. Execute Product Updates (Batch)
-    if update_payloads:
-        execute_batches(update_payloads)
-    
-    # 4. Execute Creates (1-by-1 for safety/simplicity of ID retrieval)
-    created_map = {} # vid -> new_pid
-    for fields in create_payloads:
-        print(f"  Creating {fields['NAME']}...")
-        res = requests.post(f"{BITRIX_WEBHOOK}crm.product.add", json={"fields": fields}).json()
-        new_id = res.get("result")
-        if new_id:
-            created_map[fields["XML_ID"]] = new_id
-            ensure_stock_ids.append(new_id)
-            
-    # 5. Check and Sync Stocks (Batch)
-    # We need current stocks for all relevant items
-    print(f"\n[STOCK] Checking levels for {len(ensure_stock_ids)} products...")
-    current_stocks = get_current_stocks_batch(ensure_stock_ids)
-    
-    stock_diffs = {} # pid -> delta
-    
-    for pid in ensure_stock_ids:
-        # Find which variant this is
-        # We need reverse lookup or pass it along.
-        # bitrix_products keys is XML_ID.
-        # Find XML_ID for this PID
-        xml_id = None
-        # Slow search? Optimize?
-        # Better: keep map PID -> XML_ID
-        pass
-        
-    # Optimization: Build PID->Variant map
-    pid_to_variant = {}
-    for vid, b_prod in bitrix_products.items():
-        pid_to_variant[int(b_prod["ID"])] = variant_map.get(vid)
-    for vid, new_pid in created_map.items():
-        pid_to_variant[new_id] = variant_map.get(vid)
-        
-    total_qty_updates = 0
-    arrival_items = [] # list of {elementId, amount}
-    deduct_items = []
-    
-    for pid, current_qty in current_stocks.items():
-        variant = pid_to_variant.get(pid)
-        if not variant: continue
-        
-        target_qty = variant["qty"]
-        diff = target_qty - current_qty
-        
-        if diff > 0:
-            arrival_items.append({"id": pid, "amount": diff})
-        elif diff < 0:
-            deduct_items.append({"id": pid, "amount": abs(diff)})
-            
-    # 6. Create Consolidated Stock Documents
-    # Instead of 1 doc per item, we make 1 doc per ~100 items
-    
-    def apply_stock_changes(items, doc_type):
-        if not items: return
-        
-        chunk_size = 100
-        for i in range(0, len(items), chunk_size):
-            chunk = items[i:i+chunk_size]
-            
-            # 1. Create Document
-            title = f"Batch Sync {doc_type} {i}-{i+len(chunk)}"
-            res = requests.post(f"{BITRIX_WEBHOOK}catalog.document.add", json={
-                "fields": {
-                    "docType": doc_type,
-                    "title": title,
-                    "responsibleId": 52,
-                    "currency": "EUR"
-                }
-            }).json()
-            
-            doc_id = res.get("result", {}).get("document", {}).get("id")
-            if not doc_id: 
-                print("ERR Failed to create stock doc")
-                continue
-            
-            # 2. Add Elements (Batch)
-            element_cmds = []
-            for item in chunk:
-                cmd = f"catalog.document.element.add?fields[docId]={doc_id}&fields[elementId]={item['id']}&fields[amount]={item['amount']}&fields[purchasingPrice]=0"
-                element_cmds.append((f"add_{item['id']}", cmd))
-            
-            execute_batches(element_cmds)
-            
-            # 3. Conduct
-            requests.post(f"{BITRIX_WEBHOOK}catalog.document.conduct", json={"id": doc_id})
-            print(f"  OK Conducted document {doc_id} ({len(chunk)} items)")
-
-    if arrival_items:
-        print(f"\n[STOCK] Processing {len(arrival_items)} arrivals...")
-        apply_stock_changes(arrival_items, "A")
-        
-    if deduct_items:
-        print(f"\n[STOCK] Processing {len(deduct_items)} deducts...")
-        apply_stock_changes(deduct_items, "D") # Type D logic? Or W? W is Write-off. D is Deduct? Bitrix uses 'D' for Deduct usually? Or S? 
-        # Check docs: A = Arrival, S = Store Adjustment (set exact?), W = Write-off, M = Move. 
-        # Usually W (Write-off) is used to reduce stock.
-        # Let's use 'W' (Write-off) if 'D' is ambiguous. Previous script used 'W'.
-        apply_stock_changes(deduct_items, "W")
-
-    print(f"\nOK Sync Complete!")
-
-if __name__ == "__main__":
-    run_batch_sync()
