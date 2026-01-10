@@ -490,6 +490,67 @@ def run_batch_sync(target_variant_id: str = None):
     else:
         print("[STOCK] No products to sync stock for.")
 
+    # ============ STEP 7: Zero-Stock Sync for Existing Bitrix Products ============
+    # For products that exist in Bitrix (have XML_ID) but Shopify qty = 0:
+    # Create write-off document to sync stock down to 0
+    if not target_variant_id:  # Only run in full sync mode
+        print("\n[ZERO-STOCK] Checking existing Bitrix products for Shopify qty=0...")
+        
+        # Get all Bitrix product XML_IDs (variant IDs)
+        existing_xml_ids = set(bitrix_products.keys())
+        print(f"[ZERO-STOCK] Found {len(existing_xml_ids)} products in Bitrix with XML_ID")
+        
+        # Fetch current Shopify inventory for these variants
+        # We need to check if their Shopify qty is 0
+        zero_stock_items = []
+        
+        for xml_id, bx_prod in bitrix_products.items():
+            # Skip if this variant was already processed in main sync (qty > 0)
+            if xml_id in variant_map:
+                continue
+            
+            # Check Shopify inventory for this variant
+            try:
+                v_url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/variants/{xml_id}.json"
+                v_resp = requests.get(v_url, headers={"X-Shopify-Access-Token": SHOPIFY_TOKEN})
+                
+                if v_resp.status_code == 200:
+                    variant_data = v_resp.json().get("variant", {})
+                    shopify_qty = variant_data.get("inventory_quantity", 0)
+                    
+                    if shopify_qty <= 0:
+                        # This variant has 0 stock in Shopify, check Bitrix
+                        pid = int(bx_prod["ID"])
+                        zero_stock_items.append(pid)
+                elif v_resp.status_code == 404:
+                    # Variant doesn't exist in Shopify anymore
+                    print(f"  [ZERO-STOCK] Variant {xml_id} not found in Shopify (deleted?)")
+                    pid = int(bx_prod["ID"])
+                    zero_stock_items.append(pid)
+            except Exception as e:
+                print(f"  [ZERO-STOCK] Error checking {xml_id}: {e}")
+        
+        if zero_stock_items:
+            print(f"[ZERO-STOCK] Found {len(zero_stock_items)} products to check for stock reduction")
+            
+            # Get current Bitrix stock levels
+            current_stocks = get_current_stocks_batch(zero_stock_items)
+            
+            # Filter to only those with Bitrix stock > 0
+            deduct_to_zero = []
+            for pid, bx_qty in current_stocks.items():
+                if bx_qty > 0:
+                    deduct_to_zero.append({"id": pid, "amount": bx_qty})
+                    print(f"  [ZERO-STOCK] Product {pid}: Bitrix={bx_qty}, Shopify=0 → Will deduct {bx_qty}")
+            
+            if deduct_to_zero:
+                print(f"\n[ZERO-STOCK] Processing {len(deduct_to_zero)} write-offs...")
+                apply_stock_changes(deduct_to_zero, "W")
+            else:
+                print("[ZERO-STOCK] No products need stock reduction")
+        else:
+            print("[ZERO-STOCK] No products with Shopify qty=0 found")
+
     print(f"\nOK Sync Complete!")
 
 if __name__ == "__main__":
