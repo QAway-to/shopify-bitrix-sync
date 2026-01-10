@@ -213,6 +213,72 @@ async function getShopifyProductDescription(variantId) {
 }
 
 /**
+ * Fetch Shopify product metadata for on-demand property mapping
+ * Returns: { vendor, product_type, options } - same as sync_inventory_batch.py uses
+ */
+async function getShopifyProductMetadata(variantId) {
+  try {
+    // 1. Get Variant to find product_id
+    const vUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/variants/${variantId}.json`;
+    const vResp = await fetch(vUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
+    if (!vResp.ok) return null;
+
+    const vData = await vResp.json();
+    const variant = vData.variant;
+    if (!variant?.product_id) return null;
+
+    // 2. Get Product
+    const pUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${variant.product_id}.json`;
+    const pResp = await fetch(pUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
+    if (!pResp.ok) return null;
+
+    const pData = await pResp.json();
+    const product = pData.product;
+
+    // 3. Parse Size/Color from Options (like sync_inventory_batch.py)
+    let sizeIndex = -1;
+    let colorIndex = -1;
+    const options = product.options || [];
+
+    for (let i = 0; i < options.length; i++) {
+      const name = (options[i].name || '').toLowerCase();
+      if (name.includes('size') || name.includes('размер') || name.includes('eu size')) {
+        sizeIndex = i;
+      } else if (name.includes('color') || name.includes('colour') || name.includes('цвет')) {
+        colorIndex = i;
+      }
+    }
+
+    // Find the target variant in product.variants
+    const targetVariant = product.variants?.find(v => String(v.id) === String(variantId));
+
+    let sizeVal = '';
+    let colorVal = '';
+
+    if (targetVariant) {
+      if (sizeIndex >= 0) sizeVal = targetVariant[`option${sizeIndex + 1}`] || '';
+      if (colorIndex >= 0) colorVal = targetVariant[`option${colorIndex + 1}`] || '';
+
+      // Fallback: if no size found and title is not "Default Title", use title as size
+      if (!sizeVal && targetVariant.title && targetVariant.title !== 'Default Title') {
+        sizeVal = targetVariant.title;
+      }
+    }
+
+    return {
+      vendor: product.vendor || '',
+      product_type: product.product_type || '',
+      size: sizeVal,
+      color: colorVal
+    };
+
+  } catch (e) {
+    console.error(`[ORDER MAPPER] Error fetching Shopify metadata: ${e.message}`);
+    return null;
+  }
+}
+
+/**
  * Map Shopify order to Bitrix24 deal fields and product rows
  * @param {Object} order - Shopify order object
  * @returns {Object} { dealFields, productRows }
@@ -751,39 +817,43 @@ export async function mapShopifyOrderToBitrixDeal(order) {
 
               // --- Property & Stock Logic ---
 
-              // 1. Calculate Properties
-              const brand = item.vendor || '';
-              const category = getCategoryBySku(item.sku);
-              // Try to parse size/color from variant_title (e.g. "40 / Black")
+              // 1. Fetch Properties from Shopify (same as sync_inventory_batch.py)
+              let brand = '';
+              let productType = '';  // This goes to PROPERTY_104 (not SKU-based category!)
               let sizeVal = '';
               let colorVal = '';
 
-              if (item.variant_title) {
-                const parts = item.variant_title.split('/').map(s => s.trim());
-                // Simple heuristic: if part is numeric -> Size, else Color
-                for (const p of parts) {
-                  if (/^\d+(\.\d+)?$/.test(p)) sizeVal = p;
-                  else if (p.toLowerCase() !== 'default title') colorVal = p;
+              try {
+                const metadata = await getShopifyProductMetadata(item.variant_id);
+                if (metadata) {
+                  brand = metadata.vendor;
+                  productType = metadata.product_type;
+                  sizeVal = metadata.size;
+                  colorVal = metadata.color;
+                  console.log(`[ORDER MAPPER] 📦 Fetched Shopify metadata: brand=${brand}, type=${productType}, size=${sizeVal}, color=${colorVal}`);
                 }
+              } catch (metaErr) {
+                console.warn(`[ORDER MAPPER] ⚠️ Failed to fetch Shopify metadata: ${metaErr.message}`);
               }
+
               const sizeEnum = getSizeEnumId(sizeVal);
 
-              console.log(`[ORDER MAPPER] 🔖 Updating properties for ${productId}: Brand=${brand}, Size=${sizeVal}(${sizeEnum}), Color=${colorVal}`);
+              console.log(`[ORDER MAPPER] 🔖 Updating properties for ${productId}: Brand=${brand}, Category=${productType}, Size=${sizeVal}(${sizeEnum}), Color=${colorVal}`);
 
-              // 2. Update Product with Properties
-              // (We do this immediately after create to ensure data consistency)
+              // 2. Update Product with Properties (UNIFIED with sync_inventory_batch.py)
               try {
-                const updateFields = {
-                  "PROPERTY_102": brand,     // Brand
-                  "PROPERTY_104": category,  // Category
-                  "PROPERTY_106": colorVal   // Color
-                };
-                if (sizeEnum) updateFields["PROPERTY_98"] = sizeEnum; // Size Enum
+                const updateFields = {};
+                if (brand) updateFields["PROPERTY_102"] = brand;           // Brand (vendor)
+                if (productType) updateFields["PROPERTY_104"] = productType; // Category (product_type, e.g. "Atlas MJ")
+                if (colorVal) updateFields["PROPERTY_106"] = colorVal;     // Color
+                if (sizeEnum) updateFields["PROPERTY_98"] = sizeEnum;      // Size Enum
 
-                await callBitrix('/crm.product.update.json', {
-                  id: productId,
-                  fields: updateFields
-                });
+                if (Object.keys(updateFields).length > 0) {
+                  await callBitrix('/crm.product.update.json', {
+                    id: productId,
+                    fields: updateFields
+                  });
+                }
               } catch (propErr) {
                 console.error(`[ORDER MAPPER] ❌ Failed to update properties: ${propErr.message}`);
               }

@@ -494,6 +494,6 @@ def run_batch_sync(target_variant_id: str = None):
 
 if __name__ == "__main__":
     # TARGET TEST ID
-    TARGET_ID = "53114068992264"
+    TARGET_ID = "51385754353928"
     run_batch_sync(target_variant_id=TARGET_ID)
 
