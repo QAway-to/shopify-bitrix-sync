@@ -1193,5 +1193,12 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     console.warn(`[ORDER MAPPER] WARNING: Shipping rows count mismatch! Expected ${expectedShippingCount}, got ${shippingRowsCount}`);
   }
 
+  // ✅ CRITICAL: Verify TITLE is set before returning (Fix for on-demand flow)
+  if (!dealFields.TITLE) {
+    console.warn(`[ORDER MAPPER] ⚠️ TITLE was empty! Setting from order.name: "${order.name}" or fallback`);
+    dealFields.TITLE = order.name || `Order #${order.id}`;
+  }
+  console.log(`[ORDER MAPPER] ✅ Final dealFields.TITLE: "${dealFields.TITLE}"`);
+
   return { dealFields, productRows };
 }
