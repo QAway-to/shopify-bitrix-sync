@@ -699,7 +699,8 @@ export async function mapShopifyOrderToBitrixDeal(order) {
             const price = parseFloat(item.price || 0);
             const variantTitle = item.variant_title || '';
             const productTitle = item.title || 'Unknown Product';
-              ?`${productTitle} - ${variantTitle}`
+            const fullTitle = variantTitle && variantTitle !== 'Default Title'
+              ? `${productTitle} - ${variantTitle}`
               : productTitle;
 
             // Fetch Real Description
