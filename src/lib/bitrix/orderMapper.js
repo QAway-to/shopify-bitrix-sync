@@ -187,6 +187,31 @@ async function getShopifyImageBase64(variantId) {
   }
 }
 
+async function getShopifyProductDescription(variantId) {
+  try {
+    // 1. Get Variant to find product_id
+    const vUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/variants/${variantId}.json`;
+    const vResp = await fetch(vUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
+    if (!vResp.ok) return null;
+
+    const vData = await vResp.json();
+    const productId = vData.variant?.product_id;
+    if (!productId) return null;
+
+    // 2. Get Product Description (body_html)
+    const pUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}.json`;
+    const pResp = await fetch(pUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
+    if (!pResp.ok) return null;
+
+    const pData = await pResp.json();
+    return pData.product?.body_html || "";
+
+  } catch (e) {
+    console.error(`[ORDER MAPPER] Error fetching Shopify description: ${e.message}`);
+    return null;
+  }
+}
+
 /**
  * Map Shopify order to Bitrix24 deal fields and product rows
  * @param {Object} order - Shopify order object
@@ -674,9 +699,20 @@ export async function mapShopifyOrderToBitrixDeal(order) {
             const price = parseFloat(item.price || 0);
             const variantTitle = item.variant_title || '';
             const productTitle = item.title || 'Unknown Product';
-            const fullTitle = variantTitle && variantTitle !== 'Default Title'
-              ? `${productTitle} - ${variantTitle}`
+              ?`${productTitle} - ${variantTitle}`
               : productTitle;
+
+            // Fetch Real Description
+            let productDescription = `Auto-created from Shopify order. SKU: ${sku || 'N/A'}, variant_id: ${variantIdStr}`;
+            try {
+              const realDesc = await getShopifyProductDescription(item.variant_id);
+              if (realDesc) {
+                productDescription = realDesc;
+                console.log(`[ORDER MAPPER] 📝 Fetched real description for ${item.variant_id}`);
+              }
+            } catch (descErr) {
+              console.warn(`[ORDER MAPPER] ⚠️ Failed to fetch description: ${descErr.message}`);
+            }
 
             const createProductResp = await callBitrix('/crm.product.add.json', {
               fields: {
@@ -687,7 +723,9 @@ export async function mapShopifyOrderToBitrixDeal(order) {
                 CURRENCY_ID: 'EUR',
                 SECTION_ID: getSectionIdBySku(sku), // Main catalog section
                 ACTIVE: 'Y',
-                DESCRIPTION: `Auto-created from Shopify order. SKU: ${sku || 'N/A'}, variant_id: ${variantIdStr}`
+                DESCRIPTION: productDescription,
+                DETAIL_TEXT: productDescription, // Also set detail text
+                DETAIL_TEXT_TYPE: 'html' // Ensure it renders as HTML
               }
             });
 
