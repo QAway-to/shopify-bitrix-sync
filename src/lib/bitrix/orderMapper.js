@@ -627,6 +627,53 @@ export async function mapShopifyOrderToBitrixDeal(order) {
                 bitrixProductId: productId,
                 timestamp: new Date().toISOString()
               }));
+
+              // ✅ PRE-ORDER FIX: Add stock for on-demand created products
+              // This allows the deal to be closed without "Insufficient stock" error
+              const orderQty = parseInt(item.quantity) || 1;
+              console.log(`[ORDER MAPPER] 📦 PRE-ORDER: Adding stock (${orderQty} units) for on-demand product ${productId}`);
+
+              try {
+                // Create Store Adjustment document (Type 'S' - simpler than Arrival 'A' as it doesn't need supplier)
+                const docResp = await callBitrix('/catalog.document.add.json', {
+                  fields: {
+                    docType: 'S', // Store Adjustment
+                    title: `Pre-order stock: ${fullTitle} (Order item)`,
+                    responsibleId: 52,
+                    currency: 'EUR',
+                    status: 'N'
+                  }
+                });
+
+                let docId = null;
+                if (docResp.result?.document?.id) {
+                  docId = docResp.result.document.id;
+                } else if (docResp.result) {
+                  docId = docResp.result;
+                }
+
+                if (docId) {
+                  // Add element to document
+                  await callBitrix('/catalog.document.element.add.json', {
+                    fields: {
+                      docId: docId,
+                      elementId: productId,
+                      amount: orderQty,
+                      purchasingPrice: 0,
+                      storeTo: 2 // Warehouse ID 2
+                    }
+                  });
+
+                  // Conduct document
+                  await callBitrix('/catalog.document.conduct.json', { id: docId });
+                  console.log(`[ORDER MAPPER] ✅ PRE-ORDER: Stock added successfully (Document ID: ${docId})`);
+                } else {
+                  console.warn(`[ORDER MAPPER] ⚠️ PRE-ORDER: Failed to create stock document for product ${productId}`);
+                }
+              } catch (stockError) {
+                console.error(`[ORDER MAPPER] ❌ PRE-ORDER: Error adding stock:`, stockError.message);
+                // Continue anyway - product is created, stock issue can be fixed manually
+              }
             } else {
               console.error(`[ORDER MAPPER] ❌ ON-DEMAND: Failed to create product:`, createProductResp.error || 'Unknown error');
             }
