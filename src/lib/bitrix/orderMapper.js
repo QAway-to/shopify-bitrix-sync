@@ -110,6 +110,44 @@ function parseColorFromTitle(title, properties = []) {
   return null;
 }
 
+// Enum Map for Size (PROPERTY_98)
+const SIZE_ENUM_MAP = {
+  "20": 154, "21": 156, "22": 158, "23": 160, "24": 162,
+  "25": 164, "26": 166, "27": 168, "28": 170, "29": 172,
+  "30": 174, "31": 176, "32": 178, "33": 320, "34": 322,
+  "35": 324, "36": 326, "37": 328, "38": 330, "39": 332,
+  "40": 334, "41": 336, "42": 338, "43": 340, "44": 342,
+  "45": 344, "46": 346, "47": 348, "48": 350, "49": 352,
+  "50": 354, "51": 356, "52": 358, "53": 360, "54": 362
+};
+
+function getSizeEnumId(sizeText) {
+  if (!sizeText) return null;
+  const sizeClean = String(sizeText).trim();
+  return SIZE_ENUM_MAP[sizeClean] || null;
+}
+
+function getCategoryBySku(sku) {
+  if (!sku) return 'category-g-m';
+  const firstChar = sku[0].toLowerCase();
+  if (firstChar >= 'a' && firstChar <= 'f') return 'category-a-f';
+  if (firstChar >= 'g' && firstChar <= 'm') return 'category-g-m';
+  if (firstChar >= 'n' && firstChar <= 's') return 'category-n-s';
+  if (firstChar >= 't' && firstChar <= 'z') return 'category-t-z';
+  return 'category-g-m';
+}
+
+function getSectionIdBySku(sku) {
+  const cat = getCategoryBySku(sku);
+  const map = {
+    'category-a-f': 36,
+    'category-g-m': 38,
+    'category-n-s': 40,
+    'category-t-z': 42
+  };
+  return map[cat] || 38;
+}
+
 /**
  * Map Shopify order to Bitrix24 deal fields and product rows
  * @param {Object} order - Shopify order object
@@ -608,7 +646,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
                 XML_ID: variantIdStr, // variant_id as XML_ID for mapping
                 PRICE: price,
                 CURRENCY_ID: 'EUR',
-                SECTION_ID: 38, // Main catalog section
+                SECTION_ID: getSectionIdBySku(sku), // Main catalog section
                 ACTIVE: 'Y',
                 DESCRIPTION: `Auto-created from Shopify order. SKU: ${sku || 'N/A'}, variant_id: ${variantIdStr}`
               }
@@ -628,10 +666,49 @@ export async function mapShopifyOrderToBitrixDeal(order) {
                 timestamp: new Date().toISOString()
               }));
 
-              // ✅ PRE-ORDER FIX: Add stock for on-demand created products
-              // This allows the deal to be closed without "Insufficient stock" error
-              const orderQty = parseInt(item.quantity) || 1;
-              console.log(`[ORDER MAPPER] 📦 PRE-ORDER: Adding stock (${orderQty} units) for on-demand product ${productId}`);
+              const orderQty = parseInt(item.quantity) || 1; // Usually 1-2
+
+              // --- Property & Stock Logic ---
+
+              // 1. Calculate Properties
+              const brand = item.vendor || '';
+              const category = getCategoryBySku(item.sku);
+              // Try to parse size/color from variant_title (e.g. "40 / Black")
+              let sizeVal = '';
+              let colorVal = '';
+
+              if (item.variant_title) {
+                const parts = item.variant_title.split('/').map(s => s.trim());
+                // Simple heuristic: if part is numeric -> Size, else Color
+                for (const p of parts) {
+                  if (/^\d+(\.\d+)?$/.test(p)) sizeVal = p;
+                  else if (p.toLowerCase() !== 'default title') colorVal = p;
+                }
+              }
+              const sizeEnum = getSizeEnumId(sizeVal);
+
+              console.log(`[ORDER MAPPER] 🔖 Updating properties for ${productId}: Brand=${brand}, Size=${sizeVal}(${sizeEnum}), Color=${colorVal}`);
+
+              // 2. Update Product with Properties
+              // (We do this immediately after create to ensure data consistency)
+              try {
+                const updateFields = {
+                  "PROPERTY_102": brand,     // Brand
+                  "PROPERTY_104": category,  // Category
+                  "PROPERTY_106": colorVal   // Color
+                };
+                if (sizeEnum) updateFields["PROPERTY_98"] = sizeEnum; // Size Enum
+
+                await callBitrix('/crm.product.update.json', {
+                  id: productId,
+                  fields: updateFields
+                });
+              } catch (propErr) {
+                console.error(`[ORDER MAPPER] ❌ Failed to update properties: ${propErr.message}`);
+              }
+
+              // 3. Add Pre-Order Stock (Store 2)
+              console.log(`[ORDER MAPPER] 📦 PRE-ORDER: Adding stock (${orderQty} units) for on-demand product ${productId} (Store ID: 2)`);
 
               try {
                 // Create Store Adjustment document (Type 'S' - simpler than Arrival 'A' as it doesn't need supplier)
