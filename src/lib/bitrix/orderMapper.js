@@ -724,8 +724,11 @@ export async function mapShopifyOrderToBitrixDeal(order) {
                 SECTION_ID: getSectionIdBySku(sku), // Main catalog section
                 ACTIVE: 'Y',
                 DESCRIPTION: productDescription,
-                DETAIL_TEXT: productDescription, // Also set detail text
-                DETAIL_TEXT_TYPE: 'html' // Ensure it renders as HTML
+                DESCRIPTION_TYPE: 'html', // Fix: Explicitly set type to HTML
+                DETAIL_TEXT: productDescription,
+                DETAIL_TEXT_TYPE: 'html',
+                PREVIEW_TEXT: productDescription,
+                PREVIEW_TEXT_TYPE: 'html'
               }
             });
 
