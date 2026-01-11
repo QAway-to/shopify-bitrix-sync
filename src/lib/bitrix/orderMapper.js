@@ -782,7 +782,8 @@ export async function mapShopifyOrderToBitrixDeal(order) {
               : productTitle;
 
             // Fetch Real Description
-            let productDescription = `Auto-created from Shopify order. SKU: ${sku || 'N/A'}, variant_id: ${variantIdStr}`;
+            // ✅ FIX: Improved fallback description
+            let productDescription = `Shopify Product: ${fullTitle}\nSKU: ${sku || 'N/A'}\nVariant ID: ${variantIdStr}`;
             try {
               const realDesc = await getShopifyProductDescription(item.variant_id);
               if (realDesc) {
@@ -871,7 +872,9 @@ export async function mapShopifyOrderToBitrixDeal(order) {
               }
 
               // 3. Add Pre-Order Stock (Store 2)
-              console.log(`[ORDER MAPPER] 📦 PRE-ORDER: Adding stock (${orderQty} units) for on-demand product ${productId} (Store ID: 2)`);
+              // ✅ FIX: Add +1 to orderQty to handle deal reservation AND keep positive stock
+              const stockAmount = orderQty + 1;
+              console.log(`[ORDER MAPPER] 📦 PRE-ORDER: Adding stock (${stockAmount} units = ${orderQty}+1) for on-demand product ${productId} (Store ID: 2)`);
 
               try {
                 // Create Store Adjustment document (Type 'S' - simpler than Arrival 'A' as it doesn't need supplier)
@@ -898,7 +901,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
                     fields: {
                       docId: docId,
                       elementId: productId,
-                      amount: orderQty,
+                      amount: stockAmount, // ✅ Updated to orderQty + 1
                       purchasingPrice: 0,
                       storeTo: 2 // Warehouse ID 2
                     }
@@ -906,7 +909,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
 
                   // Conduct document
                   await callBitrix('/catalog.document.conduct.json', { id: docId });
-                  console.log(`[ORDER MAPPER] ✅ PRE-ORDER: Stock added successfully (Document ID: ${docId})`);
+                  console.log(`[ORDER MAPPER] ✅ PRE-ORDER: Stock added successfully (Document ID: ${docId}, Amount: ${stockAmount})`);
                 } else {
                   console.warn(`[ORDER MAPPER] ⚠️ PRE-ORDER: Failed to create stock document for product ${productId}`);
                 }

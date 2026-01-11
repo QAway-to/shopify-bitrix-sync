@@ -1069,245 +1069,278 @@ async function handleOrderUpdated(order) {
   return dealId;
 }
 
-export default async function handler(req, res) {
-  console.log(`[SHOPIFY WEBHOOK] ===== INCOMING REQUEST =====`);
-  console.log(`[SHOPIFY WEBHOOK] Method: ${req.method}`);
-  console.log(`[SHOPIFY WEBHOOK] Headers:`, {
-    'x-shopify-topic': req.headers['x-shopify-topic'],
-    'content-type': req.headers['content-type']
-  });
+// =============================================================================
+// GLOBAL LOCK for Duplicate Prevention
+// =============================================================================
+const processingOrders = new Set();
 
+export default async function handler(req, res) {
   if (req.method !== 'POST') {
     console.log(`[SHOPIFY WEBHOOK] ❌ Method not allowed: ${req.method}`);
     res.status(405).end('Method not allowed');
     return;
   }
 
+  const log = (msg, data = null) => {
+    const ts = new Date().toISOString();
+    if (data) {
+      console.log(`[${ts}] [SHOPIFY WEBHOOK] ${msg}`, JSON.stringify(data, null, 2));
+    } else {
+      console.log(`[${ts}] [SHOPIFY WEBHOOK] ${msg}`);
+    }
+  };
+
+  log('===== INCOMING REQUEST =====');
+  log(`Method: ${req.method}`);
+  log(`Headers:`, req.headers);
+
   let topic = req.headers['x-shopify-topic'];
   const order = req.body;
 
-  // ✅ FALLBACK: If topic header is missing, try to determine from order data
-  if (!topic && order) {
-    // Check if order was just created (no updated_at or created_at === updated_at)
-    if (order.created_at && order.updated_at) {
-      const created = new Date(order.created_at);
-      const updated = new Date(order.updated_at);
-      const timeDiff = Math.abs(updated - created);
-      // If created and updated are within 2 seconds, it's likely a create event
-      if (timeDiff < 2000) {
-        topic = 'orders/create';
-        console.log(`[SHOPIFY WEBHOOK] ⚠️ Topic header missing, determined as 'orders/create' from order timestamps (diff: ${timeDiff}ms)`);
-      } else {
-        topic = 'orders/updated';
-        console.log(`[SHOPIFY WEBHOOK] ⚠️ Topic header missing, determined as 'orders/updated' from order timestamps (diff: ${timeDiff}ms)`);
-      }
-    } else {
-      // Default to create if we can't determine (new orders often don't have updated_at initially)
-      topic = 'orders/create';
-      console.log(`[SHOPIFY WEBHOOK] ⚠️ Topic header missing, defaulting to 'orders/create'`);
-    }
+  log(`Topic: ${topic}`);
+  log(`Order ID: ${order?.id}`);
+  log(`Order Name: ${order?.name}`);
+
+  // ✅ DUPLICATE PREVENTION LOCK
+  const shopifyOrderId = String(order.id);
+  if (processingOrders.has(shopifyOrderId)) {
+    log(`⚠️⚠️⚠️ DROPPING REQUEST: Order ${shopifyOrderId} is already being processed! (Lock active)`);
+    return res.status(200).json({ success: true, skipped: 'locked_processing' });
   }
 
-  console.log(`[SHOPIFY WEBHOOK] Topic: ${topic || 'undefined'}`);
-  console.log(`[SHOPIFY WEBHOOK] Order ID: ${order?.id || 'N/A'}`);
-  console.log(`[SHOPIFY WEBHOOK] Order Name: ${order?.name || 'N/A'}`);
+  processingOrders.add(shopifyOrderId);
+  log(`🔒 Acquired lock for order ${shopifyOrderId}`);
 
-  // ✅ CRITICAL: Check if this is a technical order or Bitrix-updated order (should not be sent to Bitrix)
-  // Technical orders are created FROM Bitrix to reserve inventory, so they should not create deals IN Bitrix
-  // BitrixUpdated orders were updated FROM Bitrix, so webhook from this update should not go back to Bitrix (loop guard)
-  // Orders with BITRIX:{dealId} tag are created FROM Bitrix, so they should not create deals IN Bitrix
-  // Handle tags as either array or comma-separated string (Shopify webhook may return both formats)
-  const orderTags = Array.isArray(order?.tags)
-    ? order.tags
-    : (order?.tags ? String(order.tags).split(',').map(t => t.trim()) : []);
-  const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
-  const isBitrixUpdated = orderTags.includes('BitrixUpdated');
-
-  if (isBitrixOrder || isBitrixUpdated) {
-    const skipReason = isBitrixOrder
-      ? 'Order created from Bitrix (BITRIX:{dealId} tag) - not sent to Bitrix'
-      : 'Bitrix-updated order (BitrixUpdated tag) - loop guard, not sent to Bitrix';
-
-    console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: ${isBitrixOrder ? 'Bitrix-created' : 'Bitrix-updated'} order detected (tags: ${orderTags.join(', ')}). Order ${order?.name || order?.id} will NOT be sent to Bitrix.`);
-    if (isBitrixOrder) {
-      console.log(`[SHOPIFY WEBHOOK] This order was created from Bitrix. It should not create a deal in Bitrix.`);
-    } else {
-      console.log(`[SHOPIFY WEBHOOK] This order was updated from Bitrix. Webhook from this update should not go back to Bitrix to prevent loop.`);
-    }
-
-    // Store event for monitoring (non-blocking) even though we skip Bitrix
-    try {
-      const storedEvent = shopifyAdapter.storeEvent(order, topic);
-      console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
-    } catch (storeError) {
-      console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
-    }
-
-    // Return 200 to prevent Shopify from retrying
-    return res.status(200).json({
-      success: true,
-      skipped: true,
-      reason: skipReason,
-      orderId: order?.id,
-      orderName: order?.name,
-      tags: orderTags
-    });
-  }
-
-  // ✅ CRITICAL: Check provenance marker (middleware.last_write) to prevent loop
-  // If order was last updated by Bitrix (source: 'bitrix'), skip sending webhook back to Bitrix
   try {
-    const shopifyOrderId = String(order.id);
-    const provenanceResult = await getProvenanceMarker(shopifyOrderId);
+    // ✅ FALLBACK: If topic header is missing, try to determine from order data
+    if (!topic && order) {
+      // Check if order was just created (no updated_at or created_at === updated_at)
+      if (order.created_at && order.updated_at) {
+        const created = new Date(order.created_at);
+        const updated = new Date(order.updated_at);
+        const timeDiff = Math.abs(updated - created);
 
-    if (provenanceResult.success && provenanceResult.exists && provenanceResult.value) {
-      const provenanceValue = provenanceResult.value;
-      const lastSource = provenanceValue.source;
+        // If created and updated are within 2 seconds, it's likely a create event
+        if (timeDiff < 2000) {
+          topic = 'orders/create';
+          console.log(`[SHOPIFY WEBHOOK] ⚠️ Topic header missing, determined as 'orders/create' from order timestamps (diff: ${timeDiff}ms)`);
+        } else {
+          topic = 'orders/updated';
+          console.log(`[SHOPIFY WEBHOOK] ⚠️ Topic header missing, determined as 'orders/updated' from order timestamps (diff: ${timeDiff}ms)`);
+        }
+      } else {
+        // Default to create if we can't determine (new orders often don't have updated_at initially)
+        topic = 'orders/create';
+        console.log(`[SHOPIFY WEBHOOK] ⚠️ Topic header missing, defaulting to 'orders/create'`);
+      }
+    }
 
-      // If last write was from Bitrix, skip to prevent loop
-      if (lastSource === 'bitrix') {
-        const skipReason = `Provenance marker indicates last update was from Bitrix (source: ${lastSource}, action: ${provenanceValue.action || 'unknown'}) - loop guard, not sent to Bitrix`;
+    console.log(`[SHOPIFY WEBHOOK] Topic: ${topic || 'undefined'}`);
+    console.log(`[SHOPIFY WEBHOOK] Order ID: ${order?.id || 'N/A'}`);
+    console.log(`[SHOPIFY WEBHOOK] Order Name: ${order?.name || 'N/A'}`);
 
-        console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: Provenance marker detected. Order ${order?.name || order?.id} was last updated by Bitrix. Will NOT be sent to Bitrix.`);
-        console.log(`[SHOPIFY WEBHOOK] Provenance details:`, {
-          source: lastSource,
-          action: provenanceValue.action,
-          correlationId: provenanceValue.correlationId,
-          timestamp: provenanceValue.ts
+    // ✅ CRITICAL: Check if this is a technical order or Bitrix-updated order (should not be sent to Bitrix)
+    // Technical orders are created FROM Bitrix to reserve inventory, so they should not create deals IN Bitrix
+    // BitrixUpdated orders were updated FROM Bitrix, so webhook from this update should not go back to Bitrix (loop guard)
+    // Orders with BITRIX:{dealId} tag are created FROM Bitrix, so they should not create deals IN Bitrix
+    // Handle tags as either array or comma-separated string (Shopify webhook may return both formats)
+    const orderTags = Array.isArray(order?.tags)
+      ? order.tags
+      : (order?.tags ? String(order.tags).split(',').map(t => t.trim()) : []);
+    const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
+    const isBitrixUpdated = orderTags.includes('BitrixUpdated');
+
+    if (isBitrixOrder || isBitrixUpdated) {
+      const skipReason = isBitrixOrder
+        ? 'Order created from Bitrix (BITRIX:{dealId} tag) - not sent to Bitrix'
+        : 'Bitrix-updated order (BitrixUpdated tag) - loop guard, not sent to Bitrix';
+
+      console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: ${isBitrixOrder ? 'Bitrix-created' : 'Bitrix-updated'} order detected (tags: ${orderTags.join(', ')}). Order ${order?.name || order?.id} will NOT be sent to Bitrix.`);
+      if (isBitrixOrder) {
+        console.log(`[SHOPIFY WEBHOOK] This order was created from Bitrix. It should not create a deal in Bitrix.`);
+      } else {
+        console.log(`[SHOPIFY WEBHOOK] This order was updated from Bitrix. Webhook from this update should not go back to Bitrix to prevent loop.`);
+      }
+
+      // Store event for monitoring (non-blocking) even though we skip Bitrix
+      try {
+        const storedEvent = shopifyAdapter.storeEvent(order, topic);
+        console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
+      } catch (storeError) {
+        console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
+      }
+
+      // Return 200 to prevent Shopify from retrying
+      return res.status(200).json({
+        success: true,
+        skipped: true,
+        reason: skipReason,
+        orderId: order?.id,
+        orderName: order?.name,
+        tags: orderTags
+      });
+    }
+
+    // ✅ CRITICAL: Check provenance marker (middleware.last_write) to prevent loop
+    // If order was last updated by Bitrix (source: 'bitrix'), skip sending webhook back to Bitrix
+    try {
+      const shopifyOrderId = String(order.id);
+      const provenanceResult = await getProvenanceMarker(shopifyOrderId);
+
+      if (provenanceResult.success && provenanceResult.exists && provenanceResult.value) {
+        const provenanceValue = provenanceResult.value;
+        const lastSource = provenanceValue.source;
+
+        // If last write was from Bitrix, skip to prevent loop
+        if (lastSource === 'bitrix') {
+          const skipReason = `Provenance marker indicates last update was from Bitrix (source: ${lastSource}, action: ${provenanceValue.action || 'unknown'}) - loop guard, not sent to Bitrix`;
+
+          console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: Provenance marker detected. Order ${order?.name || order?.id} was last updated by Bitrix. Will NOT be sent to Bitrix.`);
+          console.log(`[SHOPIFY WEBHOOK] Provenance details:`, {
+            source: lastSource,
+            action: provenanceValue.action,
+            correlationId: provenanceValue.correlationId,
+            timestamp: provenanceValue.ts
+          });
+
+          // Store event for monitoring (non-blocking) even though we skip Bitrix
+          try {
+            const storedEvent = shopifyAdapter.storeEvent(order, topic);
+            console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
+          } catch (storeError) {
+            console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
+          }
+
+          // Return 200 to prevent Shopify from retrying
+          return res.status(200).json({
+            success: true,
+            skipped: true,
+            reason: skipReason,
+            orderId: order?.id,
+            orderName: order?.name,
+            provenance: provenanceValue
+          });
+        }
+      }
+    } catch (provenanceError) {
+      // Non-blocking: if provenance check fails, continue with normal flow
+      console.warn(`[SHOPIFY WEBHOOK] ⚠️ Provenance marker check failed (non-blocking):`, provenanceError.message);
+    }
+
+    // ✅ CRITICAL: Log financial_status and cancellation/refund status for debugging
+    const financialStatus = order?.financial_status || 'N/A';
+    const statusLower = financialStatus?.toLowerCase() || '';
+    const isCancelled = statusLower === 'cancelled' || statusLower === 'voided';
+    const isRefunded = statusLower === 'refunded';
+    const isLost = isCancelled || isRefunded;
+    console.log(`[SHOPIFY WEBHOOK] ⚠️ Financial Status: ${financialStatus} ${isLost ? `(${isCancelled ? 'CANCELLED/VOIDED' : 'REFUNDED'} - should update to LOSE)` : ''}`);
+
+    console.log(`[SHOPIFY WEBHOOK] Order Data Summary:`, {
+      id: order?.id,
+      name: order?.name,
+      total_price: order?.total_price,
+      current_total_price: order?.current_total_price,
+      financial_status: financialStatus,
+      cancelled: isCancelled,
+      line_items_count: order?.line_items?.length || 0,
+      tags: orderTags,
+      created_at: order?.created_at,
+      updated_at: order?.updated_at
+    });
+
+    try {
+      // Store event for monitoring (non-blocking)
+      try {
+        const storedEvent = shopifyAdapter.storeEvent(order, topic);
+        console.log(`[SHOPIFY WEBHOOK] ✅ Event stored. Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
+        console.log(`[SHOPIFY WEBHOOK] 📊 Storage stats: Total events: ${shopifyAdapter.getEventsCount()}`);
+      } catch (storeError) {
+        console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event:', storeError);
+        console.error('[SHOPIFY WEBHOOK] Error details:', {
+          message: storeError.message,
+          stack: storeError.stack,
+          topic: topic,
+          orderId: order?.id
         });
+      }
 
-        // Store event for monitoring (non-blocking) even though we skip Bitrix
-        try {
-          const storedEvent = shopifyAdapter.storeEvent(order, topic);
-          console.log(`[SHOPIFY WEBHOOK] ✅ Event stored (skipped). Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
-        } catch (storeError) {
-          console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event (non-blocking):', storeError);
+      // ✅ PROCESS: Handle order events (create or update)
+      let dealId = null;
+      try {
+        if (topic === 'orders/create') {
+          console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/create event...`);
+          dealId = await handleOrderCreated(order);
+          console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/create event. Deal ID: ${dealId || 'N/A'}`);
+        } else if (topic === 'orders/updated') {
+          console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/updated event...`);
+          dealId = await handleOrderUpdated(order);
+          console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/updated event. Deal ID: ${dealId || 'N/A'}`);
+        } else if (topic === 'orders/cancelled' || topic === 'orders/cancel') {
+          // ✅ Handle cancellation as a special update event
+          console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/cancelled event...`);
+          console.log(`[SHOPIFY WEBHOOK] ⚠️ Cancellation webhook received - treating as update with cancelled status`);
+          dealId = await handleOrderUpdated(order);
+          console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/cancelled event. Deal ID: ${dealId || 'N/A'}`);
+        } else {
+          // For other topics just log and return 200 (don't block)
+          console.log(`[SHOPIFY WEBHOOK] ⚠️ Unhandled topic: ${topic}, skipping Bitrix processing`);
         }
 
-        // Return 200 to prevent Shopify from retrying
-        return res.status(200).json({
-          success: true,
-          skipped: true,
-          reason: skipReason,
-          orderId: order?.id,
-          orderName: order?.name,
-          provenance: provenanceValue
+        res.status(200).end('OK');
+      } catch (handlerError) {
+        // ✅ CRITICAL: Log detailed error information
+        console.error(`[SHOPIFY WEBHOOK] ❌❌❌ CRITICAL ERROR in handler for topic "${topic}":`, handlerError);
+        console.error(`[SHOPIFY WEBHOOK] Error type: ${handlerError.errorType || 'UNKNOWN'}`);
+        console.error(`[SHOPIFY WEBHOOK] Error message: ${handlerError.message}`);
+        console.error(`[SHOPIFY WEBHOOK] Error stack:`, handlerError.stack);
+        console.error(`[SHOPIFY WEBHOOK] Order details:`, {
+          id: order?.id,
+          name: order?.name,
+          financial_status: order?.financial_status,
+          total_price: order?.total_price,
+          line_items_count: order?.line_items?.length || 0
         });
+        console.error(`[SHOPIFY WEBHOOK] Error details:`, {
+          errorType: handlerError.errorType,
+          errorDetails: handlerError.errorDetails,
+          errorCode: handlerError.code,
+          shopifyOrderId: order?.id
+        });
+
+        // Still return 200 to prevent Shopify from retrying (we'll handle errors internally)
+        // But log extensively for debugging
+        res.status(200).json({
+          success: false,
+          error: handlerError.message,
+          errorType: handlerError.errorType || 'UNKNOWN',
+          orderId: order?.id,
+          topic: topic
+        });
+        return;
       }
-    }
-  } catch (provenanceError) {
-    // Non-blocking: if provenance check fails, continue with normal flow
-    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Provenance marker check failed (non-blocking):`, provenanceError.message);
-  }
-
-  // ✅ CRITICAL: Log financial_status and cancellation/refund status for debugging
-  const financialStatus = order?.financial_status || 'N/A';
-  const statusLower = financialStatus?.toLowerCase() || '';
-  const isCancelled = statusLower === 'cancelled' || statusLower === 'voided';
-  const isRefunded = statusLower === 'refunded';
-  const isLost = isCancelled || isRefunded;
-  console.log(`[SHOPIFY WEBHOOK] ⚠️ Financial Status: ${financialStatus} ${isLost ? `(${isCancelled ? 'CANCELLED/VOIDED' : 'REFUNDED'} - should update to LOSE)` : ''}`);
-
-  console.log(`[SHOPIFY WEBHOOK] Order Data Summary:`, {
-    id: order?.id,
-    name: order?.name,
-    total_price: order?.total_price,
-    current_total_price: order?.current_total_price,
-    financial_status: financialStatus,
-    cancelled: isCancelled,
-    line_items_count: order?.line_items?.length || 0,
-    tags: orderTags,
-    created_at: order?.created_at,
-    updated_at: order?.updated_at
-  });
-
-  try {
-    // Store event for monitoring (non-blocking)
-    try {
-      const storedEvent = shopifyAdapter.storeEvent(order, topic);
-      console.log(`[SHOPIFY WEBHOOK] ✅ Event stored. Topic: ${topic}, Order: ${order.name || order.id}, EventId: ${storedEvent.id}`);
-      console.log(`[SHOPIFY WEBHOOK] 📊 Storage stats: Total events: ${shopifyAdapter.getEventsCount()}`);
-    } catch (storeError) {
-      console.error('[SHOPIFY WEBHOOK] ⚠️ Failed to store event:', storeError);
+    } catch (e) {
+      // Outer catch for unexpected errors
+      console.error('[SHOPIFY WEBHOOK] ❌❌❌ UNEXPECTED ERROR:', e);
       console.error('[SHOPIFY WEBHOOK] Error details:', {
-        message: storeError.message,
-        stack: storeError.stack,
+        message: e.message,
+        stack: e.stack,
         topic: topic,
-        orderId: order?.id
+        orderId: order?.id,
+        orderName: order?.name
       });
-    }
-
-    // ✅ PROCESS: Handle order events (create or update)
-    let dealId = null;
-    try {
-      if (topic === 'orders/create') {
-        console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/create event...`);
-        dealId = await handleOrderCreated(order);
-        console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/create event. Deal ID: ${dealId || 'N/A'}`);
-      } else if (topic === 'orders/updated') {
-        console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/updated event...`);
-        dealId = await handleOrderUpdated(order);
-        console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/updated event. Deal ID: ${dealId || 'N/A'}`);
-      } else if (topic === 'orders/cancelled' || topic === 'orders/cancel') {
-        // ✅ Handle cancellation as a special update event
-        console.log(`[SHOPIFY WEBHOOK] 🔄 Processing orders/cancelled event...`);
-        console.log(`[SHOPIFY WEBHOOK] ⚠️ Cancellation webhook received - treating as update with cancelled status`);
-        dealId = await handleOrderUpdated(order);
-        console.log(`[SHOPIFY WEBHOOK] ✅ Successfully processed orders/cancelled event. Deal ID: ${dealId || 'N/A'}`);
-      } else {
-        // For other topics just log and return 200 (don't block)
-        console.log(`[SHOPIFY WEBHOOK] ⚠️ Unhandled topic: ${topic}, skipping Bitrix processing`);
-      }
-
-      res.status(200).end('OK');
-    } catch (handlerError) {
-      // ✅ CRITICAL: Log detailed error information
-      console.error(`[SHOPIFY WEBHOOK] ❌❌❌ CRITICAL ERROR in handler for topic "${topic}":`, handlerError);
-      console.error(`[SHOPIFY WEBHOOK] Error type: ${handlerError.errorType || 'UNKNOWN'}`);
-      console.error(`[SHOPIFY WEBHOOK] Error message: ${handlerError.message}`);
-      console.error(`[SHOPIFY WEBHOOK] Error stack:`, handlerError.stack);
-      console.error(`[SHOPIFY WEBHOOK] Order details:`, {
-        id: order?.id,
-        name: order?.name,
-        financial_status: order?.financial_status,
-        total_price: order?.total_price,
-        line_items_count: order?.line_items?.length || 0
-      });
-      console.error(`[SHOPIFY WEBHOOK] Error details:`, {
-        errorType: handlerError.errorType,
-        errorDetails: handlerError.errorDetails,
-        errorCode: handlerError.code,
-        shopifyOrderId: order?.id
-      });
-
-      // Still return 200 to prevent Shopify from retrying (we'll handle errors internally)
-      // But log extensively for debugging
+      // Return 200 to prevent Shopify retries, but log error
       res.status(200).json({
         success: false,
-        error: handlerError.message,
-        errorType: handlerError.errorType || 'UNKNOWN',
-        orderId: order?.id,
+        error: 'Unexpected error',
+        message: e.message,
         topic: topic
       });
-      return;
     }
-  } catch (e) {
-    // Outer catch for unexpected errors
-    console.error('[SHOPIFY WEBHOOK] ❌❌❌ UNEXPECTED ERROR:', e);
-    console.error('[SHOPIFY WEBHOOK] Error details:', {
-      message: e.message,
-      stack: e.stack,
-      topic: topic,
-      orderId: order?.id,
-      orderName: order?.name
-    });
-    // Return 200 to prevent Shopify retries, but log error
-    res.status(200).json({
-      success: false,
-      error: 'Unexpected error',
-      message: e.message,
-      topic: topic
-    });
+  } finally {
+    // ✅ Release Lock
+    if (shopifyOrderId && processingOrders.has(shopifyOrderId)) {
+      processingOrders.delete(shopifyOrderId);
+      log(`🔓 Released lock for order ${shopifyOrderId}`);
+    }
   }
 }
-
