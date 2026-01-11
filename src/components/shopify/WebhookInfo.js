@@ -9,9 +9,9 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
     }
     return '';
   };
-  
+
   const [baseUrl] = useState(getBaseUrl);
-  
+
   // Static webhook endpoints (paths only - URL will be built dynamically)
   const WEBHOOK_ENDPOINTS = {
     'order/crt': {
@@ -28,6 +28,11 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
       label: 'Product Update (product/upd)',
       path: '/api/webhook/product/upd',
       description: 'Webhook for product update events (catalog only, does not affect deals)'
+    },
+    'drft/crt': {
+      label: 'Draft Order Create (drft/crt)',
+      path: '/api/drft/crt',
+      description: 'Webhook for draft order creation (Pre-orders). Creates deal in Bitrix with Pre-order stage.'
     }
   };
 
@@ -99,7 +104,7 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
         setIsLoadingBitrixUrl(false);
       }
     };
-    
+
     fetchBitrixWebhookUrl();
   }, []);
 
@@ -116,8 +121,8 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
     const selectedUrl = currentOrigin ? `${currentOrigin}${selectedPath}` : '';
     if (selectedUrl) {
       navigator.clipboard.writeText(selectedUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -491,9 +496,9 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
             <li style={{ marginBottom: '8px' }}>Navigate to Settings → Notifications → Webhooks</li>
             <li style={{ marginBottom: '8px' }}>Create 3 webhooks with these static URLs:</li>
             <ul style={{ marginLeft: '20px', marginTop: '4px', marginBottom: '8px' }}>
-              <li><strong>Order creation</strong> → <code style={{fontSize: '0.85rem'}}>/api/webhook/order/crt</code></li>
-              <li><strong>Order update</strong> → <code style={{fontSize: '0.85rem'}}>/api/webhook/order/upd</code> (handles refunds and cancellations)</li>
-              <li><strong>Product update</strong> → <code style={{fontSize: '0.85rem'}}>/api/webhook/product/upd</code> (catalog only)</li>
+              <li><strong>Order creation</strong> → <code style={{ fontSize: '0.85rem' }}>/api/webhook/order/crt</code></li>
+              <li><strong>Order update</strong> → <code style={{ fontSize: '0.85rem' }}>/api/webhook/order/upd</code> (handles refunds and cancellations)</li>
+              <li><strong>Product update</strong> → <code style={{ fontSize: '0.85rem' }}>/api/webhook/product/upd</code> (catalog only)</li>
             </ul>
             <li style={{ marginBottom: '8px' }}>Select format: JSON for all webhooks</li>
             <li>Save all webhooks - URLs are static and won't change</li>
