@@ -1,9 +1,11 @@
 /**
  * Inventory Sync API Endpoint
  * - GET: Return current sync status
- * - POST: Start sync (manual or scheduled)
+ * - POST: Start sync (manual trigger with optional section selection)
  * 
- * Auto-runs every 4 hours via setInterval (started in this module)
+ * Auto-runs every 4 hours via setInterval
+ * Server-side lock prevents concurrent syncs
+ * Retry logic: if busy, auto-sync retries every 10 minutes
  */
 
 import { runInventorySync, SECTION_NAMES } from '../../../src/lib/sync/inventorySyncCore.js';
@@ -12,29 +14,34 @@ import { syncProgressAdapter } from '../../../src/lib/adapters/sync/progressAdap
 // Sync configuration
 const ALL_SECTIONS = [36, 38, 40, 42];
 const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const RETRY_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes retry if busy
 
-// Track if sync is currently running
+// Server-side lock - persists across requests
 let isSyncRunning = false;
+let currentSyncRequestId = null;
 
 /**
  * Run inventory sync with progress tracking
+ * @param {string} source - 'manual' or 'scheduled'
+ * @param {number[]} sectionIds - Sections to sync (defaults to ALL)
  */
-async function executeSync(source = 'manual') {
+async function executeSync(source = 'manual', sectionIds = ALL_SECTIONS) {
     if (isSyncRunning) {
-        console.log('[INVENTORY SYNC] Sync already in progress, skipping...');
-        return { success: false, reason: 'already_running' };
+        console.log('[INVENTORY SYNC] ⏳ Sync already in progress, skipping...');
+        return { success: false, reason: 'already_running', currentRequest: currentSyncRequestId };
     }
 
     isSyncRunning = true;
     const requestId = `sync-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    currentSyncRequestId = requestId;
 
-    console.log(`[INVENTORY SYNC] Starting sync (${source}), requestId: ${requestId}`);
+    console.log(`[INVENTORY SYNC] 🚀 Starting sync (${source}), requestId: ${requestId}, sections: ${sectionIds.join(', ')}`);
 
     try {
-        syncProgressAdapter.startRun(requestId, ALL_SECTIONS);
+        syncProgressAdapter.startRun(requestId, sectionIds);
 
         const results = await runInventorySync({
-            sectionIds: ALL_SECTIONS,
+            sectionIds,
             progressCallback: (update) => {
                 // Log to console
                 if (update.type === 'section_start') {
@@ -59,39 +66,60 @@ async function executeSync(source = 'manual') {
 
         syncProgressAdapter.endRun(results);
 
-        console.log(`[INVENTORY SYNC] Sync complete. Created: ${results.totals.created}, Updated: ${results.totals.updated}, Errors: ${results.totals.errors}`);
+        console.log(`[INVENTORY SYNC] ✅ Sync complete. Created: ${results.totals.created}, Updated: ${results.totals.updated}, Errors: ${results.totals.errors}`);
 
         return { success: true, requestId, results };
 
     } catch (error) {
-        console.error('[INVENTORY SYNC] Sync failed:', error);
+        console.error('[INVENTORY SYNC] ❌ Sync failed:', error);
         syncProgressAdapter.endRun({ success: false, error: error.message, sections: {}, totals: {} });
         return { success: false, requestId, error: error.message };
 
     } finally {
         isSyncRunning = false;
+        currentSyncRequestId = null;
     }
 }
 
 // ============ SCHEDULER ============
-// Start 4-hour auto-sync interval
 let schedulerStarted = false;
+let retryTimeoutId = null;
+
+function tryScheduledSync() {
+    if (isSyncRunning) {
+        console.log('[INVENTORY SYNC SCHEDULER] ⏳ Sync busy, will retry in 10 minutes...');
+        // Schedule retry
+        if (retryTimeoutId) clearTimeout(retryTimeoutId);
+        retryTimeoutId = setTimeout(() => {
+            console.log('[INVENTORY SYNC SCHEDULER] 🔄 Retry after busy...');
+            tryScheduledSync();
+        }, RETRY_INTERVAL_MS);
+        return;
+    }
+
+    // Clear any pending retry
+    if (retryTimeoutId) {
+        clearTimeout(retryTimeoutId);
+        retryTimeoutId = null;
+    }
+
+    // Execute full sync (all sections)
+    executeSync('scheduled', ALL_SECTIONS).catch(err => {
+        console.error('[INVENTORY SYNC SCHEDULER] Scheduled sync failed:', err);
+    });
+}
 
 function startScheduler() {
     if (schedulerStarted) return;
     schedulerStarted = true;
 
-    console.log(`[INVENTORY SYNC SCHEDULER] Starting auto-sync every ${SYNC_INTERVAL_MS / 3600000} hours`);
+    console.log(`[INVENTORY SYNC SCHEDULER] ✅ Starting auto-sync every ${SYNC_INTERVAL_MS / 3600000} hours`);
 
     // Schedule recurring sync
     setInterval(() => {
-        console.log('[INVENTORY SYNC SCHEDULER] Triggered scheduled sync');
-        executeSync('scheduled').catch(err => {
-            console.error('[INVENTORY SYNC SCHEDULER] Scheduled sync failed:', err);
-        });
+        console.log('[INVENTORY SYNC SCHEDULER] ⏰ Triggered scheduled sync');
+        tryScheduledSync();
     }, SYNC_INTERVAL_MS);
-
-    console.log('[INVENTORY SYNC SCHEDULER] ✅ Scheduler active');
 }
 
 // Start scheduler on module load
@@ -100,11 +128,13 @@ startScheduler();
 // ============ API HANDLER ============
 export default async function handler(req, res) {
     if (req.method === 'GET') {
-        // Return current status
+        // Return current status (for UI polling)
         const status = syncProgressAdapter.getStatus();
         return res.status(200).json({
             success: true,
-            ...status,
+            isRunning: isSyncRunning,
+            currentRequest: currentSyncRequestId,
+            lastRun: status.lastRun,
             schedulerActive: schedulerStarted,
             nextSyncIn: schedulerStarted ? `${Math.round(SYNC_INTERVAL_MS / 3600000)} hours` : null
         });
@@ -115,23 +145,36 @@ export default async function handler(req, res) {
         if (isSyncRunning) {
             return res.status(409).json({
                 success: false,
-                error: 'Sync already in progress',
-                status: syncProgressAdapter.getStatus()
+                error: 'Синхронизация уже выполняется',
+                isRunning: true,
+                currentRequest: currentSyncRequestId
             });
+        }
+
+        // Parse section IDs from body (optional)
+        let sectionIds = ALL_SECTIONS;
+        try {
+            if (req.body?.sectionIds && Array.isArray(req.body.sectionIds)) {
+                sectionIds = req.body.sectionIds.map(id => parseInt(id)).filter(id => ALL_SECTIONS.includes(id));
+                if (sectionIds.length === 0) sectionIds = ALL_SECTIONS;
+            }
+        } catch (e) {
+            // Ignore parse errors, use default
         }
 
         const requestId = `sync-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
         // Start sync in background (don't await)
-        executeSync('manual').catch(err => {
+        executeSync('manual', sectionIds).catch(err => {
             console.error('[INVENTORY SYNC] Manual sync failed:', err);
         });
 
         return res.status(202).json({
             success: true,
-            message: 'Sync started',
+            message: 'Синхронизация запущена',
             requestId,
-            sections: ALL_SECTIONS.map(id => ({ id, name: SECTION_NAMES[id] }))
+            sectionIds,
+            sections: sectionIds.map(id => ({ id, name: SECTION_NAMES[id] }))
         });
     }
 

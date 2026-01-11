@@ -34,32 +34,49 @@ export default function ShopifyPage() {
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load
   // ✅ Track if this is initial fetch to show loading state
   const [isInitialFetch, setIsInitialFetch] = useState(true);
-  // Sync certificates state
-  const [isSyncingCertificates, setIsSyncingCertificates] = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
-  // Create certificates state
-  const [isCreatingCertificates, setIsCreatingCertificates] = useState(false);
-  const [createResult, setCreateResult] = useState(null);
-  // Update certificate product state (manual update button)
-  const [isUpdatingCert500, setIsUpdatingCert500] = useState(false);
-  const [updateCertResult, setUpdateCertResult] = useState(null);
   // Inventory sync state
-  const [isSyncingInventory, setIsSyncingInventory] = useState(false);
+  const [syncStatus, setSyncStatus] = useState({ isRunning: false, lastRun: null });
+  const [selectedSectionId, setSelectedSectionId] = useState('all');
   const [inventorySyncResult, setInventorySyncResult] = useState(null);
 
-  // Handle inventory sync
-  const handleSyncInventory = async () => {
-    setIsSyncingInventory(true);
-    setInventorySyncResult(null);
+  // Section options for dropdown
+  const SECTION_OPTIONS = [
+    { value: 'all', label: 'Все категории' },
+    { value: '36', label: 'A-F (36)' },
+    { value: '38', label: 'G-M (38)' },
+    { value: '40', label: 'N-S (40)' },
+    { value: '42', label: 'T-Z (42)' }
+  ];
+
+  // Fetch sync status periodically
+  const fetchSyncStatus = async () => {
     try {
-      const response = await fetch('/api/cron/sync-inventory', { method: 'POST' });
+      const response = await fetch('/api/cron/sync-inventory');
+      const data = await response.json();
+      setSyncStatus({ isRunning: data.isRunning, lastRun: data.lastRun });
+    } catch (err) {
+      console.error('Error fetching sync status:', err);
+    }
+  };
+
+  // Handle inventory sync with section selection
+  const handleSyncInventory = async () => {
+    setInventorySyncResult(null);
+    const sectionIds = selectedSectionId === 'all' ? [36, 38, 40, 42] : [parseInt(selectedSectionId)];
+    try {
+      const response = await fetch('/api/cron/sync-inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionIds })
+      });
       const data = await response.json();
       if (response.ok) {
         setInventorySyncResult({
           success: true,
-          message: 'Синхронизация запущена. Проверьте логи через несколько минут.',
+          message: `Синхронизация запущена для ${selectedSectionId === 'all' ? 'всех категорий' : SECTION_OPTIONS.find(o => o.value === selectedSectionId)?.label}. Проверьте логи.`,
           requestId: data.requestId
         });
+        setSyncStatus({ isRunning: true, lastRun: syncStatus.lastRun });
       } else {
         setInventorySyncResult({
           success: false,
@@ -71,8 +88,6 @@ export default function ShopifyPage() {
         success: false,
         message: err.message || 'Network error'
       });
-    } finally {
-      setIsSyncingInventory(false);
     }
   };
 
@@ -241,11 +256,15 @@ export default function ShopifyPage() {
       setIsInitialFetch(false);
     });
 
+    // Initial sync status fetch
+    fetchSyncStatus();
+
     // Auto-refresh every 5 seconds (silent - no loading states, just fetch new data)
     const interval = setInterval(() => {
       fetchEvents();
       fetchBitrixEvents();
       fetchSuccessOperations();
+      fetchSyncStatus(); // Poll sync status for UI updates
     }, 5000);
 
     return () => clearInterval(interval);
@@ -527,90 +546,7 @@ export default function ShopifyPage() {
     }
   };
 
-  // Sync all inventory (products with qty > 0, price updates)
-  const handleSyncInventory = async () => {
-    setIsSyncingCertificates(true);
-    setSyncResult(null);
-    setError(null);
 
-    try {
-      const response = await fetch('/api/cron/sync-inventory', {
-        method: 'GET',
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        // Format summary for display
-        const summary = data.summary || {};
-        const resultMessage = `✅ Синхронизировано: ${summary.synced || 0} | Создано: ${summary.created || 0} | Цена: ${summary.priceUpdated || 0} | Кол-во: ${summary.qtyUpdated || 0} | Пропущено: ${summary.skipped || 0} | Ошибок: ${summary.errors || 0}`;
-        setSyncResult({
-          success: true,
-          message: resultMessage,
-          summary: summary
-        });
-        console.log('[SYNC] Inventory synced successfully:', data);
-      } else {
-        setError(data.error || data.message || 'Failed to sync inventory');
-        setSyncResult(data);
-      }
-    } catch (err) {
-      console.error('[SYNC] Error syncing inventory:', err);
-      setError(err.message || 'Failed to sync inventory');
-    } finally {
-      setIsSyncingCertificates(false);
-    }
-  };
-
-  const handleCreateCertificates = async () => {
-    setIsCreatingCertificates(true);
-    setCreateResult(null);
-    setError(null);
-
-    try {
-      const response = await fetch('/api/sync/certificates?action=create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        setCreateResult(data);
-        console.log('[CREATE] Certificates created successfully:', data);
-      } else {
-        setError(data.error || 'Failed to create certificates');
-        setCreateResult(data);
-      }
-    } catch (err) {
-      console.error('[CREATE] Error creating certificates:', err);
-      setError(err.message || 'Failed to create certificates');
-    } finally {
-      setIsCreatingCertificates(false);
-    }
-  };
-
-  // Update a specific certificate product in Bitrix (E-Certificate 500$, ID=4284)
-  const handleUpdateCertificate500 = async () => {
-    setIsUpdatingCert500(true);
-    setUpdateCertResult(null);
-    try {
-      const response = await fetch('/api/bitrix/update-certificate-500', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      const data = await response.json();
-      setUpdateCertResult(data);
-    } catch (err) {
-      setUpdateCertResult({ success: false, error: err.message });
-    } finally {
-      setIsUpdatingCert500(false);
-    }
-  };
 
   return (
     <>
@@ -915,7 +851,7 @@ export default function ShopifyPage() {
         {/* Webhook Configuration */}
         <WebhookInfo onBitrixUrlChange={setBitrixWebhookUrl} />
 
-        {/* Sync Certificates Section */}
+        {/* Inventory Sync Section */}
         <div style={{
           marginTop: '30px',
           padding: '20px',
@@ -924,182 +860,75 @@ export default function ShopifyPage() {
           border: '1px solid rgba(59, 130, 246, 0.2)'
         }}>
           <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.3rem' }}>
-            Синхронизация товаров
+            Синхронизация каталога
           </h2>
 
-          <div style={{ marginBottom: '16px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={handleSyncInventory}
-              disabled={isSyncingCertificates}
+              disabled={syncStatus.isRunning}
               style={{
-                background: isSyncingCertificates ? '#6b7280' : '#059669',
+                background: syncStatus.isRunning ? '#6b7280' : '#059669',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: isSyncingCertificates ? 'not-allowed' : 'pointer',
+                cursor: syncStatus.isRunning ? 'not-allowed' : 'pointer',
                 fontSize: '1rem',
                 fontWeight: 500,
-                minWidth: '200px',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
+                minWidth: '180px'
               }}
-              title="Обновить количество существующих товаров (автоматически раз в час)"
+              title="Запустить синхронизацию товаров (автоматически каждые 4 часа)"
             >
-              {isSyncingCertificates ? '⏳ Синхронизация...' : '🔄 Синхронизировать'}
+              {syncStatus.isRunning ? '⏳ Выполняется...' : '🔄 Синхронизировать'}
             </button>
-            <button
-              onClick={handleCreateCertificates}
-              disabled={isCreatingCertificates}
+
+            <select
+              value={selectedSectionId}
+              onChange={(e) => setSelectedSectionId(e.target.value)}
+              disabled={syncStatus.isRunning}
               style={{
-                background: isCreatingCertificates ? '#6b7280' : '#3b82f6',
-                border: 'none',
-                padding: '10px 20px',
+                padding: '10px 16px',
                 borderRadius: '6px',
-                color: 'white',
-                cursor: isCreatingCertificates ? 'not-allowed' : 'pointer',
+                border: '1px solid rgba(59, 130, 246, 0.4)',
+                background: 'rgba(30, 41, 59, 0.8)',
+                color: '#f1f5f9',
                 fontSize: '1rem',
-                fontWeight: 500,
-                minWidth: '200px',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
+                cursor: syncStatus.isRunning ? 'not-allowed' : 'pointer',
+                minWidth: '160px'
               }}
-              title="Создать новые товары и ордера прихода"
             >
-              {isCreatingCertificates ? '⏳ Создание...' : '➕ Создание'}
-            </button>
-            <button
-              onClick={handleUpdateCertificate500}
-              disabled={isUpdatingCert500}
-              style={{
-                padding: '10px 12px',
-                background: isUpdatingCert500 ? '#475569' : '#14b8a6',
-                borderRadius: '6px',
-                border: '1px solid rgba(20, 184, 166, 0.6)',
-                color: 'white',
-                cursor: isUpdatingCert500 ? 'not-allowed' : 'pointer',
-                fontSize: '1rem',
-                fontWeight: 500,
-                minWidth: '200px',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
-              title="Обновить поля продукта E-Certificate 500$ (ID 4284) в Bitrix"
-            >
-              {isUpdatingCert500 ? '⏳ Обновление...' : '✏️ Обновить E-Cert 500$'}
-            </button>
+              {SECTION_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+
+            {syncStatus.isRunning && (
+              <span style={{ color: '#fbbf24', fontSize: '0.9rem', fontWeight: 500 }}>
+                ⏳ Синхронизация в процессе...
+              </span>
+            )}
           </div>
 
-          <div style={{ marginTop: '16px' }}>
+          {inventorySyncResult && (
             <div style={{
-              color: '#94a3b8',
-              fontSize: '0.9rem',
-              marginBottom: '12px',
-              fontWeight: 500
-            }}>
-              Категории товаров для синхронизации:
-            </div>
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px'
-            }}>
-              <div style={{
-                padding: '12px',
-                background: 'rgba(59, 130, 246, 0.1)',
-                borderRadius: '6px',
-                border: '1px solid rgba(59, 130, 246, 0.3)'
-              }}>
-                <div style={{ color: '#f1f5f9', fontWeight: 500 }}>Сертификаты</div>
-                <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: '4px' }}>
-                  E-Certificate, Gift certificate FBFC, Printed Gift Certificate
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {(syncResult || createResult) && (
-            <div style={{
-              marginTop: '20px',
-              padding: '16px',
+              marginTop: '16px',
+              padding: '12px',
               borderRadius: '8px',
-              background: (syncResult || createResult)?.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-              border: `1px solid ${(syncResult || createResult)?.success ? '#059669' : '#ef4444'}`,
-              color: (syncResult || createResult)?.success ? '#059669' : '#ef4444'
+              background: inventorySyncResult.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              border: `1px solid ${inventorySyncResult.success ? '#059669' : '#ef4444'}`,
+              color: inventorySyncResult.success ? '#059669' : '#ef4444',
+              fontSize: '0.95rem'
             }}>
-              <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-                {syncResult
-                  ? (syncResult.success ? '✅ Синхронизация завершена' : '❌ Ошибка синхронизации')
-                  : (createResult.success ? '✅ Создание завершено' : '❌ Ошибка создания')
-                }
-              </div>
-              {((syncResult || createResult)?.summary) && (
-                <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                  Всего вариантов: {(syncResult || createResult).summary.total} |
-                  Создано документов: {(syncResult || createResult).summary.created} |
-                  Обновлено: {(syncResult || createResult).summary.updated} |
-                  Ошибок: {(syncResult || createResult).summary.errors}
-                </div>
-              )}
-              {((syncResult || createResult)?.certificates) && Object.keys((syncResult || createResult).certificates).length > 0 && (
-                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${(syncResult || createResult)?.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
-                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали по сертификатам:</div>
-                  {Object.entries((syncResult || createResult).certificates).map(([handle, data]) => (
-                    <div key={handle} style={{
-                      fontSize: '0.8rem',
-                      marginBottom: '8px',
-                      padding: '8px',
-                      background: 'rgba(0, 0, 0, 0.2)',
-                      borderRadius: '4px'
-                    }}>
-                      <div style={{ fontWeight: 500, marginBottom: '4px' }}>{handle}</div>
-                      {data.variants && data.variants.length > 0 && (
-                        <div style={{ marginLeft: '12px', opacity: 0.9 }}>
-                          {data.variants.map((variant, idx) => (
-                            <div key={idx} style={{ marginBottom: '4px' }}>
-                              {variant.success ? (
-                                <span>✅ {variant.sku}: {variant.quantity} шт. (Product ID: {variant.productId})</span>
-                              ) : (
-                                <span>❌ {variant.sku}: {variant.error}</span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {data.errors && data.errors.length > 0 && (
-                        <div style={{ marginLeft: '12px', color: '#ef4444', marginTop: '4px' }}>
-                          {data.errors.map((err, idx) => (
-                            <div key={idx}>❌ {err.sku || err.variant_title}: {err.error}</div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+              {inventorySyncResult.success ? '✅' : '❌'} {inventorySyncResult.message}
             </div>
           )}
 
-          {updateCertResult && (
-            <div style={{
-              marginTop: '12px',
-              padding: '12px',
-              borderRadius: '8px',
-              background: updateCertResult.success ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-              border: `1px solid ${updateCertResult.success ? '#10b981' : '#ef4444'}`,
-              color: updateCertResult.success ? '#10b981' : '#ef4444',
-              fontSize: '0.95rem'
-            }}>
-              <div style={{ fontWeight: 600, marginBottom: '6px' }}>
-                {updateCertResult.success ? '✅ Обновление сертификата 500$' : '❌ Ошибка обновления сертификата 500$'}
-              </div>
-              {updateCertResult.error && <div>{updateCertResult.error}</div>}
-              {updateCertResult.message && <div>{updateCertResult.message}</div>}
-              {updateCertResult.fields && (
-                <div style={{ marginTop: '6px', opacity: 0.9 }}>
-                  SKU: {updateCertResult.fields.XML_ID} | Цена: {updateCertResult.fields.PRICE} {updateCertResult.fields.CURRENCY_ID}
-                </div>
-              )}
+          {syncStatus.lastRun && (
+            <div style={{ marginTop: '12px', fontSize: '0.85rem', color: '#94a3b8' }}>
+              Последний запуск: {new Date(syncStatus.lastRun.endTime).toLocaleString()} •
+              {syncStatus.lastRun.success ? ' ✅ Успешно' : ' ❌ С ошибками'} •
+              {syncStatus.lastRun.durationMinutes} мин
             </div>
           )}
         </div>
