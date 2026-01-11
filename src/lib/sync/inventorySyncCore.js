@@ -426,7 +426,13 @@ async function syncSection(sectionId, allVariants, bitrixProducts, progressCallb
         descUpdated: 0,
         stockAdjusted: 0,
         skipped: 0,
-        errors: 0
+        errors: 0,
+        // Detailed logs (first 10 samples each)
+        updatedSamples: [],
+        skippedSamples: [],
+        createdSamples: [],
+        stockChanges: [],
+        errorSamples: []
     };
 
     progressCallback?.({
@@ -508,8 +514,20 @@ async function syncSection(sectionId, allVariants, bitrixProducts, progressCallb
                     cmd: `crm.product.update?id=${pid}&${updates.join('&')}`
                 });
                 result.updated++;
+                // Sample updated items
+                if (result.updatedSamples.length < 10) {
+                    const changes = [];
+                    if (bName !== shopifyName) changes.push('NAME');
+                    if (Math.abs(bPrice - sPrice) > 0.01) changes.push(`PRICE: ${bPrice}→${sPrice}`);
+                    if (Object.keys(props).length > 0) changes.push('PROPS');
+                    result.updatedSamples.push({ sku: variant.sku, pid, changes: changes.join(', ') });
+                }
             } else {
                 result.skipped++;
+                // Sample skipped items (already in sync)
+                if (result.skippedSamples.length < 10) {
+                    result.skippedSamples.push({ sku: variant.sku, pid, reason: 'Already in sync' });
+                }
             }
 
             ensureStockIds.push(parseInt(pid));
@@ -518,6 +536,10 @@ async function syncSection(sectionId, allVariants, bitrixProducts, progressCallb
             // CREATE new product (only if qty > 0)
             if (variant.qty <= 0) {
                 result.skipped++;
+                // Sample skipped: no stock
+                if (result.skippedSamples.length < 10) {
+                    result.skippedSamples.push({ sku: variant.sku, reason: 'qty=0, not in Bitrix' });
+                }
                 continue;
             }
 
@@ -550,18 +572,27 @@ async function syncSection(sectionId, allVariants, bitrixProducts, progressCallb
         await executeBatches(descCmds);
     }
 
-    // Execute creates
     for (const fields of createPayloads) {
         try {
             const resp = await callBitrix('crm.product.add', { fields });
             if (resp.result) {
                 ensureStockIds.push(parseInt(resp.result));
                 result.created++;
+                // Sample created
+                if (result.createdSamples.length < 10) {
+                    result.createdSamples.push({ sku: fields.CODE, pid: resp.result, name: fields.NAME });
+                }
             } else {
                 result.errors++;
+                if (result.errorSamples.length < 10) {
+                    result.errorSamples.push({ sku: fields.CODE, error: JSON.stringify(resp).slice(0, 100) });
+                }
             }
         } catch (e) {
             result.errors++;
+            if (result.errorSamples.length < 10) {
+                result.errorSamples.push({ sku: fields.CODE, error: e.message });
+            }
         }
     }
 
@@ -595,11 +626,19 @@ async function syncSection(sectionId, allVariants, bitrixProducts, progressCallb
         if (arrivalItems.length > 0) {
             await createStockDocument(arrivalItems, 'S', `Sync Arrival ${sectionName}`);
             result.stockAdjusted += arrivalItems.length;
+            // Sample stock arrivals
+            for (const item of arrivalItems.slice(0, 5)) {
+                result.stockChanges.push({ pid: item.id, type: 'arrival', amount: `+${item.amount}` });
+            }
         }
 
         if (deductItems.length > 0) {
             await createStockDocument(deductItems, 'D', `Sync Deduct ${sectionName}`);
             result.stockAdjusted += deductItems.length;
+            // Sample stock deductions
+            for (const item of deductItems.slice(0, 5)) {
+                result.stockChanges.push({ pid: item.id, type: 'deduct', amount: `-${item.amount}` });
+            }
         }
     }
 

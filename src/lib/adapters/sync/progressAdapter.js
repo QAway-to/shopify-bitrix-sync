@@ -212,13 +212,54 @@ class SyncProgressAdapter {
             lines.push(`Duration: ${lr.durationMinutes} minutes`);
             lines.push('');
 
-            // Section summaries
+            // Section summaries with detailed samples
             if (lr.sections) {
                 for (const [sectionId, result] of Object.entries(lr.sections)) {
                     lines.push(`Section ${result.sectionName} (${sectionId}): ${result.total} items`);
                     lines.push(`  Created: ${result.created}, Updated: ${result.updated}, Skipped: ${result.skipped}, Errors: ${result.errors}`);
+
+                    // Updated samples
+                    if (result.updatedSamples && result.updatedSamples.length > 0) {
+                        lines.push(`  Updated samples (first ${result.updatedSamples.length}):`);
+                        result.updatedSamples.forEach(s => {
+                            lines.push(`    • ${s.sku} (ID:${s.pid}): ${s.changes}`);
+                        });
+                    }
+
+                    // Created samples
+                    if (result.createdSamples && result.createdSamples.length > 0) {
+                        lines.push(`  Created samples (first ${result.createdSamples.length}):`);
+                        result.createdSamples.forEach(s => {
+                            lines.push(`    • ${s.sku} (ID:${s.pid}): ${s.name}`);
+                        });
+                    }
+
+                    // Stock changes
+                    if (result.stockChanges && result.stockChanges.length > 0) {
+                        lines.push(`  Stock changes (first ${result.stockChanges.length}):`);
+                        result.stockChanges.forEach(s => {
+                            lines.push(`    • PID:${s.pid} ${s.type}: ${s.amount}`);
+                        });
+                    }
+
+                    // Skipped samples
+                    if (result.skippedSamples && result.skippedSamples.length > 0) {
+                        lines.push(`  Skipped samples (first ${result.skippedSamples.length}):`);
+                        result.skippedSamples.forEach(s => {
+                            lines.push(`    • ${s.sku}${s.pid ? ` (ID:${s.pid})` : ''}: ${s.reason}`);
+                        });
+                    }
+
+                    // Error samples
+                    if (result.errorSamples && result.errorSamples.length > 0) {
+                        lines.push(`  ERROR samples (first ${result.errorSamples.length}):`);
+                        result.errorSamples.forEach(s => {
+                            lines.push(`    ❌ ${s.sku}: ${s.error}`);
+                        });
+                    }
+
+                    lines.push('');  // Blank line between sections
                 }
-                lines.push('');
 
                 // Totals
                 if (lr.totals) {
