@@ -33,6 +33,11 @@ export default function WebhookInfo({ onBitrixUrlChange }) {
       label: 'Draft Order Create (drft/crt)',
       path: '/api/drft/crt',
       description: 'Webhook for draft order creation (Pre-orders). Creates deal in Bitrix with Pre-order stage.'
+    },
+    'drft/upd': {
+      label: 'Draft Order Update (drft/upd)',
+      path: '/api/drft/upd',
+      description: 'Webhook for draft order updates. Updates existing pre-order deal in Bitrix.'
     }
   };
 
