@@ -41,7 +41,7 @@ export default function ShopifyPage() {
 
   // Section options for dropdown
   const SECTION_OPTIONS = [
-    { value: 'all', label: 'Все категории' },
+    { value: 'all', label: 'All sections' },
     { value: '36', label: 'A-F (36)' },
     { value: '38', label: 'G-M (38)' },
     { value: '40', label: 'N-S (40)' },
@@ -73,14 +73,14 @@ export default function ShopifyPage() {
       if (response.ok) {
         setInventorySyncResult({
           success: true,
-          message: `Синхронизация запущена для ${selectedSectionId === 'all' ? 'всех категорий' : SECTION_OPTIONS.find(o => o.value === selectedSectionId)?.label}. Проверьте логи.`,
+          message: `Sync started for ${selectedSectionId === 'all' ? 'all sections' : SECTION_OPTIONS.find(o => o.value === selectedSectionId)?.label}. Check logs.`,
           requestId: data.requestId
         });
         setSyncStatus({ isRunning: true, lastRun: syncStatus.lastRun });
       } else {
         setInventorySyncResult({
           success: false,
-          message: data.error || 'Ошибка запуска синхронизации'
+          message: data.error || 'Failed to start sync'
         });
       }
     } catch (err) {
@@ -559,11 +559,18 @@ export default function ShopifyPage() {
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
       </Head>
       <main className="page">
+        {/* Navigation Links */}
+        <nav style={{ display: 'flex', gap: '20px', marginBottom: '20px', padding: '12px 0', borderBottom: '1px solid rgba(59, 130, 246, 0.2)' }}>
+          <a href="/instruction" style={{ color: '#3b82f6', textDecoration: 'none', fontWeight: 500 }}>Instructions</a>
+          <a href="/tech_doc" style={{ color: '#3b82f6', textDecoration: 'none', fontWeight: 500 }}>Tech Docs</a>
+          <a href="/report" style={{ color: '#3b82f6', textDecoration: 'none', fontWeight: 500 }}>Reports</a>
+        </nav>
+
         <header className="page-header">
           <div>
-            <h1>Webhook Monitor</h1>
+            <h2 style={{ fontSize: '1.8rem', marginBottom: '8px' }}>Webhook Monitor</h2>
             <p className="subtitle">
-              Monitor Shopify → Bitrix and Bitrix → Shopify webhook events in real-time
+              Monitor Shopify ↔ Bitrix webhook events in real-time
             </p>
           </div>
           <div className="header-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
@@ -585,7 +592,7 @@ export default function ShopifyPage() {
                       flexShrink: 0
                     }}
                   >
-                    Снять выбор
+                    Deselect All
                   </button>
                 ) : (
                   <button
@@ -603,7 +610,7 @@ export default function ShopifyPage() {
                       flexShrink: 0
                     }}
                   >
-                    ✓ Выбрать все ({events.length})
+                    ✓ Select All ({events.length})
                   </button>
                 )}
               </>
@@ -624,7 +631,7 @@ export default function ShopifyPage() {
                 flexShrink: 0
               }}
             >
-              {isSending ? 'Отправка...' : `📤 Отправить в Bitrix (${selectedEvents.length})`}
+              {isSending ? 'Sending...' : `📤 Send to Bitrix (${selectedEvents.length})`}
             </button>
             <button
               onClick={handleDownloadLogs}
@@ -642,7 +649,7 @@ export default function ShopifyPage() {
               }}
               title="Download integration logs (Shopify→Bitrix and Bitrix→Shopify) as .txt file"
             >
-              📜 Скачать логи
+              📜 Download Logs
             </button>
             {bitrixEvents.length > 0 && (
               <>
@@ -662,7 +669,7 @@ export default function ShopifyPage() {
                       flexShrink: 0
                     }}
                   >
-                    Снять выбор (Bitrix)
+                    Deselect All (Bitrix)
                   </button>
                 ) : (
                   <button
@@ -680,7 +687,7 @@ export default function ShopifyPage() {
                       flexShrink: 0
                     }}
                   >
-                    ✓ Выбрать все Bitrix ({bitrixEvents.length})
+                    ✓ Select All Bitrix ({bitrixEvents.length})
                   </button>
                 )}
               </>
@@ -860,7 +867,7 @@ export default function ShopifyPage() {
           border: '1px solid rgba(59, 130, 246, 0.2)'
         }}>
           <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.3rem' }}>
-            Синхронизация каталога
+            Inventory Sync
           </h2>
 
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -878,9 +885,9 @@ export default function ShopifyPage() {
                 fontWeight: 500,
                 minWidth: '180px'
               }}
-              title="Запустить синхронизацию товаров (автоматически каждые 4 часа)"
+              title="Start inventory sync (auto-runs every 4 hours)"
             >
-              {syncStatus.isRunning ? '⏳ Выполняется...' : '🔄 Синхронизировать'}
+              {syncStatus.isRunning ? '⏳ Running...' : '🔄 Sync'}
             </button>
 
             <select
@@ -905,7 +912,7 @@ export default function ShopifyPage() {
 
             {syncStatus.isRunning && (
               <span style={{ color: '#fbbf24', fontSize: '0.9rem', fontWeight: 500 }}>
-                ⏳ Синхронизация в процессе...
+                ⏳ Sync in progress...
               </span>
             )}
           </div>
@@ -926,9 +933,9 @@ export default function ShopifyPage() {
 
           {syncStatus.lastRun && (
             <div style={{ marginTop: '12px', fontSize: '0.85rem', color: '#94a3b8' }}>
-              Последний запуск: {new Date(syncStatus.lastRun.endTime).toLocaleString()} •
-              {syncStatus.lastRun.success ? ' ✅ Успешно' : ' ❌ С ошибками'} •
-              {syncStatus.lastRun.durationMinutes} мин
+              Last run: {new Date(syncStatus.lastRun.endTime).toLocaleString()} •
+              {syncStatus.lastRun.success ? ' ✅ Success' : ' ❌ Failed'} •
+              {syncStatus.lastRun.durationMinutes} min
             </div>
           )}
         </div>
