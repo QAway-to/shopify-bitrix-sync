@@ -53,7 +53,12 @@ export default function ShopifyPage() {
     try {
       const response = await fetch('/api/cron/sync-inventory');
       const data = await response.json();
-      setSyncStatus({ isRunning: data.isRunning, lastRun: data.lastRun });
+      setSyncStatus({
+        isRunning: data.isRunning,
+        lastRun: data.lastRun,
+        nextSyncIn: data.nextSyncIn,
+        nextSyncAt: data.nextSyncAt
+      });
     } catch (err) {
       console.error('Error fetching sync status:', err);
     }
@@ -936,6 +941,12 @@ export default function ShopifyPage() {
               Last run: {new Date(syncStatus.lastRun.endTime).toLocaleString()} •
               {syncStatus.lastRun.success ? ' ✅ Success' : ' ❌ Failed'} •
               {syncStatus.lastRun.durationMinutes} min
+            </div>
+          )}
+
+          {syncStatus.nextSyncIn && !syncStatus.isRunning && (
+            <div style={{ marginTop: '8px', fontSize: '0.85rem', color: '#60a5fa' }}>
+              ⏱️ Next auto-sync: {syncStatus.nextSyncIn}
             </div>
           )}
         </div>

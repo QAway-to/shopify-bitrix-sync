@@ -84,8 +84,11 @@ async function executeSync(source = 'manual', sectionIds = ALL_SECTIONS) {
 // ============ SCHEDULER ============
 let schedulerStarted = false;
 let retryTimeoutId = null;
+let lastScheduledSyncTime = null; // Track when last scheduled sync started
 
 function tryScheduledSync() {
+    lastScheduledSyncTime = Date.now(); // Track this sync attempt
+
     if (isSyncRunning) {
         console.log('[INVENTORY SYNC SCHEDULER] ⏳ Sync busy, will retry in 10 minutes...');
         // Schedule retry
@@ -112,6 +115,7 @@ function tryScheduledSync() {
 function startScheduler() {
     if (schedulerStarted) return;
     schedulerStarted = true;
+    lastScheduledSyncTime = Date.now(); // Initialize with start time
 
     console.log(`[INVENTORY SYNC SCHEDULER] ✅ Starting auto-sync every ${SYNC_INTERVAL_MS / 3600000} hours`);
 
@@ -125,18 +129,35 @@ function startScheduler() {
 // Start scheduler on module load
 startScheduler();
 
+// Calculate next sync time
+function getNextSyncInfo() {
+    if (!schedulerStarted || !lastScheduledSyncTime) {
+        return { nextSyncAt: null, nextSyncIn: null };
+    }
+    const nextSyncAt = new Date(lastScheduledSyncTime + SYNC_INTERVAL_MS);
+    const msUntilNext = nextSyncAt.getTime() - Date.now();
+    const hoursUntil = Math.floor(msUntilNext / 3600000);
+    const minutesUntil = Math.floor((msUntilNext % 3600000) / 60000);
+    return {
+        nextSyncAt: nextSyncAt.toISOString(),
+        nextSyncIn: msUntilNext > 0 ? `${hoursUntil}h ${minutesUntil}m` : 'Soon'
+    };
+}
+
 // ============ API HANDLER ============
 export default async function handler(req, res) {
     if (req.method === 'GET') {
         // Return current status (for UI polling)
         const status = syncProgressAdapter.getStatus();
+        const nextSync = getNextSyncInfo();
         return res.status(200).json({
             success: true,
             isRunning: isSyncRunning,
             currentRequest: currentSyncRequestId,
             lastRun: status.lastRun,
             schedulerActive: schedulerStarted,
-            nextSyncIn: schedulerStarted ? `${Math.round(SYNC_INTERVAL_MS / 3600000)} hours` : null
+            nextSyncAt: nextSync.nextSyncAt,
+            nextSyncIn: nextSync.nextSyncIn
         });
     }
 
