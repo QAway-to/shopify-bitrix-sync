@@ -3,6 +3,8 @@ import '../../../src/lib/logging/consoleCapture.js';
 import { callBitrix } from '../../../src/lib/bitrix/client.js';
 import { upsertBitrixContact, getBitrixWebhookBase } from '../../../src/lib/bitrix/contact.js';
 import { BITRIX_CONFIG } from '../../../src/lib/bitrix/config.js';
+import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
+import { successAdapter } from '../../../src/lib/adapters/success/index.js';
 
 export const config = {
     api: {
@@ -87,6 +89,9 @@ export default async function handler(req, res) {
             } : null
         }, null, 2));
 
+        // ✅ Store event for UI monitoring
+        shopifyAdapter.storeEvent(draftOrder, 'draft_orders/create');
+
         // Check for existing deal with this draft order ID
         const existingDealResp = await callBitrix('/crm.deal.list.json', {
             filter: { 'UF_CRM_1742556489': `DRAFT_${draftOrderId}` },
@@ -158,6 +163,27 @@ export default async function handler(req, res) {
             } catch (contactError) {
                 console.error(`[DRAFT WEBHOOK] ⚠️ Contact upsert failed:`, contactError);
             }
+        }
+
+        // ✅ Store success operation for UI monitoring
+        try {
+            successAdapter.storeOperation({
+                operationType: 'CREATE',
+                dealId: dealId,
+                shopifyOrderId: `DRAFT_${draftOrderId}`,
+                shopifyOrderName: draftOrder.name || `Draft #${draftOrderId}`,
+                dealData: {
+                    ID: dealId,
+                    TITLE: dealFields.TITLE,
+                    OPPORTUNITY: dealFields.OPPORTUNITY,
+                    STAGE_ID: dealFields.STAGE_ID
+                },
+                verified: true,
+                productRowsCount: productRows.length
+            });
+            console.log(`[DRAFT WEBHOOK] ✅ Success operation stored for deal ${dealId}`);
+        } catch (storeError) {
+            console.error(`[DRAFT WEBHOOK] ⚠️ Failed to store success operation:`, storeError);
         }
 
         return res.status(200).json({
