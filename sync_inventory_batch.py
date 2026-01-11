@@ -473,7 +473,7 @@ def run_batch_sync(target_variant_id: str = None):
                 
                 element_cmds = []
                 for item in chunk:
-                    cmd = f"catalog.document.element.add?fields[docId]={doc_id}&fields[elementId]={item['id']}&fields[amount]={item['amount']}&fields[purchasingPrice]=0"
+                    cmd = f"catalog.document.element.add?fields[docId]={doc_id}&fields[elementId]={item['id']}&fields[amount]={item['amount']}&fields[purchasingPrice]=0&fields[storeTo]=2"
                     element_cmds.append((f"add_{item['id']}", cmd))
                 
                 execute_batches(element_cmds)
@@ -482,7 +482,7 @@ def run_batch_sync(target_variant_id: str = None):
 
         if arrival_items:
             print(f"\n[STOCK] Processing {len(arrival_items)} arrivals...")
-            apply_stock_changes(arrival_items, "A")
+            apply_stock_changes(arrival_items, "S")  # Use 'S' (Stock Adjustment) instead of 'A' (Receipt stays in Draft)
             
         if deduct_items:
             print(f"\n[STOCK] Processing {len(deduct_items)} deducts...")

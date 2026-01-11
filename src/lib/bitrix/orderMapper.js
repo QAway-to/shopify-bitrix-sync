@@ -699,12 +699,24 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       : 3000; // Default shipping product ID
 
     for (const item of order.line_items) {
-      // ✅ ИСПРАВЛЕНИЕ: Используем current_quantity и пропускаем товары с quantity <= 0 (refunded/removed)
+      // ✅ FIX: Handle pre-order items correctly
+      // - For regular orders: current_quantity reflects active (after refunds)
+      // - For pre-orders: current_quantity = 0 (not yet received) but quantity > 0
+      const originalQuantity = Number(item.quantity ?? 0);
       const currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
 
-      if (currentQuantity <= 0) {
-        console.log(`[ORDER MAPPER] ⏭️ Skipping item ${item.id} (SKU: ${item.sku || 'N/A'}) - current_quantity is 0 (refunded/removed)`);
+      // Skip only if BOTH are 0 (truly refunded/removed)
+      // If quantity > 0 but current_quantity = 0, treat as pre-order (use quantity)
+      const effectiveQuantity = currentQuantity > 0 ? currentQuantity : originalQuantity;
+
+      if (effectiveQuantity <= 0) {
+        console.log(`[ORDER MAPPER] ⏭️ Skipping item ${item.id} (SKU: ${item.sku || 'N/A'}) - both quantity and current_quantity are 0 (fully refunded)`);
         continue;
+      }
+
+      // Log pre-order detection
+      if (currentQuantity === 0 && originalQuantity > 0) {
+        console.log(`[ORDER MAPPER] 📦 PRE-ORDER DETECTED: item ${item.id} (SKU: ${item.sku || 'N/A'}) - current_quantity=0, quantity=${originalQuantity}`);
       }
 
       // CRITICAL: line_items are ALWAYS products, NEVER shipping
@@ -1020,13 +1032,14 @@ export async function mapShopifyOrderToBitrixDeal(order) {
         taxRate = Number(order.tax_lines[0].rate || 0) * 100;
       }
 
-      // ✅ ИСПРАВЛЕНИЕ: Используем currentQuantity (актуальное количество после refund)
-      const quantity = currentQuantity;
+      // ✅ FIX: Use effectiveQuantity (handles pre-orders with current_quantity=0)
+      const quantity = effectiveQuantity;
 
       // ✅ LOG: Log item details for debugging
       console.log(`[ORDER MAPPER] 📦 Processing item: SKU=${item.sku || 'N/A'}, Title="${item.title || 'N/A'}"`);
       console.log(`[ORDER MAPPER]   - quantity (original): ${item.quantity}`);
-      console.log(`[ORDER MAPPER]   - current_quantity (active): ${currentQuantity}`);
+      console.log(`[ORDER MAPPER]   - current_quantity: ${currentQuantity}`);
+      console.log(`[ORDER MAPPER]   - effectiveQuantity: ${effectiveQuantity} (for pre-orders uses original)`);
       console.log(`[ORDER MAPPER]   - price: ${item.price}, priceAfterDiscount: ${priceAfterDiscount}`);
       console.log(`[ORDER MAPPER]   - Will create ${quantity} product row(s)`);
 
