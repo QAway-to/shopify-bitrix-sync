@@ -43,6 +43,38 @@ export default function ShopifyPage() {
   // Update certificate product state (manual update button)
   const [isUpdatingCert500, setIsUpdatingCert500] = useState(false);
   const [updateCertResult, setUpdateCertResult] = useState(null);
+  // Inventory sync state
+  const [isSyncingInventory, setIsSyncingInventory] = useState(false);
+  const [inventorySyncResult, setInventorySyncResult] = useState(null);
+
+  // Handle inventory sync
+  const handleSyncInventory = async () => {
+    setIsSyncingInventory(true);
+    setInventorySyncResult(null);
+    try {
+      const response = await fetch('/api/cron/sync-inventory', { method: 'POST' });
+      const data = await response.json();
+      if (response.ok) {
+        setInventorySyncResult({
+          success: true,
+          message: 'Синхронизация запущена. Проверьте логи через несколько минут.',
+          requestId: data.requestId
+        });
+      } else {
+        setInventorySyncResult({
+          success: false,
+          message: data.error || 'Ошибка запуска синхронизации'
+        });
+      }
+    } catch (err) {
+      setInventorySyncResult({
+        success: false,
+        message: err.message || 'Network error'
+      });
+    } finally {
+      setIsSyncingInventory(false);
+    }
+  };
 
   const fetchBitrixWebhookUrl = async () => {
     setIsLoadingWebhookUrl(true);

@@ -1,160 +1,139 @@
-// Server-side cron endpoint for automatic inventory synchronization
-// Runs hourly via external cron service (e.g., Render cron, cron-job.org)
-// Syncs only products with qty > 0 from Shopify (source of truth) to Bitrix
-// Section ID is auto-determined from SKU first letter: A-F→36, G-M→38, N-S→40, T-Z→42
+/**
+ * Inventory Sync API Endpoint
+ * - GET: Return current sync status
+ * - POST: Start sync (manual or scheduled)
+ * 
+ * Auto-runs every 4 hours via setInterval (started in this module)
+ */
 
-import { getAllProductsFromShopify } from '../../../src/lib/shopify/inventory.js';
-import { syncProductVariantOptimized, getCurrentStock, createOutgoingDocument } from '../../../src/lib/bitrix/products.js';
-import { findProductIdBySku } from '../../../src/lib/bitrix/mappingUtils.js';
-import { syncAdapter } from '../../../src/lib/adapters/sync/index.js';
+import { runInventorySync, SECTION_NAMES } from '../../../src/lib/sync/inventorySyncCore.js';
+import { syncProgressAdapter } from '../../../src/lib/adapters/sync/progressAdapter.js';
 
-// Rate limiting settings
-const BATCH_SIZE = 50;
-const DELAY_BETWEEN_BATCHES_MS = 2000;
-const DELAY_BETWEEN_ITEMS_MS = 300;
+// Sync configuration
+const ALL_SECTIONS = [36, 38, 40, 42];
+const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
-export default async function handler(req, res) {
-    // No secret check - auth is handled at page level
+// Track if sync is currently running
+let isSyncRunning = false;
 
-    const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const startTime = Date.now();
+/**
+ * Run inventory sync with progress tracking
+ */
+async function executeSync(source = 'manual') {
+    if (isSyncRunning) {
+        console.log('[INVENTORY SYNC] Sync already in progress, skipping...');
+        return { success: false, reason: 'already_running' };
+    }
 
-    console.log(JSON.stringify({
-        event: 'CRON_SYNC_INVENTORY_START',
-        requestId,
-        timestamp: new Date().toISOString(),
-        source: 'cron'
-    }));
+    isSyncRunning = true;
+    const requestId = `sync-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    console.log(`[INVENTORY SYNC] Starting sync (${source}), requestId: ${requestId}`);
 
     try {
-        // 1. Fetch all products from Shopify
-        console.log(`[CRON SYNC INVENTORY] Fetching all products from Shopify...`);
-        const allVariants = await getAllProductsFromShopify();
+        syncProgressAdapter.startRun(requestId, ALL_SECTIONS);
 
-        // 2. Filter to only products with qty > 0
-        const variantsWithStock = allVariants.filter(v => v.qty > 0);
-
-        console.log(`[CRON SYNC INVENTORY] Found ${allVariants.length} total variants, ${variantsWithStock.length} with qty > 0`);
-
-        const results = {
-            success: true,
-            requestId,
-            summary: {
-                totalShopifyVariants: allVariants.length,
-                variantsWithStock: variantsWithStock.length,
-                synced: 0,
-                created: 0,
-                priceUpdated: 0,
-                qtyUpdated: 0,
-                skipped: 0,
-                errors: 0
-            },
-            errors: [],
-            duration: 0
-        };
-
-        // 3. Process variants in batches
-        for (let i = 0; i < variantsWithStock.length; i += BATCH_SIZE) {
-            const batch = variantsWithStock.slice(i, Math.min(i + BATCH_SIZE, variantsWithStock.length));
-            const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-            const totalBatches = Math.ceil(variantsWithStock.length / BATCH_SIZE);
-
-            console.log(`[CRON SYNC INVENTORY] Processing batch ${batchNum}/${totalBatches} (${batch.length} items)`);
-
-            for (const variant of batch) {
-                try {
-                    // Sync variant to Bitrix (create if not exists, update stock)
-                    // Section ID is auto-determined from SKU first letter
-                    const syncResult = await syncProductVariantOptimized(
-                        variant,
-                        true // createNew = true (create products that don't exist)
-                        // sectionId not passed - auto-determined from SKU
-                    );
-
-                    results.summary.synced++;
-
-                    if (syncResult.success) {
-                        if (syncResult.created) {
-                            results.summary.created++;
-                        }
-                        if (syncResult.priceUpdated) {
-                            results.summary.priceUpdated++;
-                        }
-                        if (syncResult.documentId) {
-                            results.summary.qtyUpdated++;
-                        }
-                        if (!syncResult.created && !syncResult.priceUpdated && !syncResult.documentId) {
-                            results.summary.skipped++;
-                        }
-                    } else {
-                        results.summary.errors++;
-                        results.errors.push({
-                            sku: variant.sku,
-                            variant_id: variant.variant_id,
-                            error: syncResult.error
-                        });
-                    }
-
-                    // Rate limiting between items
-                    await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_ITEMS_MS));
-                } catch (error) {
-                    results.summary.errors++;
-                    results.errors.push({
-                        sku: variant.sku,
-                        variant_id: variant.variant_id,
-                        error: error.message
-                    });
+        const results = await runInventorySync({
+            sectionIds: ALL_SECTIONS,
+            progressCallback: (update) => {
+                // Log to console
+                if (update.type === 'section_start') {
+                    console.log(`[INVENTORY SYNC] ${update.message}`);
+                } else if (update.type === 'section_complete') {
+                    console.log(`[INVENTORY SYNC] ✅ Section ${update.sectionName} complete`);
+                    syncProgressAdapter.completeSection(update.sectionId, update.result);
+                } else if (update.type === 'sync_complete') {
+                    console.log(`[INVENTORY SYNC] 🏁 ${update.message}`);
+                } else if (update.type === 'sync_error') {
+                    console.error(`[INVENTORY SYNC] ❌ ${update.message}`);
                 }
+
+                // Update progress adapter
+                syncProgressAdapter.updateProgress({
+                    type: update.type,
+                    sectionId: update.sectionId,
+                    message: update.message
+                });
             }
+        });
 
-            // Rate limiting between batches
-            if (i + BATCH_SIZE < variantsWithStock.length) {
-                await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_BATCHES_MS));
-            }
-        }
+        syncProgressAdapter.endRun(results);
 
-        results.duration = Date.now() - startTime;
+        console.log(`[INVENTORY SYNC] Sync complete. Created: ${results.totals.created}, Updated: ${results.totals.updated}, Errors: ${results.totals.errors}`);
 
-        console.log(JSON.stringify({
-            event: 'CRON_SYNC_INVENTORY_SUCCESS',
-            requestId,
-            summary: results.summary,
-            duration: `${results.duration}ms`,
-            timestamp: new Date().toISOString()
-        }));
+        return { success: true, requestId, results };
 
-        // Limit errors in response
-        if (results.errors.length > 20) {
-            results.errors = results.errors.slice(0, 20);
-            results.errorsNote = 'Showing first 20 errors only';
-        }
-
-        // Store sync run to adapter for downloadable logs
-        try {
-            syncAdapter.storeSyncRun(results);
-        } catch (adapterError) {
-            console.error('[CRON SYNC INVENTORY] Error storing to adapter:', adapterError.message);
-        }
-
-        return res.status(200).json(results);
     } catch (error) {
-        const duration = Date.now() - startTime;
+        console.error('[INVENTORY SYNC] Sync failed:', error);
+        syncProgressAdapter.endRun({ success: false, error: error.message, sections: {}, totals: {} });
+        return { success: false, requestId, error: error.message };
 
-        console.error(JSON.stringify({
-            event: 'CRON_SYNC_INVENTORY_ERROR',
-            requestId,
-            error: error.message,
-            stack: error.stack,
-            duration: `${duration}ms`,
-            timestamp: new Date().toISOString()
-        }));
+    } finally {
+        isSyncRunning = false;
+    }
+}
 
-        return res.status(500).json({
-            success: false,
-            error: 'Internal server error',
-            message: error.message,
-            requestId,
-            duration
+// ============ SCHEDULER ============
+// Start 4-hour auto-sync interval
+let schedulerStarted = false;
+
+function startScheduler() {
+    if (schedulerStarted) return;
+    schedulerStarted = true;
+
+    console.log(`[INVENTORY SYNC SCHEDULER] Starting auto-sync every ${SYNC_INTERVAL_MS / 3600000} hours`);
+
+    // Schedule recurring sync
+    setInterval(() => {
+        console.log('[INVENTORY SYNC SCHEDULER] Triggered scheduled sync');
+        executeSync('scheduled').catch(err => {
+            console.error('[INVENTORY SYNC SCHEDULER] Scheduled sync failed:', err);
+        });
+    }, SYNC_INTERVAL_MS);
+
+    console.log('[INVENTORY SYNC SCHEDULER] ✅ Scheduler active');
+}
+
+// Start scheduler on module load
+startScheduler();
+
+// ============ API HANDLER ============
+export default async function handler(req, res) {
+    if (req.method === 'GET') {
+        // Return current status
+        const status = syncProgressAdapter.getStatus();
+        return res.status(200).json({
+            success: true,
+            ...status,
+            schedulerActive: schedulerStarted,
+            nextSyncIn: schedulerStarted ? `${Math.round(SYNC_INTERVAL_MS / 3600000)} hours` : null
         });
     }
+
+    if (req.method === 'POST') {
+        // Start sync (non-blocking)
+        if (isSyncRunning) {
+            return res.status(409).json({
+                success: false,
+                error: 'Sync already in progress',
+                status: syncProgressAdapter.getStatus()
+            });
+        }
+
+        const requestId = `sync-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // Start sync in background (don't await)
+        executeSync('manual').catch(err => {
+            console.error('[INVENTORY SYNC] Manual sync failed:', err);
+        });
+
+        return res.status(202).json({
+            success: true,
+            message: 'Sync started',
+            requestId,
+            sections: ALL_SECTIONS.map(id => ({ id, name: SECTION_NAMES[id] }))
+        });
+    }
+
+    return res.status(405).json({ error: 'Method not allowed' });
 }

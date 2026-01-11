@@ -6,6 +6,7 @@ import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
 import { successAdapter } from '../../../src/lib/adapters/success/index.js';
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
 import { syncAdapter } from '../../../src/lib/adapters/sync/index.js';
+import { syncProgressAdapter } from '../../../src/lib/adapters/sync/progressAdapter.js';
 import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
 import { formatCapturedConsoleEntries } from '../../../src/lib/logging/consoleCapture.js';
 
@@ -35,6 +36,17 @@ export default async function handler(req, res) {
     logs.push(`Platform: ${process.platform}`);
     logs.push(`Timestamp: ${new Date().toISOString()}`);
     logs.push('');
+
+    // === SYNC PROGRESS SECTION ===
+    try {
+      const syncProgressLogs = syncProgressAdapter.getFormattedLogs();
+      logs.push(syncProgressLogs);
+      logs.push('');
+    } catch (syncError) {
+      logs.push('INVENTORY SYNC PROGRESS: Error loading sync progress');
+      logs.push(`  ${syncError.message}`);
+      logs.push('');
+    }
 
     // Get recent events
     logs.push('='.repeat(80));
