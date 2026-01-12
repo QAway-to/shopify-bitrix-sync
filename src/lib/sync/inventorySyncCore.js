@@ -255,6 +255,7 @@ async function fetchBitrixProducts(progressCallback) {
 }
 
 async function getCurrentStocks(productIds, storeId = 2) {
+    // Returns { pid: { amount, reserved } } for each product
     const stocks = {};
     const commands = productIds.map(pid => ({
         key: String(pid),
@@ -272,17 +273,19 @@ async function getCurrentStocks(productIds, storeId = 2) {
         for (const [key, data] of Object.entries(results)) {
             const pid = parseInt(key);
             let amount = 0;
+            let reserved = 0;
 
             if (data?.storeProducts) {
                 for (const sp of data.storeProducts) {
                     const sid = parseInt(sp.storeId || sp.STORE_ID || 0);
                     if (sid === storeId) {
                         amount = parseInt(sp.amount || sp.AMOUNT || 0);
+                        reserved = parseInt(sp.quantityReserved || sp.QUANTITY_RESERVED || 0);
                         break;
                     }
                 }
             }
-            stocks[pid] = amount;
+            stocks[pid] = { amount, reserved };
         }
     }
 
@@ -596,15 +599,18 @@ async function syncSection(sectionId, allVariants, bitrixProducts, progressCallb
         }
     }
 
-    // Stock sync
+    // Stock sync - now handles reserved quantity to prevent negative available stock
     if (ensureStockIds.length > 0) {
         const currentStocks = await getCurrentStocks(ensureStockIds);
 
         const arrivalItems = [];
         const deductItems = [];
 
-        for (const [pidStr, bxQty] of Object.entries(currentStocks)) {
+        for (const [pidStr, stockInfo] of Object.entries(currentStocks)) {
             const pid = parseInt(pidStr);
+            const bxAmount = stockInfo.amount || 0;
+            const bxReserved = stockInfo.reserved || 0;
+
             // Find variant for this product
             let targetQty = 0;
             for (const [vid, bProd] of Object.entries(bitrixProducts)) {
@@ -615,11 +621,17 @@ async function syncSection(sectionId, allVariants, bitrixProducts, progressCallb
                 }
             }
 
-            const diff = targetQty - bxQty;
+            // Calculate required amount:
+            // - We need at least targetQty (from Shopify)
+            // - BUT also need to cover any reservations to avoid negative available
+            const minRequired = Math.max(targetQty, bxReserved);
+            const diff = minRequired - bxAmount;
+
             if (diff > 0) {
                 arrivalItems.push({ id: pid, amount: diff });
-            } else if (diff < 0) {
-                deductItems.push({ id: pid, amount: Math.abs(diff) });
+            } else if (targetQty < bxAmount && bxReserved === 0) {
+                // Only deduct if no reservations exist (safe to reduce stock)
+                deductItems.push({ id: pid, amount: bxAmount - targetQty });
             }
         }
 
