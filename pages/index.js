@@ -594,7 +594,7 @@ export default function ShopifyPage() {
                       borderRadius: '6px',
                       color: 'white',
                       cursor: 'pointer',
-                      minWidth: '180px',
+                      minWidth: '120px',
                       whiteSpace: 'nowrap',
                       flexShrink: 0
                     }}
@@ -612,12 +612,12 @@ export default function ShopifyPage() {
                       borderRadius: '6px',
                       color: 'white',
                       cursor: 'pointer',
-                      minWidth: '180px',
+                      minWidth: '120px',
                       whiteSpace: 'nowrap',
                       flexShrink: 0
                     }}
                   >
-                    ✓ Select All ({events.length})
+                    Select All ({events.length})
                   </button>
                 )}
               </>
@@ -633,12 +633,12 @@ export default function ShopifyPage() {
                 borderRadius: '6px',
                 color: 'white',
                 cursor: selectedEvents.length > 0 ? 'pointer' : 'not-allowed',
-                minWidth: '220px',
+                minWidth: '120px',
                 whiteSpace: 'nowrap',
                 flexShrink: 0
               }}
             >
-              {isSending ? 'Sending...' : `📤 Send to Bitrix (${selectedEvents.length})`}
+              {isSending ? '...' : `To Bitrix (${selectedEvents.length})`}
             </button>
             <button
               onClick={handleDownloadLogs}
@@ -650,13 +650,13 @@ export default function ShopifyPage() {
                 borderRadius: '6px',
                 color: 'white',
                 cursor: 'pointer',
-                minWidth: '220px',
+                minWidth: '120px',
                 whiteSpace: 'nowrap',
                 flexShrink: 0
               }}
-              title="Download integration logs (Shopify→Bitrix and Bitrix→Shopify) as .txt file"
+              title="Download integration logs"
             >
-              📜 Download Logs
+              Logs
             </button>
             {bitrixEvents.length > 0 && (
               <>
@@ -671,12 +671,12 @@ export default function ShopifyPage() {
                       borderRadius: '6px',
                       color: 'white',
                       cursor: 'pointer',
-                      minWidth: '200px',
+                      minWidth: '120px',
                       whiteSpace: 'nowrap',
                       flexShrink: 0
                     }}
                   >
-                    Deselect All (Bitrix)
+                    Deselect Bitrix
                   </button>
                 ) : (
                   <button
@@ -689,12 +689,12 @@ export default function ShopifyPage() {
                       borderRadius: '6px',
                       color: 'white',
                       cursor: 'pointer',
-                      minWidth: '200px',
+                      minWidth: '120px',
                       whiteSpace: 'nowrap',
                       flexShrink: 0
                     }}
                   >
-                    ✓ Select All Bitrix ({bitrixEvents.length})
+                    Select Bitrix ({bitrixEvents.length})
                   </button>
                 )}
               </>
@@ -710,12 +710,12 @@ export default function ShopifyPage() {
                 borderRadius: '6px',
                 color: 'white',
                 cursor: selectedBitrixEvents.length > 0 ? 'pointer' : 'not-allowed',
-                minWidth: '220px',
+                minWidth: '120px',
                 whiteSpace: 'nowrap',
                 flexShrink: 0
               }}
             >
-              {isSendingToShopify ? 'Sending...' : `📤 Send to Shopify (${selectedBitrixEvents.length})`}
+              {isSendingToShopify ? '...' : `To Shop (${selectedBitrixEvents.length})`}
             </button>
             <button
               onClick={() => {
@@ -732,12 +732,12 @@ export default function ShopifyPage() {
                 borderRadius: '6px',
                 color: 'white',
                 cursor: (isLoading || isBitrixLoading || isSuccessLoading) ? 'not-allowed' : 'pointer',
-                minWidth: '140px',
+                minWidth: '120px',
                 whiteSpace: 'nowrap',
                 flexShrink: 0
               }}
             >
-              {(isLoading || isBitrixLoading || isSuccessLoading) ? 'Refreshing...' : '🔄 Refresh'}
+              {(isLoading || isBitrixLoading || isSuccessLoading) ? '...' : 'Refresh'}
             </button>
           </div>
         </header>
@@ -890,11 +890,11 @@ export default function ShopifyPage() {
                 cursor: syncStatus.isRunning ? 'not-allowed' : 'pointer',
                 fontSize: '1rem',
                 fontWeight: 500,
-                minWidth: '180px'
+                minWidth: '120px'
               }}
-              title="Start inventory sync (auto-runs every 4 hours)"
+              title="Start inventory sync"
             >
-              {syncStatus.isRunning ? '⏳ Running...' : '🔄 Sync'}
+              {syncStatus.isRunning ? 'Running...' : 'Sync'}
             </button>
 
             <select
