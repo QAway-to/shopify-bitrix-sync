@@ -150,14 +150,14 @@ export async function callShopifyGraphQL(query, variables = {}) {
  * @param {Object} criteria
  * @param {string} criteria.brand - Vendor
  * @param {string} criteria.model - Part of Title
- * @param {string} criteria.color - Option value
  * @param {string} criteria.size - Option value
  * @returns {Promise<Object|null>} Found variant or null
  */
-export async function findShopifyVariantByAttributes({ brand, model, color, size }) {
-  // Use REST API logic similar to robust Python script
+export async function findShopifyVariantByAttributes({ brand, model, size }) {
+  // Use REST API logic EXACTLY matching user's robust Python script
   // 1. Fetch products by Vendor (limit 50)
-  // We filter by vendor server-side, then handle model/size client-side
+  // 2. Filter Client-side: Title must contain Model
+  // 3. Variant Check: Size must be in [option1, option2, option3]
   try {
     const endpoint = `/products.json?limit=50&vendor=${encodeURIComponent(brand)}`;
     const response = await callShopifyAdmin(endpoint);

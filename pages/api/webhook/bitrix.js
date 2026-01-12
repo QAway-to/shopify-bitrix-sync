@@ -1708,29 +1708,27 @@ async function handleDealUpdate(dealId, requestId) {
   if (String(categoryId) === '8') {
     const brand = dealData.UF_CRM_1768251890190 || dealData.uf_crm_1768251890190; // Brand
     const model = dealData.UF_CRM_1739793668182 || dealData.uf_crm_1739793668182; // Model
-    const color = dealData.UF_CRM_1739793651654 || dealData.uf_crm_1739793651654; // Color
+    // Color is often empty/unused in this specific pre-order flow, relying on Brand/Model/Size matches.
     const size = dealData.UF_CRM_1739793720585 || dealData.uf_crm_1739793720585;   // Size
 
     console.log(JSON.stringify({
       event: 'PRE_ORDER_FIELD_CHECK',
       requestId,
       dealId,
-      fields: { brand, model, color, size },
+      fields: { brand, model, size }, // Color removed from check
       availableUFKeys: Object.keys(dealData).filter(k => k.startsWith('UF_')), // Debug: See what IDs are actually present
-      hasAllFields: !!(brand && model && color && size),
+      hasAllFields: !!(brand && model && size), // Only Brand, Model, Size required
       shopifyOrderId,
       timestamp: new Date().toISOString()
     }));
 
     // Check if we already have a linked order to avoid duplicates (unless we want to update?)
     // If shopifyOrderId exists, we assume reservation is done.
-    // User Update: Color is optional/empty (UF_CRM_1739793651654 is empty). Logic should run on Brand+Model+Size.
     if (brand && model && size && (!shopifyOrderId || shopifyOrderId.trim() === '')) {
       console.log(`[PRE-ORDER] checking availability for: ${brand} ${model} ${size}`);
 
       try {
-        // Pass empty color if missing, though REST search ignores it.
-        const result = await findShopifyVariantByAttributes({ brand, model, color: color || '', size });
+        const result = await findShopifyVariantByAttributes({ brand, model, size });
 
         if (result && result.variant) {
           const { variant, productTitle } = result;
