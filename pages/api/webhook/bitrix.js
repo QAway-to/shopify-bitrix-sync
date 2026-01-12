@@ -15,6 +15,7 @@ import { addPositionToOrder, incrementLineItemQuantity, decrementLineItemQuantit
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
+import { resolveProductByTitleSize } from '../../../src/lib/bitrix/orderMapper.js';
 
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
@@ -2787,6 +2788,45 @@ async function handleDealUpdate(dealId, requestId) {
         let stubReason = null;
         for (const row of productRowsResp.result) {
           const productId = row.PRODUCT_ID;
+          const productName = row.PRODUCT_NAME || '';
+
+          // ✅ NEW: Handle "Title | Size" pattern in PRODUCT_NAME (pre-order from Bitrix)
+          // Pattern: "Amber 2.0 silver GR Barefoot Ballerinas | 31"
+          const isTitleSizePattern = !productId && productName.includes(' | ');
+
+          if (isTitleSizePattern) {
+            console.log(`[BITRIX TO SHOPIFY] ✨ PRE-ORDER: Detected "Title | Size" pattern: "${productName}"`);
+            try {
+              const resolved = await resolveProductByTitleSize(productName);
+              if (resolved && resolved.variantId) {
+                items.push({
+                  variantId: resolved.variantId,
+                  sku: resolved.sku,
+                  qty: row.QUANTITY || 1,
+                  preOrderResolved: true,
+                  resolvedTitle: resolved.title,
+                  resolvedPrice: resolved.price
+                });
+                console.log(`[BITRIX TO SHOPIFY] ✅ PRE-ORDER resolved: ${productName} → variant_id=${resolved.variantId}, sku=${resolved.sku}`);
+                console.log(JSON.stringify({
+                  event: 'PRE_ORDER_PRODUCT_RESOLVED',
+                  requestId,
+                  dealId,
+                  inputPattern: productName,
+                  variantId: resolved.variantId,
+                  sku: resolved.sku,
+                  price: resolved.price,
+                  timestamp: new Date().toISOString()
+                }));
+              } else {
+                console.warn(`[BITRIX TO SHOPIFY] ⚠️ PRE-ORDER: Could not resolve "${productName}" - keeping as-is`);
+              }
+            } catch (resolveError) {
+              console.error(`[BITRIX TO SHOPIFY] ❌ PRE-ORDER resolve error for "${productName}":`, resolveError);
+            }
+            continue; // Skip to next row after handling Title | Size pattern
+          }
+
           if (!productId) continue;
 
           // Get product details from Bitrix to get SKU

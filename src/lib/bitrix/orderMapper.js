@@ -279,6 +279,145 @@ async function getShopifyProductMetadata(variantId) {
 }
 
 /**
+ * Resolve Shopify variant by "Title | Size" input pattern
+ * Used for pre-order creation from Bitrix when manager enters product as text
+ * Input format: "Amber 2.0 silver GR Barefoot Ballerinas | 31"
+ * Returns: { variantId, sku, productId, title, size, color, price, vendor, product_type } or null
+ */
+export async function resolveProductByTitleSize(input) {
+  try {
+    // Parse input: "Title | Size"
+    const parts = input.split('|').map(s => s.trim());
+    if (parts.length !== 2) {
+      console.log(`[RESOLVE PRODUCT] Invalid format, expected "Title | Size": ${input}`);
+      return null;
+    }
+
+    const [searchTitle, searchSize] = parts;
+    console.log(`[RESOLVE PRODUCT] Searching for: title="${searchTitle}", size="${searchSize}"`);
+
+    // Search Shopify products by title
+    const searchUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/products.json?title=${encodeURIComponent(searchTitle)}&limit=10`;
+    const searchResp = await fetch(searchUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
+
+    if (!searchResp.ok) {
+      console.error(`[RESOLVE PRODUCT] Shopify search failed: ${searchResp.status}`);
+      return null;
+    }
+
+    const searchData = await searchResp.json();
+    const products = searchData.products || [];
+
+    if (products.length === 0) {
+      console.log(`[RESOLVE PRODUCT] No products found for title: ${searchTitle}`);
+      return null;
+    }
+
+    console.log(`[RESOLVE PRODUCT] Found ${products.length} products matching title`);
+
+    // Find exact title match (or closest match)
+    let targetProduct = products.find(p =>
+      p.title.toLowerCase() === searchTitle.toLowerCase()
+    );
+
+    // If no exact match, try partial match
+    if (!targetProduct) {
+      targetProduct = products.find(p =>
+        p.title.toLowerCase().includes(searchTitle.toLowerCase()) ||
+        searchTitle.toLowerCase().includes(p.title.toLowerCase())
+      );
+    }
+
+    // Fallback to first result
+    if (!targetProduct && products.length > 0) {
+      targetProduct = products[0];
+      console.log(`[RESOLVE PRODUCT] Using first match: "${targetProduct.title}"`);
+    }
+
+    if (!targetProduct) {
+      console.log(`[RESOLVE PRODUCT] No matching product found`);
+      return null;
+    }
+
+    console.log(`[RESOLVE PRODUCT] Matched product: "${targetProduct.title}" (ID: ${targetProduct.id})`);
+
+    // Find variant by size
+    const variants = targetProduct.variants || [];
+    let targetVariant = null;
+
+    // Determine which option is size
+    let sizeOptionIndex = -1;
+    let colorOptionIndex = -1;
+    for (let i = 0; i < (targetProduct.options || []).length; i++) {
+      const name = (targetProduct.options[i].name || '').toLowerCase();
+      if (name.includes('size') || name.includes('размер') || name.includes('eu size')) {
+        sizeOptionIndex = i;
+      } else if (name.includes('color') || name.includes('colour') || name.includes('цвет')) {
+        colorOptionIndex = i;
+      }
+    }
+
+    // Find variant with matching size
+    for (const variant of variants) {
+      let variantSize = null;
+
+      // Check option1, option2, option3 based on sizeOptionIndex
+      if (sizeOptionIndex >= 0) {
+        variantSize = variant[`option${sizeOptionIndex + 1}`];
+      }
+
+      // Fallback: check all options
+      if (!variantSize) {
+        variantSize = variant.option1 || variant.option2 || variant.option3;
+      }
+
+      // Also check variant title
+      if (!variantSize && variant.title && variant.title !== 'Default Title') {
+        variantSize = variant.title;
+      }
+
+      // Compare sizes (trim and normalize)
+      if (variantSize && String(variantSize).trim() === String(searchSize).trim()) {
+        targetVariant = variant;
+        break;
+      }
+    }
+
+    if (!targetVariant) {
+      console.log(`[RESOLVE PRODUCT] No variant found for size "${searchSize}" in product "${targetProduct.title}"`);
+      console.log(`[RESOLVE PRODUCT] Available sizes: ${variants.map(v => v.option1 || v.option2 || v.title).join(', ')}`);
+      return null;
+    }
+
+    // Extract color from variant
+    let colorVal = '';
+    if (colorOptionIndex >= 0) {
+      colorVal = targetVariant[`option${colorOptionIndex + 1}`] || '';
+    }
+
+    const result = {
+      variantId: String(targetVariant.id),
+      sku: targetVariant.sku || '',
+      productId: String(targetProduct.id),
+      title: targetProduct.title,
+      variantTitle: targetVariant.title,
+      size: searchSize,
+      color: colorVal,
+      price: parseFloat(targetVariant.price) || 0,
+      vendor: targetProduct.vendor || '',
+      product_type: targetProduct.product_type || ''
+    };
+
+    console.log(`[RESOLVE PRODUCT] ✅ Resolved: variant_id=${result.variantId}, sku=${result.sku}, price=${result.price}`);
+    return result;
+
+  } catch (e) {
+    console.error(`[RESOLVE PRODUCT] Error resolving product: ${e.message}`);
+    return null;
+  }
+}
+
+/**
  * Map Shopify order to Bitrix24 deal fields and product rows
  * @param {Object} order - Shopify order object
  * @returns {Object} { dealFields, productRows }
