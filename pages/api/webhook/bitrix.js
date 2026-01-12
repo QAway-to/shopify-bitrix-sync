@@ -15,8 +15,7 @@ import { addPositionToOrder, incrementLineItemQuantity, decrementLineItemQuantit
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
-import { resolvePreorderProduct, parsePreorderInput } from '../../../src/lib/bitrix/preorderResolver.js';
-import { createBitrixProduct, updateBitrixProductFields } from '../../../src/lib/bitrix/products.js';
+import { processPreorderProductRow } from '../../../src/lib/shopify/productLookup.js';
 
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
@@ -3737,57 +3736,18 @@ async function handleDealCreate(dealId, requestId) {
                 });
                 console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using XML_ID as variantId directly: ${xmlId}`);
               } else {
-                // ✅ PRE-ORDER FALLBACK: Try to resolve via "Title | Size" pattern
-                const productName = product.NAME || '';
-                const parsed = parsePreorderInput(productName);
-
-                if (parsed) {
-                  console.log(`[BITRIX TO SHOPIFY] [PRE-ORDER] Product ${productId} detected as pre-order: "${parsed.title}" | "${parsed.size}"`);
-
-                  try {
-                    // Search Shopify for product and variant
-                    const resolved = await resolvePreorderProduct(productName);
-
-                    if (resolved && resolved.variant) {
-                      const variantId = resolved.variant.id.toString();
-                      const sku = resolved.variant.sku || '';
-                      const price = resolved.variant.price || 0;
-
-                      console.log(`[BITRIX TO SHOPIFY] [PRE-ORDER] Resolved: variant_id=${variantId}, sku=${sku}, price=${price}`);
-
-                      // Update Bitrix product card with data from Shopify
-                      const fullTitle = `${resolved.product.title} - ${parsed.size}`;
-                      const updateFields = {
-                        NAME: fullTitle,
-                        CODE: sku,
-                        XML_ID: variantId,
-                        PRICE: Number(price)
-                      };
-
-                      // Add properties if available
-                      if (resolved.metadata.vendor) updateFields.PROPERTY_102 = resolved.metadata.vendor;
-                      if (resolved.metadata.product_type) updateFields.PROPERTY_104 = resolved.metadata.product_type;
-                      if (resolved.metadata.color) updateFields.PROPERTY_106 = resolved.metadata.color;
-                      // Note: Size enum mapping would need to be done separately
-
-                      console.log(`[BITRIX TO SHOPIFY] [PRE-ORDER] Updating Bitrix product ${productId} with:`, updateFields);
-                      await updateBitrixProductFields(productId, updateFields);
-
-                      // Add to items for Shopify order creation
-                      items.push({
-                        variantId: variantId,
-                        qty: row.QUANTITY || 1
-                      });
-
-                      console.log(`[BITRIX TO SHOPIFY] [PRE-ORDER] ✅ Product ${productId} resolved and updated, variant_id: ${variantId}`);
-                    } else {
-                      console.warn(`[BITRIX TO SHOPIFY] [PRE-ORDER] Failed to resolve product: "${productName}"`);
-                    }
-                  } catch (preorderError) {
-                    console.error(`[BITRIX TO SHOPIFY] [PRE-ORDER] Error resolving product:`, preorderError.message);
-                  }
+                // ✅ FALLBACK: Try Title-Size pattern (e.g., "Amber 2.0 silver GR Barefoot Ballerinas - 31")
+                console.log(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE/XML_ID, trying Title-Size pattern...`);
+                const preorderResult = await processPreorderProductRow(row, product);
+                if (preorderResult) {
+                  items.push({
+                    variantId: preorderResult.variantId,
+                    sku: preorderResult.sku,
+                    qty: preorderResult.qty
+                  });
+                  console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Resolved via Title-Size pattern → variantId: ${preorderResult.variantId}`);
                 } else {
-                  console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE (SKU) or XML_ID (variant_id), and name doesn't match pre-order pattern, skipping`);
+                  console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE (SKU), XML_ID (variant_id), or valid Title-Size pattern, skipping`);
                 }
               }
             }
@@ -3910,8 +3870,7 @@ async function handleDealCreate(dealId, requestId) {
             customerEmail,
             isStubOrder,
             stubReason,
-            stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null,
-            isPreorder: categoryId === '8' // ✅ PRE-ORDER: Category 8 = Pre-order deals
+            stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null
           });
 
           if (orderResult.success) {

@@ -688,11 +688,6 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     // Separate tag (no colon) to be easily visible and searchable in Shopify UI
     tags.push('BITRIX_STUB');
   }
-  // ✅ PRE-ORDER tag: Added when order is created from Bitrix pre-order deal (Category 8)
-  const isPreorder = !!options?.isPreorder;
-  if (isPreorder) {
-    tags.push('pre-order');
-  }
 
   // Build note with order information
   const note = isStubOrder
