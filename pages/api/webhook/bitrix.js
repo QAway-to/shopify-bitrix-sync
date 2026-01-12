@@ -1711,6 +1711,16 @@ async function handleDealUpdate(dealId, requestId) {
     const color = dealData.UF_CRM_1739793651654 || dealData.uf_crm_1739793651654; // Color
     const size = dealData.UF_CRM_1739793720585 || dealData.uf_crm_1739793720585;   // Size
 
+    console.log(JSON.stringify({
+      event: 'PRE_ORDER_FIELD_CHECK',
+      requestId,
+      dealId,
+      fields: { brand, model, color, size },
+      hasAllFields: !!(brand && model && color && size),
+      shopifyOrderId,
+      timestamp: new Date().toISOString()
+    }));
+
     // Check if we already have a linked order to avoid duplicates (unless we want to update?)
     // If shopifyOrderId exists, we assume reservation is done.
     if (brand && model && color && size && (!shopifyOrderId || shopifyOrderId.trim() === '')) {

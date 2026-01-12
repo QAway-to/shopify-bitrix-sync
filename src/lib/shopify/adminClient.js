@@ -155,83 +155,55 @@ export async function callShopifyGraphQL(query, variables = {}) {
  * @returns {Promise<Object|null>} Found variant or null
  */
 export async function findShopifyVariantByAttributes({ brand, model, color, size }) {
-  // Search products by Vendor and Title query
-  // We use GraphQL for flexible search
-  const query = `
-    query searchProducts($query: String!) {
-      products(first: 10, query: $query) {
-        nodes {
-          id
-          title
-          vendor
-          variants(first: 20) {
-            nodes {
-              id
-              title
-              sku
-              price
-              inventoryQuantity
-              selectedOptions {
-                name
-                value
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  // Construct search query
-  // vendor:Brand AND title:Model
-  // Note: Model might be fuzzy, so we might just search title:*Model*
-  const searchQuery = `vendor:'${brand}' AND title:*${model}*`;
-
+  // Use REST API logic similar to robust Python script
+  // 1. Fetch products by Vendor (limit 50)
+  // We filter by vendor server-side, then handle model/size client-side
   try {
-    const data = await callShopifyGraphQL(query, { query: searchQuery });
-    const products = data?.products?.nodes || [];
-
-    // Filter variants manually
-    const candidates = [];
+    const endpoint = `/products.json?limit=50&vendor=${encodeURIComponent(brand)}`;
+    const response = await callShopifyAdmin(endpoint);
+    const products = response.products || [];
 
     for (const product of products) {
-      for (const variant of product.variants.nodes) {
-        // Check options
-        // Shopify options are just Name/Value pairs. We need to match Color and Size loosely.
-        const options = variant.selectedOptions;
+      // 1. Strict Brand Check (case-insensitive)
+      if (product.vendor.toLowerCase() !== brand.toLowerCase()) continue;
 
-        const hasColor = options.some(o =>
-          (o.name.toLowerCase().includes('color') || o.name.toLowerCase().includes('цвет') || o.name.toLowerCase().includes('colour')) &&
-          o.value.toLowerCase().includes(color.toLowerCase())
-        );
+      // 2. Model Check (Title must contain model)
+      if (!product.title.toLowerCase().includes(model.toLowerCase())) continue;
 
-        const hasSize = options.some(o =>
-          (o.name.toLowerCase().includes('size') || o.name.toLowerCase().includes('размер')) &&
-          o.value.toLowerCase().trim() === size.toLowerCase().trim()
-        );
+      // 3. Variant Check (Size must match one of the option values exactly)
+      for (const variant of product.variants) {
+        // Collect all option values (option1, option2, option3)
+        const variantValues = [
+          variant.option1,
+          variant.option2,
+          variant.option3
+        ].map(v => v ? String(v).toLowerCase() : '');
 
-        if (hasColor && hasSize) {
-          candidates.push({
+        // Check if size is in the values (exact match)
+        if (variantValues.includes(size.toLowerCase())) {
+          // Found match!
+          // Normalize structure to match expected format
+          return {
+            variant: {
+              id: String(variant.id), // Ensure string ID
+              title: variant.title,
+              sku: variant.sku,
+              price: variant.price,
+              inventoryQuantity: variant.inventory_quantity,
+              // Add other fields if needed
+            },
             productTitle: product.title,
-            variantTitle: variant.title,
-            vendor: product.vendor,
-            variant
-          });
+            vendor: product.vendor
+          };
         }
       }
     }
 
-    if (candidates.length === 1) {
-      return candidates[0]; // Return { variant, productTitle, vendor }
-    } else if (candidates.length > 1) {
-      console.warn(`[FIND VARIANT] Ambiguous result: found ${candidates.length} variants for ${brand} ${model} ${color} ${size}`);
-      // return first one? No, safer to return null.
-      return null;
-    }
-
+    // No match found
+    console.warn(`[FIND VARIANT] No match for ${brand} ${model} ${size} in ${products.length} products`);
     return null;
   } catch (error) {
-    console.error(`[FIND VARIANT] Error searching Shopify: ${error.message}`);
+    console.error(`[FIND VARIANT] Error searching Shopify (REST): ${error.message}`);
     throw error;
   }
 }
