@@ -5,7 +5,7 @@ function SectionCard({ title, children }) {
   return (
     <section className="card doc-card">
       <div className="card-header">
-        <h2>{title}</h2>
+        <h3>{title}</h3>
       </div>
       <div className="doc-prose">{children}</div>
     </section>
@@ -16,72 +16,72 @@ export default function TechDocPage() {
   return (
     <>
       <Head>
-        <title>Тех.док - Middleware сервис</title>
-        <meta name="description" content="Техническая справка по UI и правилам интеграции" />
+        <title>Tech Docs - Middleware Service</title>
+        <meta name="description" content="Technical reference for UI and integration rules" />
       </Head>
 
       <DocsLayout
-        title="Тех.док"
-        subtitle="Короткая техническая справка: теги, loop guard, логи и UI."
+        title="Tech Docs"
+        subtitle="Quick technical reference: tags, loop guard, logs and UI."
         active="tech_doc"
       >
         <section className="card doc-card">
           <div className="doc-prose">
             <p>
-              Эта страница — компактная техническая справка: что означает в интерфейсе, какие маркеры
-              используются для связки и защиты от циклов, и где брать логи.
+              This page is a compact technical reference: what UI elements mean, what markers
+              are used for linking and loop protection, and where to find logs.
             </p>
           </div>
         </section>
 
         <div className="doc-sections">
-          <SectionCard title="Основной UI">
+          <SectionCard title="Main UI">
             <ul>
               <li>
-                Главная страница: мониторинг событий <strong>Shopify → Bitrix</strong> и <strong>Bitrix → Shopify</strong>
+                Main page: event monitoring for <strong>Shopify → Bitrix</strong> and <strong>Bitrix → Shopify</strong>
               </li>
               <li>
-                Есть ручная отправка событий (на случай если автоматическая обработка не сработала)
+                Manual event sending available (in case auto-processing fails)
               </li>
             </ul>
           </SectionCard>
 
-          <SectionCard title="Теги и связка заказов">
+          <SectionCard title="Tags & Order Linking">
             <ul>
               <li>
-                <strong>BITRIX:{'{dealId}'}</strong> — тег на Shopify‑ордере, который связывает его со сделкой Bitrix (и
-                помогает не создавать дубликаты).
+                <strong>BITRIX:{'{dealId}'}</strong> — tag on Shopify order linking it to Bitrix deal
+                (prevents duplicates).
               </li>
               <li>
-                <strong>Название сделки в Bitrix:</strong> обновляется до номера Shopify‑заказа (например, <code>#2494</code>),
-                чтобы менеджеру было проще сопоставлять.
+                <strong>Bitrix deal name:</strong> updates to Shopify order number (e.g., <code>#2494</code>)
+                for easy matching by managers.
               </li>
             </ul>
           </SectionCard>
 
-          <SectionCard title="Loop guard (защита от циклов)">
+          <SectionCard title="Loop Guard (cycle protection)">
             <ul>
               <li>
-                При изменениях из Bitrix Shopify‑ордер получает тег <code>BitrixUpdated</code>.
+                When changes come from Bitrix, Shopify order gets <code>BitrixUpdated</code> tag.
               </li>
               <li>
-                Дополнительно может ставиться provenance‑маркер (metafield) <code>middleware.last_write=bitrix</code>.
+                Additional provenance marker (metafield) <code>middleware.last_write=bitrix</code> may be set.
               </li>
               <li>
-                Shopify‑webhook, увидев эти маркеры, пропускает событие, чтобы не было цепочки{' '}
+                Shopify webhook sees these markers and skips the event to prevent chain like{' '}
                 <code>Shopify → Middleware → Bitrix → Middleware → Shopify</code>.
               </li>
             </ul>
           </SectionCard>
 
-          <SectionCard title="Логи">
+          <SectionCard title="Logs">
             <ul>
               <li>
-                Кнопка <strong>“Скачать логи”</strong> отдаёт полный файл, включая серверный вывод
+                <strong>"Download Logs"</strong> button exports full log file including server output
                 (captured <code>stdout/stderr</code>).
               </li>
               <li>
-                В логах можно увидеть payload/ответы Shopify и Bitrix для диагностики (ошибки 4xx/5xx, валидация адреса и т.д.).
+                Logs show Shopify/Bitrix payloads and responses for diagnostics (4xx/5xx errors, address validation, etc.).
               </li>
             </ul>
           </SectionCard>
@@ -90,4 +90,3 @@ export default function TechDocPage() {
     </>
   );
 }
-

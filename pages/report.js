@@ -5,7 +5,7 @@ function SectionCard({ title, children }) {
   return (
     <section className="card doc-card">
       <div className="card-header">
-        <h2>{title}</h2>
+        <h3>{title}</h3>
       </div>
       <div className="doc-prose">{children}</div>
     </section>
@@ -16,68 +16,68 @@ export default function ReportPage() {
   return (
     <>
       <Head>
-        <title>Отчёт - Middleware сервис</title>
-        <meta name="description" content="Отчёт о функциональности Middleware сервиса" />
+        <title>Report - Middleware Service</title>
+        <meta name="description" content="Middleware functionality report" />
       </Head>
 
       <DocsLayout
-        title="Отчёт"
-        subtitle="Что реализовано, что работает частично, и известные ограничения."
+        title="Report"
+        subtitle="What's implemented, what works partially, and known limitations."
         active="report"
       >
         <section className="card doc-card">
           <div className="doc-prose">
             <p>
-              Этот отчёт описывает текущие возможности Middleware (Shopify ↔ Bitrix) простым языком:
-              что происходит автоматически и где есть ограничения.
+              This report describes current Middleware (Shopify ↔ Bitrix) capabilities:
+              what happens automatically and where there are limitations.
             </p>
           </div>
         </section>
 
         <div className="doc-sections">
-          <SectionCard title="Что реализовано">
+          <SectionCard title="Implemented Features">
             <ul>
               <li>
-                <strong>Shopify → Bitrix:</strong> создание/обновление сделок по заказам, перенос товаров и сумм,
-                обновление статусов оплаты/возвратов.
+                <strong>Shopify → Bitrix:</strong> deal creation/update from orders, product and amount transfer,
+                payment/refund status updates.
               </li>
               <li>
-                <strong>Bitrix → Shopify:</strong> создание заказа в Shopify из сделки Bitrix (резерв товара),
-                обновление адреса доставки, доставка (fulfillment), отмена при LOSE.
+                <strong>Bitrix → Shopify:</strong> order creation from Bitrix deal (inventory reservation),
+                shipping address update, fulfillment, cancellation on LOSE.
               </li>
               <li>
-                <strong>Loop guard:</strong> при изменениях из Bitrix заказ в Shopify получает метку <code>BitrixUpdated</code>
-                и/или provenance‑метку <code>middleware.last_write</code>, чтобы избежать “кругов” синхронизации.
+                <strong>Loop guard:</strong> when changes come from Bitrix, Shopify order gets <code>BitrixUpdated</code>
+                tag and/or <code>middleware.last_write</code> provenance marker to prevent sync loops.
               </li>
               <li>
-                <strong>Теги для связки:</strong> ордера из Bitrix помечаются <code>BITRIX:{'{dealId}'}</code>.
+                <strong>Linking tags:</strong> orders from Bitrix are tagged with <code>BITRIX:{'{dealId}'}</code>.
               </li>
               <li>
-                <strong>UI и логи:</strong> есть веб‑интерфейс и кнопка “Скачать логи”, в файле есть серверный вывод
+                <strong>UI & Logs:</strong> web interface with "Download Logs" button, logs include server output
                 (captured <code>stdout/stderr</code>).
               </li>
             </ul>
           </SectionCard>
 
-          <SectionCard title="Что работает частично / ограничения">
+          <SectionCard title="Partial / Limitations">
             <ul>
               <li>
-                <strong>Инвентаризация:</strong> сейчас обработка товаров идёт только для <code>qty &gt; 0</code> в Shopify.
-                Товары с нулевым остатком не попадают в автоматические операции.
+                <strong>Inventory:</strong> currently only products with <code>qty &gt; 0</code> are processed.
+                Zero-stock products are excluded from auto operations.
               </li>
               <li>
-                <strong>Размер (Size) в Bitrix:</strong> список значений Size настроен не полностью (есть значения только до{' '}
-                <strong>32</strong>), поэтому размеры выше могут не проставляться автоматически.
+                <strong>Size in Bitrix:</strong> Size enum is not fully configured (values only up to{' '}
+                <strong>32</strong>), so larger sizes may not be set automatically.
               </li>
             </ul>
           </SectionCard>
 
-          <SectionCard title="Как менеджеру быстро проверить, что всё работает">
+          <SectionCard title="Quick Verification for Managers">
             <ol>
-              <li>Создать заказ в Shopify → убедиться, что сделка появилась в Bitrix (и название сделки = <code>#XXXX</code>)</li>
-              <li>Изменить адрес в Bitrix → проверить, что адрес обновился в Shopify</li>
-              <li>Перевести сделку в “Delivery” → проверить обновление доставки в Shopify</li>
-              <li>Перевести сделку в LOSE → проверить отмену заказа в Shopify</li>
+              <li>Create order in Shopify → verify deal appears in Bitrix (deal name = <code>#XXXX</code>)</li>
+              <li>Change address in Bitrix → verify address updates in Shopify</li>
+              <li>Move deal to "Delivery" → verify fulfillment updates in Shopify</li>
+              <li>Move deal to LOSE → verify order cancellation in Shopify</li>
             </ol>
           </SectionCard>
         </div>
