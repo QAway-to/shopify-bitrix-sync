@@ -515,7 +515,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
   if (!lockAcquired) {
     // Another request is creating order - wait and check for existing order multiple times
     console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Lock already held for deal ${dealId}, waiting and checking for existing order...`);
-    
+
     // Wait with multiple checks for existing order
     for (let checkAttempt = 1; checkAttempt <= 10; checkAttempt++) {
       await new Promise(resolve => setTimeout(resolve, 300)); // Wait 300ms between checks
@@ -543,7 +543,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
             : `Ордер из Bitrix. Сделка: ${dealId}`
         };
       }
-      
+
       // Check if order already exists
       const existingOrderId = await findExistingOrderByDealId(dealId);
       if (existingOrderId) {
@@ -561,7 +561,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
             : `Ордер из Bitrix. Сделка: ${dealId}`
         };
       }
-      
+
       // Check if lock is released
       if (!dealIdLocks.has(dealId)) {
         console.log(`[CREATE ORDER FROM BITRIX] Lock released for deal ${dealId} on attempt ${checkAttempt}`);
@@ -572,7 +572,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
         // Another request got the lock, continue waiting
       }
     }
-    
+
     // Final check after waiting
     const finalExistingOrderId = await findExistingOrderByDealId(dealId);
     if (finalExistingOrderId) {
@@ -584,18 +584,18 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
         orderName: `Existing order ${finalExistingOrderId}`,
         wasDuplicate: true,
         lineItems: [],
-          tags: [`BITRIX:${dealId}`, ...(isStubOrder ? ['BITRIX_STUB'] : [])],
-          note: isStubOrder
-            ? `STUB ORDER (Bitrix): deal=${dealId}${stubReason ? `; reason=${stubReason}` : ''}${stubDefaultVariantId ? `; default_variant=${stubDefaultVariantId}` : ''}`
-            : `Ордер из Bitrix. Сделка: ${dealId}`
+        tags: [`BITRIX:${dealId}`, ...(isStubOrder ? ['BITRIX_STUB'] : [])],
+        note: isStubOrder
+          ? `STUB ORDER (Bitrix): deal=${dealId}${stubReason ? `; reason=${stubReason}` : ''}${stubDefaultVariantId ? `; default_variant=${stubDefaultVariantId}` : ''}`
+          : `Ордер из Bitrix. Сделка: ${dealId}`
       };
     }
-    
+
     // If still locked after all checks, throw error
     if (dealIdLocks.has(dealId)) {
       throw new Error(`Timeout waiting for lock on deal ${dealId} - order creation already in progress for too long`);
     }
-    
+
     // Try one more time to acquire lock
     if (!acquireLock(dealId)) {
       throw new Error(`Could not acquire lock for deal ${dealId} after waiting`);
@@ -652,11 +652,11 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     if (item.variantId) {
       variantId = String(item.variantId);
       console.log(`[CREATE ORDER FROM BITRIX] Using variantId directly: ${variantId}`);
-    } 
+    }
     // Otherwise, if SKU is provided, look up variantId by SKU from batch result
     else if (item.sku) {
       variantId = variantIdMap.get(item.sku);
-      
+
       if (!variantId) {
         throw new Error(`Variant ID not found for SKU: ${item.sku}`);
       }
@@ -687,6 +687,11 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
   if (isStubOrder) {
     // Separate tag (no colon) to be easily visible and searchable in Shopify UI
     tags.push('BITRIX_STUB');
+  }
+  // ✅ PRE-ORDER tag: Added when order is created from Bitrix pre-order deal (Category 8)
+  const isPreorder = !!options?.isPreorder;
+  if (isPreorder) {
+    tags.push('pre-order');
   }
 
   // Build note with order information
@@ -759,10 +764,10 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
 
   // ✅ CRITICAL STEP 3: Final duplicate checks with delays before creation
   console.log(`[CREATE ORDER FROM BITRIX] Performing final duplicate checks before creating order for deal ${dealId}...`);
-  
+
   // Wait 1.5 seconds to allow any concurrent requests to finish creating their orders
   await new Promise(resolve => setTimeout(resolve, 1500));
-  
+
   // Check 3 more times with delays
   for (let finalCheck = 1; finalCheck <= 3; finalCheck++) {
     const existingOrderId = await findExistingOrderByDealId(dealId);
@@ -783,7 +788,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       await new Promise(resolve => setTimeout(resolve, 400)); // Wait 400ms between final checks
     }
   }
-  
+
   console.log(`[CREATE ORDER FROM BITRIX] ✅ All duplicate checks passed. Proceeding with order creation for deal ${dealId}`);
 
   try {
@@ -1021,7 +1026,7 @@ export async function addTagToOrder(orderId, tag) {
     // Get current order to get existing tags
     const { callShopifyAdmin, getOrder } = await import('./adminClient.js');
     const order = await getOrder(orderId);
-    
+
     if (!order) {
       return {
         success: false,

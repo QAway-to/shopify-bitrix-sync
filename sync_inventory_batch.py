@@ -118,6 +118,9 @@ def fetch_shopify_products(filter_qty_gt_zero: bool = True, target_variant_id: s
         page_info = None
         has_next = True
         
+        start_time = time.time()
+        last_log = start_time
+        
         while has_next:
             url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/products.json?limit=250"
             if page_info:
@@ -136,14 +139,33 @@ def fetch_shopify_products(filter_qty_gt_zero: bool = True, target_variant_id: s
             
             link_header = response.headers.get("Link", "")
             has_next = False
-            if 'rel="next"' in link_header:
-                try:
-                    page_info = link_header.split('page_info=')[1].split('>')[0]
-                    has_next = True
-                except: pass
+            page_info = None
+            
+            # Robust Parsing for rel="next"
+            if "rel=\"next\"" in link_header:
+                links = link_header.split(',')
+                for link in links:
+                    if 'rel="next"' in link and 'page_info=' in link:
+                        try:
+                            # format: <url?page_info=...>; rel="next"
+                            # extract between page_info= and >
+                            page_info = link.split('page_info=')[1].split('>')[0]
+                            has_next = True
+                            break
+                        except: pass
+            
+            # Time-based log (Every 60s)
+            if time.time() - last_log > 60:
+                elapsed = int(time.time() - start_time)
+                print(f"  [SHOPIFY] Working... {elapsed}s elapsed. Fetched {len(products_to_process)} items so far.")
+                last_log = time.time()
 
     # === PROCESS PRODUCTS ===
     print(f"[SHOPIFY] Processing {len(products_to_process)} products...")
+    
+    # DEBUG: Check first product description
+    if products_to_process:
+        print(f"[DEBUG SHOPIFY] First Body HTML (Len): {len(products_to_process[0].get('body_html', '') or '')}")
     
     for product in products_to_process:
         product_vendor = product.get("vendor", "")
@@ -195,7 +217,8 @@ def fetch_shopify_products(filter_qty_gt_zero: bool = True, target_variant_id: s
                 "brand": product_vendor,
                 "category": product_type,
                 "color": color_val,
-                "size": size_val
+                "size": size_val,
+                "description": product.get("body_html", "") or ""
             })
             
     print(f"[SHOPIFY] Fetched {len(all_variants)} variants to sync")
@@ -240,10 +263,13 @@ def fetch_all_bitrix_products_fast() -> Dict[str, Dict]:
     
     # Use standard list method 
     start = 0
+    start_time = time.time()
+    last_log = start_time
+    
     while True:
         url = f"{BITRIX_WEBHOOK}crm.product.list"
         resp = requests.post(url, json={
-            "select": ["ID", "PRICE", "XML_ID", "NAME", "PROPERTY_98", "PROPERTY_102"], # Fetch properties to check if update needed
+            "select": ["ID", "PRICE", "XML_ID", "NAME", "PROPERTY_98", "PROPERTY_102", "DETAIL_TEXT", "SECTION_ID"], # Fetch properties + Description
             "start": start
         }).json()
         
@@ -258,23 +284,35 @@ def fetch_all_bitrix_products_fast() -> Dict[str, Dict]:
         start = resp.get("next")
         if not start: break
         
-        if start % 1000 == 0:
-            print(f"  Loaded {len(all_products)} products...")
+        # Time-based log (Every 60s)
+        if time.time() - last_log > 60:
+             elapsed = int(time.time() - start_time)
+             print(f"  [BITRIX] Indexing... {elapsed}s elapsed. Loaded {len(all_products)} products.")
+             last_log = time.time()
             
     print(f"[BITRIX] Indexed {len(all_products)} products")
     return all_products
 
-def get_current_stocks_batch(product_ids: List[int]) -> Dict[int, int]:
-    """Get stocks for multiple products using batch"""
+def get_current_stocks_batch(product_ids: List[int], store_id: int = 2) -> Dict[int, int]:
+    """
+    Get stocks for multiple products using batch.
+    NOTE: We remove filter[STORE_ID] and filter manually relative to store_id=2 
+    to avoid potential API filter issues (case sensitivity etc).
+    """
     stocks = {}
     commands = []
     
-    # Prepare commands
+    # Prepare commands - FETCH ALL STOCKS for product (safer)
+    # Removing select[] to ensure we get everything, including storeId in whatever case
+    # FIX: Use 'productId' (camelCase) as 'PRODUCT_ID' seems to be ignored or act weirdly in some batch contexts?
+    # Actually, looking at user's script, they use "productId".
     for pid in product_ids:
-        cmd = f"catalog.storeproduct.list?filter[PRODUCT_ID]={pid}&select[]=AMOUNT"
+        cmd = f"catalog.storeproduct.list?filter[productId]={pid}"
         commands.append((str(pid), cmd))
     
     # Execute
+    print(f"[STOCK] Fetching stocks for {len(commands)} products from Store {store_id}...")
+    
     for i in range(0, len(commands), 50):
         chunk = commands[i:i+50]
         batch_cmd = {key: cmd for key, cmd in chunk}
@@ -285,35 +323,115 @@ def get_current_stocks_batch(product_ids: List[int]) -> Dict[int, int]:
         for key, data in results.items():
             pid = int(key)
             amount = 0
-            if data and "storeProducts" in data and data["storeProducts"]:
-                 raw_amount = data["storeProducts"][0].get("amount")
-                 amount = int(float(raw_amount)) if raw_amount is not None else 0
+            found_store = False
+            
+            # DEBUG: Print raw response for problematic product
+            if pid == 9864: # Target test ID from logs
+                print(f"\n[DEBUG RAW] PID {pid} Response: {json.dumps(data, indent=2)}")
+            
+            if data and "storeProducts" in data:
+                 for store_prod in data["storeProducts"]:
+                     # Check if this is our target store (handle both cases)
+                     sid = int(store_prod.get("storeId") or store_prod.get("STORE_ID") or 0)
+                     if sid == store_id:
+                         # Double check it is the right product (since filter failed before)
+                         p_check = int(store_prod.get("productId") or store_prod.get("PRODUCT_ID") or 0)
+                         if p_check != pid:
+                             # This should not happen if filter works, but let's be safe
+                             continue
+                             
+                         raw_amount = store_prod.get("amount")
+                         if raw_amount is None: raw_amount = store_prod.get("AMOUNT")
+                         amount = int(float(raw_amount)) if raw_amount is not None else 0
+                         found_store = True
+                         break
+            
             stocks[pid] = amount
+            
+            # Debug log for significant amounts or if missing
+            if not found_store:
+                print(f"  [WARN] PID {pid}: Store {store_id} NOT FOUND in response (Assumed 0). Response keys: {[s.get('storeId') for s in data.get('storeProducts', [])]}")
+            elif amount > 0:
+                print(f"  [STOCK FOUND] PID {pid}: Store {store_id} -> {amount}")
             
         print(f"[STOCK] Loaded {min(i+50, len(commands))}/{len(commands)} stocks")
         
     return stocks
 
 # ============ SYNC LOGIC ============
-def run_batch_sync(target_variant_id: str = None):
+def run_batch_sync(target_variant_ids: List[str] = None, target_section_ids: List[int] = None):
+    """
+    Run batch sync.
+    
+    Args:
+        target_variant_ids: List of variant IDs to sync (for testing specific products)
+        target_section_ids: List of section IDs to sync (e.g. [36] for A-F only, or [36,38,40,42] for all)
+                           If None, syncs ALL sections.
+    """
     print("="*60)
-    print("BATCH BATCH INVENTORY SYNC (With Properties)")
-    if target_variant_id:
-        print(f"TARGET TARGET: {target_variant_id}")
+    print("BATCH INVENTORY SYNC (With Properties + Title)")
+    if target_variant_ids:
+        print(f"TARGET VARIANTS: {target_variant_ids}")
+    if target_section_ids:
+        section_names = {36: 'A-F', 38: 'G-M', 40: 'N-S', 42: 'T-Z'}
+        names = [section_names.get(sid, str(sid)) for sid in target_section_ids]
+        print(f"TARGET SECTIONS: {', '.join(names)} (IDs: {target_section_ids})")
+    if not target_variant_ids and not target_section_ids:
+        print("MODE: FULL SYNC (all sections)")
     print("="*60)
     
     # 1. Fetch Data
-    shopify_variants = fetch_shopify_products(filter_qty_gt_zero=True, target_variant_id=target_variant_id)
+    # If specific variants requested, fetch them one by one
+    if target_variant_ids:
+        shopify_variants = []
+        for vid in target_variant_ids:
+            result = fetch_shopify_products(filter_qty_gt_zero=False, target_variant_id=vid)
+            shopify_variants.extend(result)
+        print(f"[SHOPIFY] Fetched {len(shopify_variants)} target variants")
+    else:
+        # We fetch ALL, including 0 qty, so we can update existing items. 
+        # But we will prevent CREATING new 0-qty items below.
+        shopify_variants = fetch_shopify_products(filter_qty_gt_zero=False, target_variant_id=None)
     
     if not shopify_variants:
         print("No variants found in Shopify for sync.")
         return
-
+    
+    # 1.1 Filter by Section (if specified)
     bitrix_products = fetch_all_bitrix_products_fast()
+    
+    # 1.1 Filter by Section (if specified)
+    if target_section_ids and not target_variant_ids:
+        original_count = len(shopify_variants)
+        
+        # Build set of XML_IDs currently in the target Bitrix sections
+        bx_ids_in_section = set()
+        for vid, b_prod in bitrix_products.items():
+            b_sec = int(b_prod.get("SECTION_ID", 0) or 0)
+            if b_sec in target_section_ids:
+                bx_ids_in_section.add(vid)
+        
+        filtered_variants = []
+        for v in shopify_variants:
+            vid = str(v["variant_id"])
+            sku = v.get("sku", "") or ""
+            
+            # Condition 1: SKU matches section
+            matches_sku = get_section_id_by_sku(sku) in target_section_ids
+            
+            # Condition 2: Already in Bitrix Section (Fallback for items without SKU)
+            matches_bitrix = vid in bx_ids_in_section
+            
+            if matches_sku or matches_bitrix:
+                filtered_variants.append(v)
+                
+        shopify_variants = filtered_variants
+        print(f"[FILTER] Filtered to {len(shopify_variants)}/{original_count} variants for target sections (SKU match or Bitrix fallback)")
     
     # 2. Plan Changes
     create_payloads = []
     update_payloads = []
+    description_updates = [] # New list for description specific updates
     ensure_stock_ids = []
     
     print("\n[PLANNING] Calculating differences...")
@@ -342,34 +460,51 @@ def run_batch_sync(target_variant_id: str = None):
             
             updates = []
             
+            # 0. NAME Check (Title sync)
+            shopify_name = f"{variant['product_title']} - {variant['variant_title']}"
+            # Clean up "Default Title" variant names
+            if variant['variant_title'] == 'Default Title' or not variant['variant_title']:
+                shopify_name = variant['product_title']
+            
+            b_name = b_prod.get("NAME", "")
+            
+            # Debug: Always print NAME comparison for target variants
+            if target_variant_ids:
+                print(f"  [DEBUG NAME] Bitrix: '{b_name}'")
+                print(f"  [DEBUG NAME] Shopify: '{shopify_name}'")
+                print(f"  [DEBUG NAME] Match: {b_name == shopify_name}")
+            
+            if b_name != shopify_name:
+                # URL encode the name for batch command
+                encoded_name = shopify_name.replace(" ", "%20").replace("&", "%26")
+                updates.append(f"fields[NAME]={encoded_name}")
+                print(f"  [NAME] {pid}: '{b_name}' -> '{shopify_name}'")
+            
+            # 0.1 DESCRIPTION Check - MOVED TO SEPARATE PASS (below)
+            # We skip adding it to 'updates' here to avoid mixing crm.product.update with catalog fields complexity.
+            # Instead we track needed updates.
+            s_desc = variant.get("description", "").strip()
+            b_desc = b_prod.get("DETAIL_TEXT", "").strip()
+            
+            if s_desc != b_desc:
+                # Add to a separate list for processing
+                description_updates.append({
+                    "id": pid,
+                    "desc": s_desc
+                })
+                # print(f"  [DESC] {pid}: Queued description update")
+
             # 1. Price Check
             b_price = float(b_prod.get("PRICE", 0) or 0)
             if abs(b_price - s_price) > 0.01:
                 updates.append(f"fields[PRICE]={s_price}")
             
-            # 2. Property Check (Always update properties for Target item, or if missing)
-            # Simplification: For the target item, FORCE update all properties
-            if target_variant_id:
+            # 2. Property Check (Always update properties for Target items, or if missing)
+            # For target variants OR target sections, FORCE update all properties
+            if target_variant_ids or target_section_ids:
                  for p_id, p_val in props.items():
-                     # URL encode might be tricky for spaces in batch query params
-                     # Bitrix batch usually handles it, but safer to loop or simple string
-                     # "fields[PROPERTY_98]=40"
-                     # Note: requests param encoding is safer.
-                     # Since we construct raw string commands for batch:
-                     # We must be careful with spaces. 
-                     # Ideally use crm.product.update with JSON body via batch cmd reference? No.
-                     # We'll use simple string replacement or just be careful.
-                     # For simplicity in this script: replace spaces with %20 manually?
-                     # requests library handles separate params well, but here we build a command STRING.
-                     # e.g. "crm.product.update?id=123&fields[NAME]=Value"
-                     
-                     # HACK: For batch strings, simple properties are okay. 
-                     # If brand has spaces, this simple string construction might FAIL.
-                     # Better approach: Use JSON payloads in batch if possible.
-                     # But Bitrix Rest batch 'cmd' expects strings like 'method?params'.
-                     # OK, we will try. If safe set of chars, it works.
-                     # "GROUNDIES" -> safe. "Brisbane" -> safe.
-                     updates.append(f"fields[{p_id}]={p_val}")
+                     encoded_val = str(p_val).replace(" ", "%20").replace("&", "%26")
+                     updates.append(f"fields[{p_id}]={encoded_val}")
             
             if updates:
                 # Join with &
@@ -384,6 +519,10 @@ def run_batch_sync(target_variant_id: str = None):
             ensure_stock_ids.append(pid)
         else:
             # --- CREATE ---
+            # ONLY create if qty > 0. Do not create new products with 0 stock.
+            if variant['qty'] <= 0:
+                continue
+
             sku = variant["sku"]
             section_id = get_section_id_by_sku(sku)
             name = f"{variant['product_title']} - {variant['variant_title']}"
@@ -396,7 +535,11 @@ def run_batch_sync(target_variant_id: str = None):
                 "SECTION_ID": section_id,
                 "CODE": sku,
                 "XML_ID": vid,
-                "ACTIVE": "Y"
+                "ACTIVE": "Y",
+                "DETAIL_TEXT": variant.get("description", ""),
+                "DETAIL_TEXT_TYPE": "html",
+                "PREVIEW_TEXT": variant.get("description", ""),
+                "PREVIEW_TEXT_TYPE": "html"
             }
             # Merge props
             fields.update(props)
@@ -407,6 +550,24 @@ def run_batch_sync(target_variant_id: str = None):
     if update_payloads:
         execute_batches(update_payloads)
     
+    # 3.1 Execute Description Updates (Separate Batch)
+    if description_updates:
+        print(f"\n[DESC] Processing {len(description_updates)} description updates...")
+        import urllib.parse
+        
+        desc_cmds = []
+        for item in description_updates:
+            # Use catalog.product.update with camelCase fields as per user example
+            # fields[detailText]=...&fields[detailTextType]=html
+            encoded_desc = urllib.parse.quote(item['desc'])
+            # Note: catalog.product.update requires 'id' in fields? No, usually ID is separate param or key.
+            # In batch: ?id=...&fields[...]
+            cmd = f"catalog.product.update?id={item['id']}&fields[detailText]={encoded_desc}&fields[detailTextType]=html&fields[previewText]={encoded_desc}&fields[previewTextType]=html"
+            desc_cmds.append((f"desc_{item['id']}", cmd))
+            print(f"  [DESC] {item['id']}: Updating description (Length: {len(item['desc'])})")
+            
+        execute_batches(desc_cmds)
+
     # 4. Execute Creates (1-by-1)
     created_map = {} 
     print(f"\n[CREATE] Creating {len(create_payloads)} new products...")
@@ -471,14 +632,22 @@ def run_batch_sync(target_variant_id: str = None):
                     print("ERR Failed to create stock doc")
                     continue
                 
+                
                 element_cmds = []
                 for item in chunk:
-                    cmd = f"catalog.document.element.add?fields[docId]={doc_id}&fields[elementId]={item['id']}&fields[amount]={item['amount']}&fields[purchasingPrice]=0&fields[storeTo]=2"
+                    # Detect store logic based on doc type
+                    # S (Arrival/Adj) -> storeTo=2
+                    # D (Deduct) -> storeFrom=2, storeTo=""
+                    store_field = f"fields[storeTo]=2"
+                    if doc_type == "D":
+                        store_field = f"fields[storeFrom]=2"
+                    
+                    cmd = f"catalog.document.element.add?fields[docId]={doc_id}&fields[elementId]={item['id']}&fields[amount]={item['amount']}&fields[purchasingPrice]=0&{store_field}"
                     element_cmds.append((f"add_{item['id']}", cmd))
                 
                 execute_batches(element_cmds)
                 requests.post(f"{BITRIX_WEBHOOK}catalog.document.conduct", json={"id": doc_id})
-                print(f"  OK Conducted document {doc_id} ({len(chunk)} items)")
+                print(f"  OK Conducted document {doc_id} ({len(chunk)} items) [Type: {doc_type}]")
 
         if arrival_items:
             print(f"\n[STOCK] Processing {len(arrival_items)} arrivals...")
@@ -486,14 +655,14 @@ def run_batch_sync(target_variant_id: str = None):
             
         if deduct_items:
             print(f"\n[STOCK] Processing {len(deduct_items)} deducts...")
-            apply_stock_changes(deduct_items, "W")
+            apply_stock_changes(deduct_items, "D")  # Use 'D' (Deduct)
     else:
         print("[STOCK] No products to sync stock for.")
 
     # ============ STEP 7: Zero-Stock Sync for Existing Bitrix Products ============
     # For products that exist in Bitrix (have XML_ID) but Shopify qty = 0:
     # Create write-off document to sync stock down to 0
-    if not target_variant_id:  # Only run in full sync mode
+    if not target_variant_ids:  # Only run in full sync mode
         print("\n[ZERO-STOCK] Checking existing Bitrix products for Shopify qty=0...")
         
         # Get all Bitrix product XML_IDs (variant IDs)
@@ -509,6 +678,18 @@ def run_batch_sync(target_variant_id: str = None):
             if xml_id in variant_map:
                 continue
             
+            # SKIP CHECK for short IDs (legacy Bitrix IDs 2900, 3000 etc are not Shopify IDs)
+            if len(str(xml_id)) < 10:
+                continue
+
+            # SKIP CHECK if product belongs to a different section (when filtering by section)
+            if target_section_ids:
+                b_section = int(bx_prod.get("SECTION_ID", 0) or 0)
+                if b_section not in target_section_ids:
+                    # distinct helpful log only for debug
+                    # print(f"  [ZERO-STOCK] Skipping ID {xml_id} (Section {b_section} not in target)")
+                    continue
+
             # Check Shopify inventory for this variant
             try:
                 v_url = f"https://{SHOPIFY_STORE}/admin/api/2024-01/variants/{xml_id}.json"
@@ -545,7 +726,7 @@ def run_batch_sync(target_variant_id: str = None):
             
             if deduct_to_zero:
                 print(f"\n[ZERO-STOCK] Processing {len(deduct_to_zero)} write-offs...")
-                apply_stock_changes(deduct_to_zero, "W")
+                apply_stock_changes(deduct_to_zero, "D")  # Use 'D' (Deduct)
             else:
                 print("[ZERO-STOCK] No products need stock reduction")
         else:
@@ -554,7 +735,19 @@ def run_batch_sync(target_variant_id: str = None):
     print(f"\nOK Sync Complete!")
 
 if __name__ == "__main__":
-    # TARGET TEST ID
-    TARGET_ID = "51385754353928"
-    run_batch_sync(target_variant_id=TARGET_ID)
+    # ============ CONFIGURATION ============
+    
+    # Option 1: Full Sync (all sections)
+    # run_batch_sync()
+    
+    # Option 2: Sync specific sections
+    # Section IDs: 36=A-F, 38=G-M, 40=N-S, 42=T-Z
+    run_batch_sync(target_section_ids=[42])  # Only T-Z
+    # run_batch_sync(target_section_ids=[36, 38])  # A-F and G-M
+    # run_batch_sync(target_section_ids=[36, 38, 40, 42])  # All sections
+    
+    # Option 3: Test specific variants (by Shopify variant_id)
+    # Find variant IDs in Shopify Admin -> Products -> Variant -> URL contains variant_id
+    # run_batch_sync(target_variant_ids=["50420394000648"])  # Single variant test
+    # run_batch_sync(target_variant_ids=["50244958454024"])  # Multiple variants
 

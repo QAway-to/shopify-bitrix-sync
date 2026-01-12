@@ -1,84 +1,65 @@
-# Batch Inventory Sync Documentation (`sync_inventory_batch.py`)
+# Batch Inventory Sync Logic (`sync_inventory_batch.py`)
 
-## Overview
-This script synchronizes product inventory and properties from Shopify to Bitrix24. It is optimized for performance using Bitrix's `batch` API method, allowing 50 commands per request. This significantly reduces execution time compared to sequential requests.
+This document describes the logic of the optimized batch synchronization script for updating Bitrix24 inventory from Shopify.
 
-## Key Features
-- **Batch Processing**: Groups up to 50 operations into a single API call.
-- **Dynamic Property Mapping**: Parses "Size", "Color", "Brand", and "Category" from Shopify variants.
-- **Stock Aggregation**: Consolidates stock adjustments into a single Bitrix "Store Adjustment" document per batch (A/W types).
-- **Targeted Sync**: Can sync a specific variant ID (via `TARGET_ID`) or all products.
+## 1. Core Principles
+*   **Source of Truth**: **Shopify**. Bitrix is always updated to match Shopify.
+*   **Batch Processing**: Operations are grouped into batches of 50 commands (Bitrix API limit) for speed.
+*   **Scope**: Synchronization typically runs for a specific **Category/Section** (e.g., A-F).
 
-## Configuration & Mappings
+## 2. Process Workflow
 
-### Credentials
-- configured via `SHOPIFY_STORE`, `SHOPIFY_TOKEN`, and `BITRIX_WEBHOOK` constants.
-- **Warning**: Credentials currently hardcoded in script.
+### Step 1: Fetch Shopify Data
+*   Fetches **ALL** variants from Shopify (even with `qty=0`) to ensure full data consistency.
+*   **Filters** immediately by SKU prefix (Section map) to process only relevant items.
+*   Parses **Size** and **Color** from options or Title heuristics.
 
-### Section Mapping (`SECTION_MAP`)
-Determines Bitrix Catalog Section ID based on SKU first letter:
-- `A-F`: Section 36
-- `G-M`: Section 38 (Default)
-- `N-S`: Section 40
-- `T-Z`: Section 42
+### Step 2: Fetch Bitrix Data
+*   Fetches existing products from Bitrix (`crm.product.list`) in pages.
+*   Retrieves: `ID`, `XML_ID`, `PRICE`, `NAME`, `SECTION_ID`, Properties (Size/Brand), `DETAIL_TEXT`.
+*   Uses `XML_ID` (which holds Shopify Variant ID) to map Shopify items to Bitrix items.
 
-### Property Mapping
-Maps Shopify attributes to Bitrix Custom Property IDs:
-- **Size** (`PROPERTY_98`): Maps validated values (e.g., "40") to Bitrix Enum IDs (e.g., `334`).
-- **Brand** (`PROPERTY_102`): Maps directly from Shopify Vendor.
-- **Category** (`PROPERTY_104`): Maps from Shopify Product Type.
-- **Color** (`PROPERTY_106`): Maps from Shopify Option "Color".
+### Step 3: Planning Updates (Comparison)
+The script iterates through Shopify variants and compares them with Bitrix products:
 
-## Execution Flow
+*   **Logic for Existing Products:**
+    *   **Price**: Updates if different.
+    *   **Name**: Updates if different (cleans "Default Title").
+    *   **Description**: Checks `body_html` vs `DETAIL_TEXT`. If different, queues for separate update.
+    *   **Properties**: **ALWAYS** updates Size, Color, Brand, Category for all items in the target section.
+    *   **Stock**: Calculated later.
 
-### 1. Fetch Data
-- **Shopify**: Fetches products via REST API.
-  - *Optimization*: If `TARGET_ID` is set, fetches only that variant and its parent product.
-  - *Filtering*: Skips items with `<= 0` stock (unless it's the target).
-  - *Option Parsing*: Identifies Size/Color option indices dynamically.
-- **Bitrix**: Fetches **ALL** products (`crm.product.list`) to build an index of `XML_ID` -> `ID`.
-  - *Fields*: `ID`, `PRICE`, `XML_ID`, `NAME`.
+*   **Logic for New Products:**
+    *   If `Shopify Qty > 0`: Plans **Creation** (`crm.product.add`).
+    *   If `Shopify Qty <= 0`: **SKIPS** creation (prevents cluttering Bitrix with out-of-stock items).
 
-### 2. Plan Changes
-Iterates through fetched Shopify variants and compares with Bitrix index:
+### Step 4: Batch Execution
+1.  **General Updates**: Executes `crm.product.update` for Price, Name, Properties using the Batch API.
+2.  **Description Updates (Separate Pass)**:
+    *   Uses `catalog.product.update` (Catalog API) instead of CRM API.
+    *   Updates `detailText` AND `previewText`.
+    *   Explicitly sets type to `html`.
+    *   This ensures description formatting is preserved and avoids conflicts.
+3.  **Creation**: Creates new products one-by-one (Batch creation is complex due to ID dependency for stock).
 
-- **Update Logic** (if `XML_ID` exists in Bitrix):
-  - Checks **Price** difference (> 0.01).
-  - Checks **Properties** (Brand, Size, Color, Category).
-  - *Batching*: If changes needed, adds a `crm.product.update` command string to `update_payloads`.
-  - Adds ID to `ensure_stock_ids` list for stock verification.
+### Step 5: Stock Synchronization
+*   Comparing `Shopify Qty` vs `Bitrix Store (ID: 2) Qty`.
+*   **Arrival**: If `Shopify > Bitrix` -> Creates `docType='S'` (Store Adjustment) | `storeTo=2`.
+*   **Deduction**: If `Shopify < Bitrix` -> Creates `docType='D'` (Deduct) | `storeFrom=2`.
+*   Uses **Batch API** to check current stocks (`catalog.storeproduct.list`) to minimize requests.
 
-- **Create Logic** (if `XML_ID` missing):
-  - Creates payload with: `NAME`, `PRICE`, `CODE` (SKU), `XML_ID` (VariantID), `SECTION_ID` (via SKU), and properties.
-  - Adds to `create_payloads`.
+### Step 6: Zero-Stock Cleanup
+*   Iterates through Bitrix products that exist but were **NOT** found in the current Shopify list (e.g., deleted or processed out of scope).
+*   **Section Filter**: Strictly skips checking products that belong to other sections.
+*   Checks Shopify API specifically for these missing items.
+*   If Shopify returns 404 or Qty=0 -> Writes off full stock in Bitrix.
 
-### 3. Execute Product Updates (Batch)
-- Sends nested `update_payloads` commands to Bitrix using `batch` endpoint.
-- Processed in chunks of 50.
+## 3. Key Configuration
+*   **`target_section_ids`**: List of Bitrix Section IDs to sync (e.g., `[36]` for A-F).
+*   **Filter 0 Qty**: Disabled for updates (updates existing 0-stock items), Enabled for creation (skips new 0-stock).
+*   **Store ID**: Fixed to `2` (Main Warehouse).
 
-### 4. Execute Creates (1-by-1)
-- Executes `crm.product.add` for new items sequentially (Create is less frequent, so 1-by-1 is acceptable/safer for now).
-- Newly created IDs are added to `ensure_stock_ids`.
-- **Note**: Stock is NOT set here; it is queued for step 5.
-
-### 5. Check & Sync Stock
-- **Fetch Levels**: Calls `catalog.storeproduct.list` (batched) for all IDs in `ensure_stock_ids`.
-- **Calculate Diff**: Compares Shopify `inventory_quantity` vs Bitrix `amount`.
-  - `Diff > 0`: Needs Arrival (`docType: 'A'`).
-  - `Diff < 0`: Needs Write-off (`docType: 'W'`).
-
-### 6. Apply Stock Documents
-- Creates a **Single Document** (Arrival or Deduction) to cover up to 100 items.
-- **Add Elements**: Uses `batch` to add all rows (`catalog.document.element.add`) to the document.
-- **Conduct**: Conducts the document (`catalog.document.conduct`) to apply changes.
-
-## Helper Functions
-- `get_size_enum_id(size_text)`: Validates size against `SIZE_ENUM_MAP`.
-- `get_section_id_by_sku(sku)`: Routes product to correct catalog folder.
-- `fetch_shopify_products(...)`: Handles pagination and single-fetch optimization.
-- `call_batch(...)`: Wrapper for Bitrix batch requests.
-
-## Limitations / Notes
-- **Images**: This script (batch version) does **NOT** currently sync images. (On-demand/Certificate sync scripts handle images separately).
-- **Price**: Updates price if difference > 0.01.
-- **Deletions**: Does not delete products from Bitrix if removed from Shopify.
+## 4. Error Handling & Logging
+*   **Network**: Robust 60-second progress logging.
+*   **Pagination**: Strict `rel="next"` parsing for Shopify to prevent infinite loops.
+*   **Batch Errors**: Logs individual batch command errors (warnings) but continues execution.
