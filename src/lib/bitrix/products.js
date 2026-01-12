@@ -972,7 +972,7 @@ export async function syncProductVariantOptimized(productData, createNew = true,
   }
 }
 
-}
+
 
 /**
  * Helper to download image and convert to base64

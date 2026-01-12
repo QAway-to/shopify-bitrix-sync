@@ -1751,7 +1751,10 @@ async function handleDealUpdate(dealId, requestId) {
 
             await callBitrix('crm.deal.update', {
               id: dealId,
-              fields: { UF_CRM_1742556489: newOrderId }
+              fields: {
+                UF_CRM_1742556489: newOrderId,
+                TITLE: order.name || `Order #${newOrderId}` // Update Title to Shopify Order Name
+              }
             });
 
             // 2. Ensure Product exists in Bitrix (On-Demand)
