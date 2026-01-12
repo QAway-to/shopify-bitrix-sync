@@ -5,7 +5,30 @@
 
 import { callShopifyAdmin } from './adminClient.js';
 import { callBitrix } from '../bitrix/client.js';
-import { getSizeEnumId } from '../bitrix/utils.js';
+
+/**
+ * Map size text to Bitrix enum ID
+ * @param {string} sizeText - Size value (e.g., "31", "42", "S", "M")
+ * @returns {string|null} - Bitrix enum ID or null
+ */
+function getSizeEnumId(sizeText) {
+    if (!sizeText) return null;
+
+    // Standard size mapping (from inventorySyncCore.js)
+    const sizeMap = {
+        '19': '135', '20': '136', '21': '137', '22': '138', '23': '139',
+        '24': '140', '25': '141', '26': '142', '27': '143', '28': '144',
+        '29': '145', '30': '146', '31': '147', '32': '148', '33': '149',
+        '34': '150', '35': '151', '36': '152', '37': '153', '38': '154',
+        '39': '155', '40': '156', '41': '157', '42': '158', '43': '159',
+        '44': '160', '45': '161', '46': '162', '47': '163', '48': '164',
+        'S': '165', 'M': '166', 'L': '167', 'XL': '168', 'XXL': '169',
+        'XS': '170', 'XXXL': '171'
+    };
+
+    const normalized = String(sizeText).trim().toUpperCase();
+    return sizeMap[normalized] || sizeMap[sizeText] || null;
+}
 
 /**
  * Parse "Title - Size" pattern from product name
