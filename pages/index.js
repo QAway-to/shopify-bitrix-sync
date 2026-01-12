@@ -5,7 +5,7 @@ import EventsList from '../src/components/shopify/EventsList';
 import BitrixEventsList from '../src/components/bitrix/EventsList';
 import SuccessOperationsList from '../src/components/success/SuccessOperationsList';
 import DataPreview from '../src/components/shopify/DataPreview';
-// Removed shopifyAdapter import - now using API endpoint for transformation
+import LockedSection from '../src/components/common/LockedSection';
 
 export default function ShopifyPage() {
   const [events, setEvents] = useState([]);
@@ -32,7 +32,10 @@ export default function ShopifyPage() {
   const [bitrixPreviewData, setBitrixPreviewData] = useState(null); // { shopifyData, bitrixData } for preview (Bitrix)
   const [successPreviewOperation, setSuccessPreviewOperation] = useState(null); // Operation to preview (Success)
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load
-  // ✅ Track if this is initial fetch to show loading state
+  // Track if this is initial fetch to show loading state
+  const [isControlsUnlocked, setIsControlsUnlocked] = useState(false); // Lock state for control buttons
+  const [unlockPasswordInput, setUnlockPasswordInput] = useState(''); // Password input for unlock
+  const [unlockError, setUnlockError] = useState('');
   const [isInitialFetch, setIsInitialFetch] = useState(true);
   // Inventory sync state
   const [syncStatus, setSyncStatus] = useState({ isRunning: false, lastRun: null });
@@ -553,6 +556,26 @@ export default function ShopifyPage() {
     }
   };
 
+  // Handle unlock controls with password
+  const handleUnlockControls = async () => {
+    setUnlockError('');
+    if (!unlockPasswordInput.trim()) {
+      setUnlockError('Enter password');
+      return;
+    }
+    try {
+      const res = await fetch('/api/config/password');
+      const data = await res.json();
+      if (data.success && data.password === unlockPasswordInput.trim()) {
+        setIsControlsUnlocked(true);
+        setUnlockPasswordInput('');
+      } else {
+        setUnlockError('Wrong password');
+      }
+    } catch (err) {
+      setUnlockError('Error');
+    }
+  };
 
 
   return (
@@ -580,166 +603,204 @@ export default function ShopifyPage() {
               Monitor Shopify ↔ Bitrix webhook events in real-time
             </p>
           </div>
-          <div className="header-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
-            {events.length > 0 && (
-              <>
-                {selectedEvents.length === events.length ? (
-                  <button
-                    onClick={handleDeselectAll}
-                    className="btn"
-                    style={{
-                      background: '#6b7280',
-                      border: 'none',
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      color: 'white',
-                      cursor: 'pointer',
-                      minWidth: '120px',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0
-                    }}
-                  >
-                    Deselect All
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleSelectAll}
-                    className="btn"
-                    style={{
-                      background: '#3b82f6',
-                      border: 'none',
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      color: 'white',
-                      cursor: 'pointer',
-                      minWidth: '120px',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0
-                    }}
-                  >
-                    Select All ({events.length})
-                  </button>
-                )}
-              </>
-            )}
-            <button
-              onClick={handleSendToBitrix}
-              className="btn"
-              disabled={isSending || selectedEvents.length === 0}
-              style={{
-                background: selectedEvents.length > 0 ? '#059669' : '#6b7280',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '6px',
-                color: 'white',
-                cursor: selectedEvents.length > 0 ? 'pointer' : 'not-allowed',
-                minWidth: '120px',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
-            >
-              {isSending ? '...' : `To Bitrix (${selectedEvents.length})`}
-            </button>
-            <button
-              onClick={handleDownloadLogs}
-              className="btn"
-              style={{
-                background: '#7c3aed',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '6px',
-                color: 'white',
-                cursor: 'pointer',
-                minWidth: '120px',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
-              title="Download integration logs"
-            >
-              Logs
-            </button>
-            {bitrixEvents.length > 0 && (
-              <>
-                {selectedBitrixEvents.length === bitrixEvents.length ? (
-                  <button
-                    onClick={() => setSelectedBitrixEvents([])}
-                    className="btn"
-                    style={{
-                      background: '#6b7280',
-                      border: 'none',
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      color: 'white',
-                      cursor: 'pointer',
-                      minWidth: '120px',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0
-                    }}
-                  >
-                    Deselect Bitrix
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setSelectedBitrixEvents(bitrixEvents)}
-                    className="btn"
-                    style={{
-                      background: '#3b82f6',
-                      border: 'none',
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      color: 'white',
-                      cursor: 'pointer',
-                      minWidth: '120px',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0
-                    }}
-                  >
-                    Select Bitrix ({bitrixEvents.length})
-                  </button>
-                )}
-              </>
-            )}
-            <button
-              onClick={handleSendToShopify}
-              className="btn"
-              disabled={isSendingToShopify || selectedBitrixEvents.length === 0}
-              style={{
-                background: selectedBitrixEvents.length > 0 ? '#059669' : '#6b7280',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '6px',
-                color: 'white',
-                cursor: selectedBitrixEvents.length > 0 ? 'pointer' : 'not-allowed',
-                minWidth: '120px',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
-            >
-              {isSendingToShopify ? '...' : `To Shop (${selectedBitrixEvents.length})`}
-            </button>
-            <button
-              onClick={() => {
-                fetchEvents();
-                fetchBitrixEvents();
-                fetchSuccessOperations();
-              }}
-              className="btn"
-              disabled={isLoading || isBitrixLoading || isSuccessLoading}
-              style={{
-                background: '#374151',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '6px',
-                color: 'white',
-                cursor: (isLoading || isBitrixLoading || isSuccessLoading) ? 'not-allowed' : 'pointer',
-                minWidth: '120px',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
-            >
-              {(isLoading || isBitrixLoading || isSuccessLoading) ? '...' : 'Refresh'}
-            </button>
-          </div>
+          <LockedSection isGuestMode={!isControlsUnlocked} title="Controls Locked">
+            <div className="header-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+              {events.length > 0 && (
+                <>
+                  {selectedEvents.length === events.length ? (
+                    <button
+                      onClick={handleDeselectAll}
+                      className="btn"
+                      style={{
+                        background: '#6b7280',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        color: 'white',
+                        cursor: 'pointer',
+                        minWidth: '120px',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                    >
+                      Deselect All
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSelectAll}
+                      className="btn"
+                      style={{
+                        background: '#3b82f6',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        color: 'white',
+                        cursor: 'pointer',
+                        minWidth: '120px',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                    >
+                      Select All ({events.length})
+                    </button>
+                  )}
+                </>
+              )}
+              <button
+                onClick={handleSendToBitrix}
+                className="btn"
+                disabled={isSending || selectedEvents.length === 0}
+                style={{
+                  background: selectedEvents.length > 0 ? '#059669' : '#6b7280',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  color: 'white',
+                  cursor: selectedEvents.length > 0 ? 'pointer' : 'not-allowed',
+                  minWidth: '120px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+              >
+                {isSending ? '...' : `To Bitrix (${selectedEvents.length})`}
+              </button>
+              <button
+                onClick={handleDownloadLogs}
+                className="btn"
+                style={{
+                  background: '#7c3aed',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  minWidth: '120px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+                title="Download integration logs"
+              >
+                Logs
+              </button>
+              {bitrixEvents.length > 0 && (
+                <>
+                  {selectedBitrixEvents.length === bitrixEvents.length ? (
+                    <button
+                      onClick={() => setSelectedBitrixEvents([])}
+                      className="btn"
+                      style={{
+                        background: '#6b7280',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        color: 'white',
+                        cursor: 'pointer',
+                        minWidth: '120px',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                    >
+                      Deselect Bitrix
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setSelectedBitrixEvents(bitrixEvents)}
+                      className="btn"
+                      style={{
+                        background: '#3b82f6',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        color: 'white',
+                        cursor: 'pointer',
+                        minWidth: '120px',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}
+                    >
+                      Select Bitrix ({bitrixEvents.length})
+                    </button>
+                  )}
+                </>
+              )}
+              <button
+                onClick={handleSendToShopify}
+                className="btn"
+                disabled={isSendingToShopify || selectedBitrixEvents.length === 0}
+                style={{
+                  background: selectedBitrixEvents.length > 0 ? '#059669' : '#6b7280',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  color: 'white',
+                  cursor: selectedBitrixEvents.length > 0 ? 'pointer' : 'not-allowed',
+                  minWidth: '120px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+              >
+                {isSendingToShopify ? '...' : `To Shop (${selectedBitrixEvents.length})`}
+              </button>
+              <button
+                onClick={() => {
+                  fetchEvents();
+                  fetchBitrixEvents();
+                  fetchSuccessOperations();
+                }}
+                className="btn"
+                disabled={isLoading || isBitrixLoading || isSuccessLoading}
+                style={{
+                  background: '#374151',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  color: 'white',
+                  cursor: (isLoading || isBitrixLoading || isSuccessLoading) ? 'not-allowed' : 'pointer',
+                  minWidth: '120px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+              >
+                {(isLoading || isBitrixLoading || isSuccessLoading) ? '...' : 'Refresh'}
+              </button>
+            </div>
+          </LockedSection>
+          {/* Unlock Controls */}
+          {!isControlsUnlocked && (
+            <div style={{ display: 'flex', gap: '8px', marginTop: '12px', alignItems: 'center' }}>
+              <input
+                type="password"
+                value={unlockPasswordInput}
+                onChange={(e) => setUnlockPasswordInput(e.target.value)}
+                placeholder="Password"
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  border: unlockError ? '1px solid #ef4444' : '1px solid #334155',
+                  background: '#0f172a',
+                  color: '#f1f5f9',
+                  fontSize: '0.9rem',
+                  width: '120px'
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && handleUnlockControls()}
+              />
+              <button
+                onClick={handleUnlockControls}
+                style={{
+                  padding: '8px 16px',
+                  background: '#3b82f6',
+                  border: 'none',
+                  borderRadius: '6px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem'
+                }}
+              >
+                Unlock
+              </button>
+              {unlockError && <span style={{ color: '#ef4444', fontSize: '0.85rem' }}>{unlockError}</span>}
+            </div>
+          )}
         </header>
 
         {sendResult && (
@@ -880,20 +941,24 @@ export default function ShopifyPage() {
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={handleSyncInventory}
-              disabled={syncStatus.isRunning}
+              disabled={syncStatus.isRunning || !isControlsUnlocked}
               style={{
-                background: syncStatus.isRunning ? '#6b7280' : '#059669',
+                background: !isControlsUnlocked ? '#475569' : syncStatus.isRunning ? '#6b7280' : '#059669',
                 border: 'none',
                 padding: '10px 20px',
                 borderRadius: '6px',
                 color: 'white',
-                cursor: syncStatus.isRunning ? 'not-allowed' : 'pointer',
+                cursor: (syncStatus.isRunning || !isControlsUnlocked) ? 'not-allowed' : 'pointer',
                 fontSize: '1rem',
                 fontWeight: 500,
-                minWidth: '120px'
+                minWidth: '120px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
               }}
-              title="Start inventory sync"
+              title={!isControlsUnlocked ? 'Unlock controls first' : 'Start inventory sync'}
             >
+              {!isControlsUnlocked && <span>🔒</span>}
               {syncStatus.isRunning ? 'Running...' : 'Sync'}
             </button>
 
