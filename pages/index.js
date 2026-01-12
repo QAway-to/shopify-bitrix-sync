@@ -575,7 +575,7 @@ export default function ShopifyPage() {
 
         <header className="page-header">
           <div>
-            <h2 style={{ fontSize: '1.8rem', marginBottom: '8px' }}>Webhook Monitor</h2>
+            <h3 style={{ fontSize: '1.5rem', marginBottom: '8px' }}>Webhook Monitor</h3>
             <p className="subtitle">
               Monitor Shopify ↔ Bitrix webhook events in real-time
             </p>
@@ -873,7 +873,7 @@ export default function ShopifyPage() {
           borderRadius: '12px',
           border: '1px solid rgba(59, 130, 246, 0.2)'
         }}>
-          <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.3rem' }}>
+          <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem' }}>
             Inventory Sync
           </h2>
 
@@ -948,7 +948,7 @@ export default function ShopifyPage() {
 
           {syncStatus.nextSyncIn && !syncStatus.isRunning && (
             <div style={{ marginTop: '8px', fontSize: '0.85rem', color: '#60a5fa' }}>
-              ⏱️ Next sync: {syncStatus.nextSyncIn} ({syncStatus.nextSyncCyprus})
+              Next <strong>autosync</strong>: {syncStatus.nextSyncIn} ({syncStatus.nextSyncCyprus})
             </div>
           )}
         </div>
@@ -962,9 +962,9 @@ export default function ShopifyPage() {
         }}>
           {/* Left column: Shopify → Bitrix - Fixed width */}
           <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-            <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.5rem', flexShrink: 0 }}>
+            <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem', flexShrink: 0 }}>
               Shopify → Middleware → Bitrix
-            </h2>
+            </h3>
             <div style={{ flex: '1 1 auto', minHeight: 0 }}>
               <EventsList
                 events={events}
@@ -978,9 +978,9 @@ export default function ShopifyPage() {
 
           {/* Middle column: Bitrix → Shopify - Fixed width */}
           <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-            <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.5rem', flexShrink: 0 }}>
+            <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem', flexShrink: 0 }}>
               Bitrix → Middleware → Shopify
-            </h2>
+            </h3>
             {sendToShopifyResult && (
               <div style={{
                 padding: '16px',
@@ -1033,9 +1033,9 @@ export default function ShopifyPage() {
 
           {/* Right column: Success Operations - Fixed width */}
           <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-            <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.5rem', flexShrink: 0 }}>
-              ✓ Success Operations (Testing)
-            </h2>
+            <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem', flexShrink: 0 }}>
+              Success Operations (Testing)
+            </h3>
             <div style={{ flex: '1 1 auto', minHeight: 0 }}>
               <SuccessOperationsList
                 operations={successOperations}
