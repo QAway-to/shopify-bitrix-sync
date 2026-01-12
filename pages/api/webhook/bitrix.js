@@ -1733,7 +1733,7 @@ async function handleDealUpdate(dealId, requestId) {
         const result = await findShopifyVariantByAttributes({ brand, model, color, size });
 
         if (result && result.variant) {
-          const { variant, productTitle } = result;
+          const { variant, productTitle, imageUrl } = result;
           console.log(`[PRE-ORDER] 🎯 Found matching variant: ${productTitle} - ${variant.title} (ID: ${variant.id})`);
 
           // 1. Create Pending Order in Shopify
@@ -1763,7 +1763,8 @@ async function handleDealUpdate(dealId, requestId) {
               product_title: productTitle,
               variant_title: variant.title,
               price: variant.price || 0,
-              qty: variant.inventoryQuantity
+              qty: variant.inventoryQuantity,
+              imageUrl: imageUrl || variant.imageUrl // Pass image URL
             };
 
             const syncResult = await syncProductVariantOptimized(syncData, true);

@@ -182,18 +182,31 @@ export async function findShopifyVariantByAttributes({ brand, model, color, size
         // Check if size is in the values (exact match)
         if (variantValues.includes(size.toLowerCase())) {
           // Found match!
+          // Resolve Image URL
+          let imageUrl = null;
+          if (variant.image_id) {
+            const variantImage = product.images.find(img => img.id === variant.image_id);
+            imageUrl = variantImage ? variantImage.src : null;
+          }
+          // Fallback to product main image
+          if (!imageUrl && product.image) {
+            imageUrl = product.image.src;
+          }
+
           // Normalize structure to match expected format
           return {
             variant: {
               id: String(variant.id), // Ensure string ID
+              TITLE: variant.title, // Keep raw title access if needed
               title: variant.title,
               sku: variant.sku,
               price: variant.price,
               inventoryQuantity: variant.inventory_quantity,
-              // Add other fields if needed
+              imageUrl: imageUrl
             },
             productTitle: product.title,
-            vendor: product.vendor
+            vendor: product.vendor,
+            imageUrl: imageUrl
           };
         }
       }
