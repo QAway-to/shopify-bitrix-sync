@@ -15,7 +15,8 @@ import { addPositionToOrder, incrementLineItemQuantity, decrementLineItemQuantit
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
-import { resolvePreorderProduct, parsePreorderInput } from '../../../src/lib/bitrix/preorderResolver.js'; \nimport { createBitrixProduct, updateBitrixProductFields } from '../../../src/lib/bitrix/products.js';
+import { resolvePreorderProduct, parsePreorderInput } from '../../../src/lib/bitrix/preorderResolver.js';
+import { createBitrixProduct, updateBitrixProductFields } from '../../../src/lib/bitrix/products.js';
 
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
