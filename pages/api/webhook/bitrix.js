@@ -1744,7 +1744,8 @@ async function handleDealUpdate(dealId, requestId) {
 
           if (order && order.id) {
             const newOrderId = String(order.id);
-            console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId}`);
+            const orderName = order.name; // e.g. "#1024"
+            console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId} (${orderName})`);
 
             // Update shopifyOrderId in local scope and Bitrix
             shopifyOrderId = newOrderId;
@@ -1753,7 +1754,7 @@ async function handleDealUpdate(dealId, requestId) {
               id: dealId,
               fields: {
                 UF_CRM_1742556489: newOrderId,
-                TITLE: order.name || `Order #${newOrderId}` // Update Title to Shopify Order Name
+                TITLE: orderName // Set Deal Title to Order Name (e.g. #2500)
               }
             });
 
@@ -1767,7 +1768,7 @@ async function handleDealUpdate(dealId, requestId) {
               variant_title: variant.title,
               price: variant.price || 0,
               qty: variant.inventoryQuantity,
-              imageUrl: imageUrl || variant.imageUrl // Pass image URL
+              image_url: imageUrl // Pass image URL
             };
 
             const syncResult = await syncProductVariantOptimized(syncData, true);

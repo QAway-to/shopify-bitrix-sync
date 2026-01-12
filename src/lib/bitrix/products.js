@@ -20,7 +20,7 @@ import { updateSkuMapping, updateSkuMappingSilent, getCategoryByHandle, getSecti
  * @returns {Promise<number>} Created product ID
  */
 export async function createBitrixProduct(productData, catalogId = 14, sectionId = 32) {
-  const { name, price, sku, variant_id, variant_title, color, imageUrl } = productData;
+  const { name, price, sku, variant_id, variant_title, color } = productData;
 
   if (!name) {
     throw new Error('Product name is required');
@@ -49,22 +49,6 @@ export async function createBitrixProduct(productData, catalogId = 14, sectionId
   }
   if (color) {
     fields.PROPERTY_106 = color; // Color
-  }
-
-  // Image Handling
-  if (imageUrl) {
-    try {
-      const imageBase64 = await downloadImageAsBase64(imageUrl);
-      if (imageBase64) {
-        const filename = imageUrl.split('/').pop().split('?')[0] || 'image.jpg';
-        const fileData = [filename, imageBase64];
-        fields.PREVIEW_PICTURE = { 'fileData': fileData };
-        fields.DETAIL_PICTURE = { 'fileData': fileData };
-        console.log(`[BITRIX PRODUCTS] 🖼️ Attached image to product: ${filename}`);
-      }
-    } catch (imgError) {
-      console.warn(`[BITRIX PRODUCTS] ⚠️ Valid image URL provided but download failed: ${imgError.message}`);
-    }
   }
 
   try {
@@ -161,9 +145,23 @@ export async function updateBitrixProductFields(productId, fields) {
 
     console.error(`[BITRIX PRODUCTS] ⚠️ Unexpected response updating product ${productId}:`, response);
     return false;
+  }
+}
+
+/**
+ * Fetch image from URL and convert to Base64
+ * @param {string} url - Image URL
+ * @returns {Promise<string|null>} Base64 string
+ */
+async function fetchImageAsBase64(url) {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Fetch failed: ${response.statusText}`);
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer).toString('base64');
   } catch (error) {
-    console.error(`[BITRIX PRODUCTS] ❌ Error updating product ${productId}:`, error);
-    throw error;
+    console.error(`[BITRIX PRODUCTS] Error fetching image ${url}:`, error);
+    return null;
   }
 }
 
@@ -849,9 +847,25 @@ export async function syncProductVariantOptimized(productData, createNew = true,
           sku: skuClean,
           variant_id: variantIdStr,
           variant_title: variant_title || null,
-          color: color,
-          imageUrl: productData.imageUrl // Pass image URL if available
+
+          color: color
         };
+
+        // Handle Image if provided
+        if (productData.image_url) {
+          try {
+            const base64Image = await fetchImageAsBase64(productData.image_url);
+            if (base64Image) {
+              const filename = 'product_image.jpg';
+              const fileData = { fileData: [filename, base64Image] };
+              productFields.PREVIEW_PICTURE = fileData;
+              productFields.DETAIL_PICTURE = fileData;
+              console.log(`[BITRIX PRODUCTS] 🖼️ Attached image to product payload`);
+            }
+          } catch (imgErr) {
+            console.warn(`[BITRIX PRODUCTS] ⚠️ Failed to fetch/attach image: ${imgErr.message}`);
+          }
+        }
 
         productId = await createBitrixProduct(productFields, 14, actualSectionId);
 
@@ -972,22 +986,3 @@ export async function syncProductVariantOptimized(productData, createNew = true,
   }
 }
 
-
-
-/**
- * Helper to download image and convert to base64
- * @param {string} url - Image URL
- * @returns {Promise<string|null>} Base64 data (without prefix) or null
- */
-async function downloadImageAsBase64(url) {
-  if (!url) return null;
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Status ${response.status}`);
-    const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer).toString('base64');
-  } catch (error) {
-    console.error(`[BITRIX PRODUCTS] Failed to download image from ${url}:`, error);
-    return null;
-  }
-}

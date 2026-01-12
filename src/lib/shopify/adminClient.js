@@ -182,27 +182,27 @@ export async function findShopifyVariantByAttributes({ brand, model, color, size
         // Check if size is in the values (exact match)
         if (variantValues.includes(size.toLowerCase())) {
           // Found match!
-          // Resolve Image URL
+          // Resolve image
           let imageUrl = null;
+          // variant.image_id might be numeric or null
           if (variant.image_id) {
-            const variantImage = product.images.find(img => img.id === variant.image_id);
-            imageUrl = variantImage ? variantImage.src : null;
+            const img = product.images.find(i => i.id === variant.image_id);
+            if (img) imageUrl = img.src;
           }
-          // Fallback to product main image
-          if (!imageUrl && product.image) {
-            imageUrl = product.image.src;
+          // Fallback to first product image if variant has no specific image
+          if (!imageUrl && product.images && product.images.length > 0) {
+            imageUrl = product.images[0].src;
           }
 
           // Normalize structure to match expected format
           return {
             variant: {
               id: String(variant.id), // Ensure string ID
-              TITLE: variant.title, // Keep raw title access if needed
               title: variant.title,
               sku: variant.sku,
               price: variant.price,
               inventoryQuantity: variant.inventory_quantity,
-              imageUrl: imageUrl
+              // Add other fields if needed
             },
             productTitle: product.title,
             vendor: product.vendor,
