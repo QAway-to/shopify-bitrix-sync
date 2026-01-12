@@ -875,7 +875,7 @@ export default function ShopifyPage() {
         }}>
           <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem' }}>
             Inventory Sync
-          </h2>
+          </h3>
 
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
