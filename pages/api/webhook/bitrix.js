@@ -1716,6 +1716,7 @@ async function handleDealUpdate(dealId, requestId) {
       requestId,
       dealId,
       fields: { brand, model, color, size },
+      availableUFKeys: Object.keys(dealData).filter(k => k.startsWith('UF_')), // Debug: See what IDs are actually present
       hasAllFields: !!(brand && model && color && size),
       shopifyOrderId,
       timestamp: new Date().toISOString()
@@ -1723,8 +1724,10 @@ async function handleDealUpdate(dealId, requestId) {
 
     // Check if we already have a linked order to avoid duplicates (unless we want to update?)
     // If shopifyOrderId exists, we assume reservation is done.
-    if (brand && model && color && size && (!shopifyOrderId || shopifyOrderId.trim() === '')) {
-      console.log(`[PRE-ORDER] checking availability for: ${brand} ${model} ${color} ${size}`);
+    // NOTE: User script relies on Brand, Model, Size. Color is often empty or implied.
+    // We relax the check to require Brand, Model, Size.
+    if (brand && model && size && (!shopifyOrderId || shopifyOrderId.trim() === '')) {
+      console.log(`[PRE-ORDER] checking availability for: ${brand} ${model} ${size} (Color: ${color || 'N/A'})`);
 
       try {
         const result = await findShopifyVariantByAttributes({ brand, model, color, size });
