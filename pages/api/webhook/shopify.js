@@ -700,7 +700,7 @@ async function handleOrderUpdated(order) {
   // 1. Find deal by UF_CRM_1742556489 (Shopify Order ID field)
   const listResp = await callBitrix('/crm.deal.list.json', {
     filter: { 'UF_CRM_1742556489': shopifyOrderId },
-    select: ['ID', 'OPPORTUNITY', 'STAGE_ID'],
+    select: ['ID', 'OPPORTUNITY', 'STAGE_ID', 'CATEGORY_ID'],
   });
 
   const deal = listResp.result?.[0];
@@ -714,8 +714,9 @@ async function handleOrderUpdated(order) {
   // ✅ CRITICAL: Convert dealId to number (Bitrix API returns string, but we need number for API calls)
   const dealId = Number(deal.ID);
   const currentStageId = deal.STAGE_ID;
+  const categoryId = deal.CATEGORY_ID || '2'; // Default to category 2 if not set
 
-  console.log(`[SHOPIFY WEBHOOK] Found deal ${dealId} (converted to number) for order ${shopifyOrderId}, current stage: ${currentStageId}`);
+  console.log(`[SHOPIFY WEBHOOK] Found deal ${dealId} (converted to number) for order ${shopifyOrderId}, current stage: ${currentStageId}, category: ${categoryId}`);
 
   // ✅ Use mapShopifyOrderToBitrixDeal to get ALL fields AND productRows consistently (same as create)
   // This ensures OPPORTUNITY, payment status, stage, productRows with PRODUCT_ID are all calculated correctly
@@ -864,22 +865,26 @@ async function handleOrderUpdated(order) {
 
   // ✅ CRITICAL: Force update STAGE_ID based on refund/cancel status
   // Priority: cancelled_at (HIGHEST) > cancelled > full refund > partial refund
+  // ✅ FIX: Use category prefix in STAGE_ID (e.g., C2:LOSE, C8:LOSE)
+  const loseStage = categoryId === '0' ? 'LOSE' : `C${categoryId}:LOSE`;
+  const preparationStage = categoryId === '0' ? 'PREPARATION' : `C${categoryId}:PREPARATION`;
+
   if (hasCancelledAt) {
-    correctStageId = 'LOSE';
+    correctStageId = loseStage;
     correctPaymentStatus = '58'; // Unpaid
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED (cancelled_at is set) → FORCING STAGE_ID to LOSE for order ${shopifyOrderId}`);
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ ORDER CANCELLED (cancelled_at is set) → FORCING STAGE_ID to ${loseStage} for order ${shopifyOrderId}`);
   } else if (isCancelled) {
-    correctStageId = 'LOSE';
+    correctStageId = loseStage;
     correctPaymentStatus = '58'; // Unpaid
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to LOSE for cancelled order ${shopifyOrderId}`);
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to ${loseStage} for cancelled order ${shopifyOrderId}`);
   } else if (isFullRefund) {
-    correctStageId = 'LOSE';
+    correctStageId = loseStage;
     correctPaymentStatus = '58'; // Unpaid
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to LOSE for full refund order ${shopifyOrderId}`);
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to ${loseStage} for full refund order ${shopifyOrderId}`);
   } else if (isPartialRefund) {
-    correctStageId = 'C2:PREPARATION';
+    correctStageId = preparationStage;
     correctPaymentStatus = '60'; // 10% prepayment (частичная оплата)
-    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to C2:PREPARATION for partial refund order ${shopifyOrderId}`);
+    console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ FORCING STAGE_ID to ${preparationStage} for partial refund order ${shopifyOrderId}`);
   }
 
   console.log(`[SHOPIFY WEBHOOK] 🔍 Final correctStageId: "${correctStageId}"`);
