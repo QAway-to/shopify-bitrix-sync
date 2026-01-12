@@ -15,6 +15,8 @@ import { addPositionToOrder, incrementLineItemQuantity, decrementLineItemQuantit
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
+import { findShopifyVariantByAttributes, createShopifyOrderForPreorder } from '../../../src/lib/shopify/adminClient.js';
+import { syncProductVariantOptimized } from '../../../src/lib/bitrix/products.js';
 
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
@@ -1679,107 +1681,6 @@ async function handleDealUpdate(dealId, requestId) {
   const categoryId = dealData.CATEGORY_ID;
   const stageId = dealData.STAGE_ID;
   let shopifyOrderId = dealData.UF_CRM_1742556489 || dealData.uf_crm_1742556489;
-
-  // ✅ PRE-ORDER RESERVATION LOGIC (Smart Search & Create)
-  try {
-    const brandFieldId = 'UF_CRM_1768251890190'; // Brand
-    const modelFieldId = 'UF_CRM_1739793668182'; // Model
-    const colorFieldId = 'UF_CRM_1739793651654'; // Color
-    const sizeFieldId = 'UF_CRM_1739793720585';  // Size
-
-    const dealBrand = dealData[brandFieldId] || dealData[brandFieldId.toLowerCase()];
-    const dealModel = dealData[modelFieldId] || dealData[modelFieldId.toLowerCase()];
-    const dealColor = dealData[colorFieldId] || dealData[colorFieldId.toLowerCase()];
-    const dealSize = dealData[sizeFieldId] || dealData[sizeFieldId.toLowerCase()];
-
-    // DEBUG: Log the extracted values to see why the check might be failing
-    console.log(`[PRE-ORDER DEBUG] Extracted Fields: Brand='${dealBrand}', Model='${dealModel}', Size='${dealSize}', Color='${dealColor}'`);
-    console.log(`[PRE-ORDER DEBUG] Raw Deal Data Keys: ${Object.keys(dealData).filter(k => k.startsWith('UF_CRM_')).join(', ')}`);
-
-    // Only proceed if Category is 8 (Pre-order Site) AND Brand, Model, Size are provided AND no Order ID exists
-    const isPreOrderCategory = String(categoryId) === '8';
-
-    // Explicitly Log skip reason if fields are present but category mismatch (for debugging)
-    if (dealBrand && dealModel && !isPreOrderCategory) {
-      console.log(`[PRE-ORDER CHECK] Skipping: Pre-order fields present but Category is ${categoryId} (Expected 8)`);
-    }
-
-    if (isPreOrderCategory && dealBrand && dealModel && dealSize && (!shopifyOrderId || shopifyOrderId.trim() === '')) {
-      console.log(`[PRE-ORDER CHECK] Valid Pre-order request: Brand="${dealBrand}", Model="${dealModel}", Size="${dealSize}"`);
-
-      // Check if deal already has products (prevent duplicates)
-      const rowsResp = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
-      const currentRows = rowsResp?.result || [];
-
-      if (currentRows.length === 0) {
-        console.log(`[PRE-ORDER START] Initiating Smart Search for "${dealBrand} ${dealModel} ${dealSize}"`);
-
-        const { findShopifyVariantSmart, createShopifyOrderForPreorder } = await import('../../../src/lib/shopify/adminClient.js');
-        const { findProductByVariantId, createBitrixProduct } = await import('../../../src/lib/bitrix/products.js');
-
-        // 1. Search Logic (Smart Query)
-        const variant = await findShopifyVariantSmart({
-          brand: dealBrand,
-          model: dealModel,
-          color: dealColor,
-          size: dealSize
-        });
-
-        if (variant) {
-          console.log(`[PRE-ORDER MATCH] Found Variant ID: ${variant.id}, SKU: ${variant.sku}, Price: ${variant.price}`);
-
-          // 2. Create Pending Order
-          const newOrder = await createShopifyOrderForPreorder(variant.id, dealId);
-
-          if (newOrder) {
-            shopifyOrderId = String(newOrder.id);
-            console.log(`[PRE-ORDER SUCCESS] Created Shopify Order #${newOrder.order_number} (${shopifyOrderId})`);
-
-            // 3. Update Deal with Order ID
-            await callBitrix('/crm.deal.update.json', {
-              id: dealId,
-              fields: {
-                UF_CRM_1742556489: shopifyOrderId,
-                TITLE: `${dealData.TITLE || 'Deal'} #${newOrder.order_number}`
-              }
-            });
-
-            // 4. Ensure Bitrix Product Exists & Add to Deal
-            let bitrixProductId = await findProductByVariantId(variant.id);
-            if (!bitrixProductId) {
-              console.log(`[PRE-ORDER PRODUCT] Creating new Bitrix product for variant ${variant.id}`);
-              bitrixProductId = await createBitrixProduct({
-                name: `${dealBrand} ${dealModel} ${dealColor || ''} ${dealSize}`,
-                price: variant.price,
-                sku: variant.sku,
-                variant_id: variant.id,
-                variant_title: dealSize,
-                color: dealColor
-              });
-            }
-
-            if (bitrixProductId) {
-              await callBitrix('/crm.deal.productrows.set.json', {
-                id: dealId,
-                rows: [{
-                  PRODUCT_ID: bitrixProductId,
-                  PRICE: variant.price,
-                  QUANTITY: 1
-                }]
-              });
-              console.log(`[PRE-ORDER SYNC] Linked Bitrix Product ${bitrixProductId} to Deal`);
-            }
-          }
-        } else {
-          console.log(`[PRE-ORDER NO MATCH] Search returned no unique result.`);
-        }
-      } else {
-        console.log(`[PRE-ORDER SKIP] Deal already has products.`);
-      }
-    }
-  } catch (err) {
-    console.error(`[PRE-ORDER ERROR] Exception: ${err.message}`);
-  }
   const comments = dealData.COMMENTS || '';
 
   // ✅ Fallback: If shopifyOrderId is missing, try to find it by tag (resilience against race conditions)
@@ -1799,6 +1700,88 @@ async function handleDealUpdate(dealId, requestId) {
       }
     } catch (lookupError) {
       console.warn(`[BITRIX WEBHOOK] Failed to look up existing order: ${lookupError.message}`);
+    }
+  }
+
+  // ✅ PRE-ORDER LOGIC: Automatic Reservation for Category 8
+  // Triggered when Brand, Model, Color, and Size are present
+  if (String(categoryId) === '8') {
+    const brand = dealData.UF_CRM_1768251890190 || dealData.uf_crm_1768251890190; // Brand
+    const model = dealData.UF_CRM_1739793668182 || dealData.uf_crm_1739793668182; // Model
+    const color = dealData.UF_CRM_1739793651654 || dealData.uf_crm_1739793651654; // Color
+    const size = dealData.UF_CRM_1739793720585 || dealData.uf_crm_1739793720585;   // Size
+
+    // Check if we already have a linked order to avoid duplicates (unless we want to update?)
+    // If shopifyOrderId exists, we assume reservation is done.
+    if (brand && model && color && size && (!shopifyOrderId || shopifyOrderId.trim() === '')) {
+      console.log(`[PRE-ORDER] checking availability for: ${brand} ${model} ${color} ${size}`);
+
+      try {
+        const result = await findShopifyVariantByAttributes({ brand, model, color, size });
+
+        if (result && result.variant) {
+          const { variant, productTitle } = result;
+          console.log(`[PRE-ORDER] 🎯 Found matching variant: ${productTitle} - ${variant.title} (ID: ${variant.id})`);
+
+          // 1. Create Pending Order in Shopify
+          const order = await createShopifyOrderForPreorder(variant.id, {
+            dealId: dealId,
+            // optional: customer email from deal
+          });
+
+          if (order && order.id) {
+            const newOrderId = String(order.id);
+            console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId}`);
+
+            // Update shopifyOrderId in local scope and Bitrix
+            shopifyOrderId = newOrderId;
+
+            await callBitrix('crm.deal.update', {
+              id: dealId,
+              fields: { UF_CRM_1742556489: newOrderId }
+            });
+
+            // 2. Ensure Product exists in Bitrix (On-Demand)
+            // We need to sync/map it so we can add it to the deal row.
+            // Map variant data to sync format
+            const syncData = {
+              variant_id: variant.id.split('/').pop(), // ensure numeric/string ID
+              sku: variant.sku,
+              product_title: productTitle,
+              variant_title: variant.title,
+              price: variant.price || 0,
+              qty: variant.inventoryQuantity
+            };
+
+            const syncResult = await syncProductVariantOptimized(syncData, true);
+
+            if (syncResult.productId) {
+              // 3. Add Product Row to Deal
+              // We need to fetch existing rows first to append? Or just set?
+              // 'crm.deal.productrows.set' replaces all rows.
+              // 'crm.deal.productrows.add' doesn't exist? usually it's set.
+              // Safer to get and push.
+              const rowsResp = await callBitrix('crm.deal.productrows.get', { id: dealId });
+              const rows = rowsResp.result || [];
+
+              rows.push({
+                PRODUCT_ID: syncResult.productId,
+                QUANTITY: 1,
+                PRICE: variant.price || 0,
+                PRODUCT_NAME: syncResult.productName || `${productTitle} - ${variant.title}`
+              });
+
+              await callBitrix('crm.deal.productrows.set', { id: dealId, rows });
+              console.log(`[PRE-ORDER] ✅ Added product ${syncResult.productId} to deal ${dealId}`);
+            }
+          }
+        } else {
+          console.log(`[PRE-ORDER] ⚠️ No matching variant found for ${brand} ${model} ${color} ${size}`);
+          // Optional: Log to deal comments?
+        }
+      } catch (err) {
+        console.error(`[PRE-ORDER] ❌ Error in reservation flow: ${err.message}`);
+      }
     }
   }
 

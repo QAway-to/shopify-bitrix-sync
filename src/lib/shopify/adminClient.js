@@ -146,79 +146,106 @@ export async function callShopifyGraphQL(query, variables = {}) {
 }
 
 /**
- * Find Shopify Variant by attributes (Brand, Model, Color, Size)
- * @param {object} params - { brand, model, color, size }
- * @returns {Promise<object|null>} Found variant or null
+ * Find Shopify variant by attributes (Brand, Model, Color, Size)
+ * @param {Object} criteria
+ * @param {string} criteria.brand - Vendor
+ * @param {string} criteria.model - Part of Title
+ * @param {string} criteria.color - Option value
+ * @param {string} criteria.size - Option value
+ * @returns {Promise<Object|null>} Found variant or null
  */
 export async function findShopifyVariantByAttributes({ brand, model, color, size }) {
-  if (!brand) return null;
-
-  // 1. Search products by Vendor (Brand)
-  // Note: Vendor search is exact match
-  const queryParams = new URLSearchParams({
-    vendor: brand,
-    limit: '250', // Fetch enough items
-    status: 'active' // Only active products
-  });
-
-  const productsResp = await callShopifyAdmin(`/products.json?${queryParams.toString()}`);
-  const products = productsResp.products || [];
-
-  if (products.length === 0) return null;
-
-  // 2. Filter by Model (Title match)
-  const modelLower = (model || '').toLowerCase();
-  const matchedProducts = products.filter(p =>
-    !model || p.title.toLowerCase().includes(modelLower)
-  );
-
-  if (matchedProducts.length === 0) return null;
-
-  // 3. Search for matching variant in matched products
-  const colorLower = (color || '').toLowerCase();
-  const sizeLower = (size || '').toLowerCase();
-
-  const candidates = [];
-
-  for (const product of matchedProducts) {
-    for (const variant of product.variants) {
-      // Check options
-      const options = [
-        (variant.option1 || '').toLowerCase(),
-        (variant.option2 || '').toLowerCase(),
-        (variant.option3 || '').toLowerCase()
-      ];
-
-      // Flexible matching for Color/Size in options
-      const hasColor = !color || options.some(opt => opt.includes(colorLower) || colorLower.includes(opt));
-      const hasSize = !size || options.some(opt => opt === sizeLower); // Size should be exact ideally
-
-      if (hasColor && hasSize) {
-        candidates.push({ variant, product });
+  // Search products by Vendor and Title query
+  // We use GraphQL for flexible search
+  const query = `
+    query searchProducts($query: String!) {
+      products(first: 10, query: $query) {
+        nodes {
+          id
+          title
+          vendor
+          variants(first: 20) {
+            nodes {
+              id
+              title
+              sku
+              price
+              inventoryQuantity
+              selectedOptions {
+                name
+                value
+              }
+            }
+          }
+        }
       }
     }
-  }
+  `;
 
-  // Return only if Unique match found
-  if (candidates.length === 1) {
-    return candidates[0].variant;
-  }
+  // Construct search query
+  // vendor:Brand AND title:Model
+  // Note: Model might be fuzzy, so we might just search title:*Model*
+  const searchQuery = `vendor:'${brand}' AND title:*${model}*`;
 
-  if (candidates.length > 1) {
-    console.warn(`[Shopify Search] Ambiguous match: found ${candidates.length} variants for ${brand} ${model} ${color} ${size}`);
+  try {
+    const data = await callShopifyGraphQL(query, { query: searchQuery });
+    const products = data?.products?.nodes || [];
+
+    // Filter variants manually
+    const candidates = [];
+
+    for (const product of products) {
+      for (const variant of product.variants.nodes) {
+        // Check options
+        // Shopify options are just Name/Value pairs. We need to match Color and Size loosely.
+        const options = variant.selectedOptions;
+
+        const hasColor = options.some(o =>
+          (o.name.toLowerCase().includes('color') || o.name.toLowerCase().includes('цвет') || o.name.toLowerCase().includes('colour')) &&
+          o.value.toLowerCase().includes(color.toLowerCase())
+        );
+
+        const hasSize = options.some(o =>
+          (o.name.toLowerCase().includes('size') || o.name.toLowerCase().includes('размер')) &&
+          o.value.toLowerCase().trim() === size.toLowerCase().trim()
+        );
+
+        if (hasColor && hasSize) {
+          candidates.push({
+            productTitle: product.title,
+            variantTitle: variant.title,
+            vendor: product.vendor,
+            variant
+          });
+        }
+      }
+    }
+
+    if (candidates.length === 1) {
+      return candidates[0]; // Return { variant, productTitle, vendor }
+    } else if (candidates.length > 1) {
+      console.warn(`[FIND VARIANT] Ambiguous result: found ${candidates.length} variants for ${brand} ${model} ${color} ${size}`);
+      // return first one? No, safer to return null.
+      return null;
+    }
+
     return null;
+  } catch (error) {
+    console.error(`[FIND VARIANT] Error searching Shopify: ${error.message}`);
+    throw error;
   }
-
-  return null;
 }
 
 /**
- * Create a pending Shopify Order for Pre-order
- * @param {number|string} variantId - Variant to order
- * @param {number|string} bitrixDealId - Source Deal ID
- * @returns {Promise<object>} Created order
+ * Create a pending order in Shopify for Pre-order
+ * @param {string} variantGraphQLId - Variant ID (gid://...)
+ * @param {Object} options - extra fields (dealId, etc.)
  */
-export async function createShopifyOrderForPreorder(variantId, bitrixDealId) {
+export async function createShopifyOrderForPreorder(variantGraphQLId, options = {}) {
+  // Convert GID to numeric ID if needed (REST API often takes numeric, but variant_id can handle string sometimes?)
+  // Actually REST API needs numeric variant_id usually.
+  const variantId = variantGraphQLId.split('/').pop();
+
   const orderData = {
     line_items: [
       {
@@ -227,14 +254,15 @@ export async function createShopifyOrderForPreorder(variantId, bitrixDealId) {
       }
     ],
     financial_status: 'pending',
-    tags: 'Bitrix Pre-order',
-    note: `Created from Bitrix Deal #${bitrixDealId}`,
-    // inventory_behaviour: 'decrement_obeying_policy' is default for REST API unless specified otherwise?
-    // Actually, explicit property name logic might vary. 
-    // For REST API orders/create: 'inventory_behaviour' is NOT a standard property in order object structure directly?
-    // It's usually automatic for line items.
-    // Ensure we trigger inventory claim.
+    tags: `Bitrix Pre-order, BITRIX:${options.dealId || ''}`,
+    note: `Pre-order from Bitrix Deal #${options.dealId || ''}`,
   };
+
+  if (options.customerId) {
+    orderData.customer = { id: options.customerId };
+  } else if (options.email) {
+    orderData.email = options.email;
+  }
 
   const response = await callShopifyAdmin('/orders.json', {
     method: 'POST',
@@ -242,56 +270,5 @@ export async function createShopifyOrderForPreorder(variantId, bitrixDealId) {
   });
 
   return response.order;
-}
-
-/**
- * Smart Search for Shopify Variant (Robust 'q' param search)
- * Matches the logic of the proven Python script.
- */
-export async function findShopifyVariantSmart({ brand, model, color, size }) {
-  if (!brand || !model || !size) return null;
-
-  // Use 'q' parameter for smart search: vendor:{brand} {model}
-  const query = `vendor:${brand} ${model}`;
-  const queryParams = new URLSearchParams({
-    q: query,
-    limit: '50',
-    status: 'active'
-  });
-
-  console.log(`[Shopify Smart Search] Query: ${query}`);
-  const productsResp = await callShopifyAdmin(`/products.json?${queryParams.toString()}`);
-  const products = productsResp.products || [];
-
-  if (products.length === 0) return null;
-
-  const brandLower = brand.toLowerCase();
-  const sizeLower = size.toLowerCase();
-  const colorLower = (color || '').toLowerCase();
-
-  for (const product of products) {
-    // Double check vendor (case insensitive)
-    if ((product.vendor || '').toLowerCase() !== brandLower) continue;
-
-    // Search variants for size
-    for (const variant of product.variants) {
-      const options = [
-        (variant.option1 || '').toLowerCase(),
-        (variant.option2 || '').toLowerCase(),
-        (variant.option3 || '').toLowerCase()
-      ];
-
-      // Check if Size matches any option
-      if (options.includes(sizeLower)) {
-        // Optional Color Check
-        if (color) {
-          const hasColor = options.some(opt => opt.includes(colorLower) || colorLower.includes(opt));
-          if (!hasColor) continue;
-        }
-        return variant;
-      }
-    }
-  }
-  return null;
 }
 
