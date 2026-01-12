@@ -182,18 +182,6 @@ export async function findShopifyVariantByAttributes({ brand, model, color, size
         // Check if size is in the values (exact match)
         if (variantValues.includes(size.toLowerCase())) {
           // Found match!
-          // Resolve image
-          let imageUrl = null;
-          // variant.image_id might be numeric or null
-          if (variant.image_id) {
-            const img = product.images.find(i => i.id === variant.image_id);
-            if (img) imageUrl = img.src;
-          }
-          // Fallback to first product image if variant has no specific image
-          if (!imageUrl && product.images && product.images.length > 0) {
-            imageUrl = product.images[0].src;
-          }
-
           // Normalize structure to match expected format
           return {
             variant: {
@@ -205,8 +193,7 @@ export async function findShopifyVariantByAttributes({ brand, model, color, size
               // Add other fields if needed
             },
             productTitle: product.title,
-            vendor: product.vendor,
-            imageUrl: imageUrl
+            vendor: product.vendor
           };
         }
       }

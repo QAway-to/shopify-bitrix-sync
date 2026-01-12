@@ -1724,16 +1724,16 @@ async function handleDealUpdate(dealId, requestId) {
 
     // Check if we already have a linked order to avoid duplicates (unless we want to update?)
     // If shopifyOrderId exists, we assume reservation is done.
-    // NOTE: User script relies on Brand, Model, Size. Color is often empty or implied.
-    // We relax the check to require Brand, Model, Size.
+    // User Update: Color is optional/empty (UF_CRM_1739793651654 is empty). Logic should run on Brand+Model+Size.
     if (brand && model && size && (!shopifyOrderId || shopifyOrderId.trim() === '')) {
-      console.log(`[PRE-ORDER] checking availability for: ${brand} ${model} ${size} (Color: ${color || 'N/A'})`);
+      console.log(`[PRE-ORDER] checking availability for: ${brand} ${model} ${size}`);
 
       try {
-        const result = await findShopifyVariantByAttributes({ brand, model, color, size });
+        // Pass empty color if missing, though REST search ignores it.
+        const result = await findShopifyVariantByAttributes({ brand, model, color: color || '', size });
 
         if (result && result.variant) {
-          const { variant, productTitle, imageUrl } = result;
+          const { variant, productTitle } = result;
           console.log(`[PRE-ORDER] 🎯 Found matching variant: ${productTitle} - ${variant.title} (ID: ${variant.id})`);
 
           // 1. Create Pending Order in Shopify
@@ -1744,18 +1744,14 @@ async function handleDealUpdate(dealId, requestId) {
 
           if (order && order.id) {
             const newOrderId = String(order.id);
-            const orderName = order.name; // e.g. "#1024"
-            console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId} (${orderName})`);
+            console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId}`);
 
             // Update shopifyOrderId in local scope and Bitrix
             shopifyOrderId = newOrderId;
 
             await callBitrix('crm.deal.update', {
               id: dealId,
-              fields: {
-                UF_CRM_1742556489: newOrderId,
-                TITLE: orderName // Set Deal Title to Order Name (e.g. #2500)
-              }
+              fields: { UF_CRM_1742556489: newOrderId }
             });
 
             // 2. Ensure Product exists in Bitrix (On-Demand)
@@ -1767,8 +1763,7 @@ async function handleDealUpdate(dealId, requestId) {
               product_title: productTitle,
               variant_title: variant.title,
               price: variant.price || 0,
-              qty: variant.inventoryQuantity,
-              image_url: imageUrl // Pass image URL
+              qty: variant.inventoryQuantity
             };
 
             const syncResult = await syncProductVariantOptimized(syncData, true);
