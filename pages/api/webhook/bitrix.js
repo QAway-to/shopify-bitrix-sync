@@ -15,7 +15,6 @@ import { addPositionToOrder, incrementLineItemQuantity, decrementLineItemQuantit
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
-import { processPreorderProductRow } from '../../../src/lib/shopify/productLookup.js';
 
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
@@ -1680,6 +1679,107 @@ async function handleDealUpdate(dealId, requestId) {
   const categoryId = dealData.CATEGORY_ID;
   const stageId = dealData.STAGE_ID;
   let shopifyOrderId = dealData.UF_CRM_1742556489 || dealData.uf_crm_1742556489;
+
+  // ✅ PRE-ORDER RESERVATION LOGIC (Smart Search & Create)
+  try {
+    const brandFieldId = 'UF_CRM_1768251890190'; // Brand
+    const modelFieldId = 'UF_CRM_1739793668182'; // Model
+    const colorFieldId = 'UF_CRM_1739793651654'; // Color
+    const sizeFieldId = 'UF_CRM_1739793720585';  // Size
+
+    const dealBrand = dealData[brandFieldId] || dealData[brandFieldId.toLowerCase()];
+    const dealModel = dealData[modelFieldId] || dealData[modelFieldId.toLowerCase()];
+    const dealColor = dealData[colorFieldId] || dealData[colorFieldId.toLowerCase()];
+    const dealSize = dealData[sizeFieldId] || dealData[sizeFieldId.toLowerCase()];
+
+    // DEBUG: Log the extracted values to see why the check might be failing
+    console.log(`[PRE-ORDER DEBUG] Extracted Fields: Brand='${dealBrand}', Model='${dealModel}', Size='${dealSize}', Color='${dealColor}'`);
+    console.log(`[PRE-ORDER DEBUG] Raw Deal Data Keys: ${Object.keys(dealData).filter(k => k.startsWith('UF_CRM_')).join(', ')}`);
+
+    // Only proceed if Category is 8 (Pre-order Site) AND Brand, Model, Size are provided AND no Order ID exists
+    const isPreOrderCategory = String(categoryId) === '8';
+
+    // Explicitly Log skip reason if fields are present but category mismatch (for debugging)
+    if (dealBrand && dealModel && !isPreOrderCategory) {
+      console.log(`[PRE-ORDER CHECK] Skipping: Pre-order fields present but Category is ${categoryId} (Expected 8)`);
+    }
+
+    if (isPreOrderCategory && dealBrand && dealModel && dealSize && (!shopifyOrderId || shopifyOrderId.trim() === '')) {
+      console.log(`[PRE-ORDER CHECK] Valid Pre-order request: Brand="${dealBrand}", Model="${dealModel}", Size="${dealSize}"`);
+
+      // Check if deal already has products (prevent duplicates)
+      const rowsResp = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
+      const currentRows = rowsResp?.result || [];
+
+      if (currentRows.length === 0) {
+        console.log(`[PRE-ORDER START] Initiating Smart Search for "${dealBrand} ${dealModel} ${dealSize}"`);
+
+        const { findShopifyVariantSmart, createShopifyOrderForPreorder } = await import('../../../src/lib/shopify/adminClient.js');
+        const { findProductByVariantId, createBitrixProduct } = await import('../../../src/lib/bitrix/products.js');
+
+        // 1. Search Logic (Smart Query)
+        const variant = await findShopifyVariantSmart({
+          brand: dealBrand,
+          model: dealModel,
+          color: dealColor,
+          size: dealSize
+        });
+
+        if (variant) {
+          console.log(`[PRE-ORDER MATCH] Found Variant ID: ${variant.id}, SKU: ${variant.sku}, Price: ${variant.price}`);
+
+          // 2. Create Pending Order
+          const newOrder = await createShopifyOrderForPreorder(variant.id, dealId);
+
+          if (newOrder) {
+            shopifyOrderId = String(newOrder.id);
+            console.log(`[PRE-ORDER SUCCESS] Created Shopify Order #${newOrder.order_number} (${shopifyOrderId})`);
+
+            // 3. Update Deal with Order ID
+            await callBitrix('/crm.deal.update.json', {
+              id: dealId,
+              fields: {
+                UF_CRM_1742556489: shopifyOrderId,
+                TITLE: `${dealData.TITLE || 'Deal'} #${newOrder.order_number}`
+              }
+            });
+
+            // 4. Ensure Bitrix Product Exists & Add to Deal
+            let bitrixProductId = await findProductByVariantId(variant.id);
+            if (!bitrixProductId) {
+              console.log(`[PRE-ORDER PRODUCT] Creating new Bitrix product for variant ${variant.id}`);
+              bitrixProductId = await createBitrixProduct({
+                name: `${dealBrand} ${dealModel} ${dealColor || ''} ${dealSize}`,
+                price: variant.price,
+                sku: variant.sku,
+                variant_id: variant.id,
+                variant_title: dealSize,
+                color: dealColor
+              });
+            }
+
+            if (bitrixProductId) {
+              await callBitrix('/crm.deal.productrows.set.json', {
+                id: dealId,
+                rows: [{
+                  PRODUCT_ID: bitrixProductId,
+                  PRICE: variant.price,
+                  QUANTITY: 1
+                }]
+              });
+              console.log(`[PRE-ORDER SYNC] Linked Bitrix Product ${bitrixProductId} to Deal`);
+            }
+          }
+        } else {
+          console.log(`[PRE-ORDER NO MATCH] Search returned no unique result.`);
+        }
+      } else {
+        console.log(`[PRE-ORDER SKIP] Deal already has products.`);
+      }
+    }
+  } catch (err) {
+    console.error(`[PRE-ORDER ERROR] Exception: ${err.message}`);
+  }
   const comments = dealData.COMMENTS || '';
 
   // ✅ Fallback: If shopifyOrderId is missing, try to find it by tag (resilience against race conditions)
@@ -3736,19 +3836,7 @@ async function handleDealCreate(dealId, requestId) {
                 });
                 console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using XML_ID as variantId directly: ${xmlId}`);
               } else {
-                // ✅ FALLBACK: Try Title-Size pattern (e.g., "Amber 2.0 silver GR Barefoot Ballerinas - 31")
-                console.log(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE/XML_ID, trying Title-Size pattern...`);
-                const preorderResult = await processPreorderProductRow(row, product);
-                if (preorderResult) {
-                  items.push({
-                    variantId: preorderResult.variantId,
-                    sku: preorderResult.sku,
-                    qty: preorderResult.qty
-                  });
-                  console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Resolved via Title-Size pattern → variantId: ${preorderResult.variantId}`);
-                } else {
-                  console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE (SKU), XML_ID (variant_id), or valid Title-Size pattern, skipping`);
-                }
+                console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE (SKU) or XML_ID (variant_id), skipping`);
               }
             }
           } catch (productError) {
