@@ -57,7 +57,9 @@ export default function ShopifyPage() {
         isRunning: data.isRunning,
         lastRun: data.lastRun,
         nextSyncIn: data.nextSyncIn,
-        nextSyncAt: data.nextSyncAt
+        nextSyncAt: data.nextSyncAt,
+        nextSyncCyprus: data.nextSyncCyprus,
+        schedule: data.schedule
       });
     } catch (err) {
       console.error('Error fetching sync status:', err);
@@ -946,7 +948,7 @@ export default function ShopifyPage() {
 
           {syncStatus.nextSyncIn && !syncStatus.isRunning && (
             <div style={{ marginTop: '8px', fontSize: '0.85rem', color: '#60a5fa' }}>
-              ⏱️ Next auto-sync: {syncStatus.nextSyncIn}
+              ⏱️ Next sync: {syncStatus.nextSyncIn} ({syncStatus.nextSyncCyprus})
             </div>
           )}
         </div>
