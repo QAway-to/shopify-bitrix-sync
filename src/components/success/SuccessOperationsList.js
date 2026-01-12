@@ -40,9 +40,9 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
         borderRadius: '8px',
         border: '1px solid rgba(148, 163, 184, 0.2)'
       }}>
-        <p>Нет успешных операций</p>
+        <p>No success operations</p>
         <p style={{ fontSize: '0.85rem', marginTop: '8px', opacity: 0.7 }}>
-          Успешно созданные и обновленные сделки будут отображаться здесь
+          Successfully created and updated deals will appear here
         </p>
       </div>
     );
@@ -52,7 +52,7 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
         <div style={{ fontSize: '0.9rem', color: '#94a3b8' }}>
-          Всего: {operations.length} | Выбрано: {selectedOperations.length}
+          Total: {operations.length} | Selected: {selectedOperations.length}
         </div>
         {operations.length > 0 && (
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -72,7 +72,7 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
                   flexShrink: 0
                 }}
               >
-                Снять выбор
+                Deselect All
               </button>
             ) : (
               <button
@@ -90,7 +90,7 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
                   flexShrink: 0
                 }}
               >
-                Выбрать все
+                Select All
               </button>
             )}
           </div>
@@ -105,22 +105,22 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
           const isCreate = operation.operationType === 'CREATE';
           const isUpdate = operation.operationType === 'UPDATE';
           const isVerified = operation.verified;
-          
+
           // ✅ Determine status type for color coding
           const stageId = dealData.STAGE_ID || '';
           const isPartialRefund = stageId === 'C2:PREPARATION' && (dealData.UF_CRM_1739183959976 === '60' || dealData.UF_CRM_1739183959976 === 60);
           const isCancelled = stageId === 'LOSE' && (dealData.UF_CRM_1739183959976 === '58' || dealData.UF_CRM_1739183959976 === 58);
           const isRefunded = stageId === 'LOSE' && (dealData.UF_CRM_1739183959976 === '58' || dealData.UF_CRM_1739183959976 === 58);
-          
+
           // Determine operation status text and color
-          let statusText = isCreate ? '✓ СОЗДАНА' : isUpdate ? '✓ ОБНОВЛЕНА' : '✓ УСПЕХ';
+          let statusText = isCreate ? '✓ CREATED' : isUpdate ? '✓ UPDATED' : '✓ SUCCESS';
           let statusBgColor = isCreate ? '#059669' : isUpdate ? '#3b82f6' : '#6b7280';
-          
+
           if (isPartialRefund) {
-            statusText = '⚠️ ЧАСТИЧНЫЙ РЕФАНД';
+            statusText = '⚠️ PARTIAL REFUND';
             statusBgColor = '#eab308'; // Yellow
           } else if (isCancelled || isRefunded) {
-            statusText = '✗ ОТМЕНЕНА';
+            statusText = '✗ CANCELLED';
             statusBgColor = '#ef4444'; // Red
           }
 
@@ -128,23 +128,23 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
             <div
               key={operation.id}
               style={{
-                background: isPartialRefund 
-                  ? 'rgba(234, 179, 8, 0.1)' 
+                background: isPartialRefund
+                  ? 'rgba(234, 179, 8, 0.1)'
                   : isCancelled || isRefunded
                     ? 'rgba(239, 68, 68, 0.1)'
-                    : isCreate 
-                      ? 'rgba(5, 150, 105, 0.1)' 
-                      : isUpdate 
-                        ? 'rgba(59, 130, 246, 0.1)' 
+                    : isCreate
+                      ? 'rgba(5, 150, 105, 0.1)'
+                      : isUpdate
+                        ? 'rgba(59, 130, 246, 0.1)'
                         : 'rgba(15, 23, 42, 0.5)',
                 border: `1px solid ${isPartialRefund
                   ? 'rgba(234, 179, 8, 0.3)'
                   : isCancelled || isRefunded
                     ? 'rgba(239, 68, 68, 0.3)'
-                    : isCreate 
-                      ? 'rgba(5, 150, 105, 0.3)' 
-                      : isUpdate 
-                        ? 'rgba(59, 130, 246, 0.3)' 
+                    : isCreate
+                      ? 'rgba(5, 150, 105, 0.3)'
+                      : isUpdate
+                        ? 'rgba(59, 130, 246, 0.3)'
                         : 'rgba(148, 163, 184, 0.2)'}`,
                 borderRadius: '8px',
                 padding: '12px',
@@ -192,12 +192,12 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
                             textAlign: 'center',
                             display: 'inline-block'
                           }}>
-                            ✓ Проверка
+                            ✓ Verified
                           </span>
                         )}
                       </div>
                       <div style={{ fontWeight: 600, color: '#f1f5f9', marginBottom: '4px' }}>
-                        Сделка: {dealData.TITLE || dealData.ID || 'N/A'}
+                        Deal: {dealData.TITLE || dealData.ID || 'N/A'}
                       </div>
                       <div style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
                         Deal ID: {operation.dealId} | Shopify: {operation.shopifyOrderName || operation.shopifyOrderId}
@@ -226,11 +226,11 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
                   </div>
 
                   <div style={{ fontSize: '0.8rem', color: '#94a3b8', marginTop: '8px' }}>
-                    <div>Сумма: {dealData.OPPORTUNITY ? `${dealData.OPPORTUNITY} ${dealData.CURRENCY_ID || 'EUR'}` : 'N/A'}</div>
-                    <div>Стадия: {dealData.STAGE_ID || 'N/A'}</div>
-                    <div>Категория: {dealData.CATEGORY_ID || 'N/A'}</div>
-                    {operation.attempt && <div>Попытка: {operation.attempt}</div>}
-                    {operation.productRowsCount !== undefined && <div>Товаров: {operation.productRowsCount}</div>}
+                    <div>Amount: {dealData.OPPORTUNITY ? `${dealData.OPPORTUNITY} ${dealData.CURRENCY_ID || 'EUR'}` : 'N/A'}</div>
+                    <div>Stage: {dealData.STAGE_ID || 'N/A'}</div>
+                    <div>Category: {dealData.CATEGORY_ID || 'N/A'}</div>
+                    {operation.attempt && <div>Attempt: {operation.attempt}</div>}
+                    {operation.productRowsCount !== undefined && <div>Products: {operation.productRowsCount}</div>}
                     <div style={{ marginTop: '4px', opacity: 0.7 }}>
                       {new Date(operation.timestamp).toLocaleString('ru-RU')}
                     </div>
@@ -245,7 +245,7 @@ export default function SuccessOperationsList({ operations, selectedOperations, 
                       fontSize: '0.75rem',
                       color: '#cbd5e1'
                     }}>
-                      <div style={{ fontWeight: 600, marginBottom: '8px', color: '#f1f5f9' }}>Детали операции:</div>
+                      <div style={{ fontWeight: 600, marginBottom: '8px', color: '#f1f5f9' }}>Operation details:</div>
                       <pre style={{
                         margin: 0,
                         whiteSpace: 'pre-wrap',

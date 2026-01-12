@@ -16,22 +16,22 @@ export default function DocsLayout({
       <main className="page">
         <header className="page-header">
           <div>
-            <div className="doc-kicker">Публичные страницы</div>
-            <h1>{title}</h1>
+            <div className="doc-kicker">Documentation</div>
+            <h2 style={{ fontSize: '1.8rem', marginBottom: '8px' }}>{title}</h2>
             {subtitle ? <p className="subtitle">{subtitle}</p> : null}
           </div>
           <div className="header-actions">
             <a className={`btn ${active === 'report' ? 'btn-primary' : ''}`} href="/report">
-              📄 Отчёт
+              📄 Report
             </a>
             <a className={`btn ${active === 'instruction' ? 'btn-primary' : ''}`} href="/instruction">
-              📋 Инструкция
+              📋 Instructions
             </a>
             <a className={`btn ${active === 'tech_doc' ? 'btn-primary' : ''}`} href="/tech_doc">
-              🔧 Тех.док
+              🔧 Tech Docs
             </a>
             <a className="btn" href="/">
-              ← В интерфейс
+              ← Dashboard
             </a>
           </div>
         </header>
@@ -45,5 +45,3 @@ export default function DocsLayout({
     </>
   );
 }
-
-

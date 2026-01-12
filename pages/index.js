@@ -279,15 +279,15 @@ export default function ShopifyPage() {
 
   const handleSendToBitrix = async () => {
     if (selectedEvents.length === 0) {
-      alert('Выберите хотя бы одно событие для отправки');
+      alert('Please select at least one event to send');
       return;
     }
 
     if (!bitrixWebhookUrl || bitrixWebhookUrl.trim() === '') {
       if (isLoadingWebhookUrl) {
-        alert('Пожалуйста, подождите пока загружается URL вебхука Bitrix');
+        alert('Please wait while Bitrix webhook URL is loading');
       } else {
-        alert('URL вебхука Bitrix не настроен. Проверьте переменную окружения BITRIX_WEBHOOK_BASE');
+        alert('Bitrix webhook URL not configured. Check BITRIX_WEBHOOK_BASE env variable');
       }
       return;
     }
@@ -364,7 +364,7 @@ export default function ShopifyPage() {
         bitrixData: result.bitrixData
       });
     } catch (error) {
-      alert(`Ошибка при трансформации: ${error.message}`);
+      alert(`Transform error: ${error.message}`);
     }
   };
 
@@ -412,14 +412,14 @@ export default function ShopifyPage() {
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error downloading logs:', error);
-      alert(`Ошибка при скачивании логов: ${error.message}`);
+      alert(`Error downloading logs: ${error.message}`);
     }
   };
 
 
   const handleSendToShopify = async () => {
     if (selectedBitrixEvents.length === 0) {
-      alert('Выберите хотя бы одно событие для отправки');
+      alert('Please select at least one event to send');
       return;
     }
 
@@ -493,15 +493,15 @@ export default function ShopifyPage() {
 
   const handleSendPreviewEvent = async () => {
     if (!previewEvent) {
-      alert('Нет события для отправки');
+      alert('No event to send');
       return;
     }
 
     if (!bitrixWebhookUrl || bitrixWebhookUrl.trim() === '') {
       if (isLoadingWebhookUrl) {
-        alert('Пожалуйста, подождите пока загружается URL вебхука Bitrix');
+        alert('Please wait while Bitrix webhook URL is loading');
       } else {
-        alert('URL вебхука Bitrix не настроен. Проверьте переменную окружения BITRIX_WEBHOOK_BASE');
+        alert('Bitrix webhook URL not configured. Check BITRIX_WEBHOOK_BASE env variable');
       }
       return;
     }
@@ -715,7 +715,7 @@ export default function ShopifyPage() {
                 flexShrink: 0
               }}
             >
-              {isSendingToShopify ? 'Отправка...' : `📤 Отправить в Shopify (${selectedBitrixEvents.length})`}
+              {isSendingToShopify ? 'Sending...' : `📤 Send to Shopify (${selectedBitrixEvents.length})`}
             </button>
             <button
               onClick={() => {
@@ -756,12 +756,12 @@ export default function ShopifyPage() {
             </div>
             {sendResult.total !== undefined && (
               <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                Всего: {sendResult.total} | Успешно: {sendResult.successful || 0} | Ошибок: {sendResult.failed || 0}
+                Total: {sendResult.total} | Success: {sendResult.successful || 0} | Errors: {sendResult.failed || 0}
               </div>
             )}
             {sendResult.details && sendResult.details.length > 0 && (
               <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали ошибок:</div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Error details:</div>
                 {sendResult.details.map((err, idx) => (
                   <div key={idx} style={{
                     fontSize: '0.8rem',
@@ -802,7 +802,7 @@ export default function ShopifyPage() {
             )}
             {sendResult.results && sendResult.results.length > 0 && (
               <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Результаты отправки:</div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Send results:</div>
                 {sendResult.results.map((result, idx) => (
                   <div key={idx} style={{
                     fontSize: '0.8rem',
@@ -816,7 +816,7 @@ export default function ShopifyPage() {
                   }}>
                     <div>
                       {result.eventId && <strong>Event ID {result.eventId}: </strong>}
-                      {result.success ? '✓ Успешно отправлено' : (result.error || 'Ошибка отправки')}
+                      {result.success ? '✓ Sent successfully' : (result.error || 'Send error')}
                       {result.status && <div style={{ marginTop: '4px', opacity: 0.8 }}>HTTP {result.status}</div>}
                     </div>
                     {(result.shopifyData && result.bitrixData) && (
@@ -996,7 +996,7 @@ export default function ShopifyPage() {
                 </div>
                 {sendToShopifyResult.total !== undefined && (
                   <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                    Всего: {sendToShopifyResult.total} | Успешно: {sendToShopifyResult.successful || 0} | Ошибок: {sendToShopifyResult.failed || 0}
+                    Total: {sendToShopifyResult.total} | Success: {sendToShopifyResult.successful || 0} | Errors: {sendToShopifyResult.failed || 0}
                   </div>
                 )}
                 {sendToShopifyResult.details && sendToShopifyResult.details.length > 0 && (
@@ -1034,7 +1034,7 @@ export default function ShopifyPage() {
           {/* Right column: Success Operations - Fixed width */}
           <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
             <h2 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.5rem', flexShrink: 0 }}>
-              ✓ Успешные операции (Тестирование)
+              ✓ Success Operations (Testing)
             </h2>
             <div style={{ flex: '1 1 auto', minHeight: 0 }}>
               <SuccessOperationsList

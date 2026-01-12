@@ -34,7 +34,7 @@ export default function BitrixEventsList({ events, selectedEvents = [], onSelect
 
   const handleSelectEvent = (event, checked) => {
     const eventId = event.id || event.eventId;
-    
+
     if (checked) {
       if (!selectedEvents.some(e => (e.id || e.eventId) === eventId)) {
         onSelectionChange([...selectedEvents, event]);
@@ -58,7 +58,7 @@ export default function BitrixEventsList({ events, selectedEvents = [], onSelect
           <h2>Bitrix → Shopify Events ({events.length})</h2>
           {selectedEvents.length > 0 && (
             <span style={{ color: '#3b82f6', fontSize: '0.9rem' }}>
-              Выбрано: {selectedEvents.length}
+              Selected: {selectedEvents.length}
             </span>
           )}
         </div>
@@ -107,76 +107,76 @@ export default function BitrixEventsList({ events, selectedEvents = [], onSelect
                 return stateMap[state] || stateMap['unknown'];
               };
               const fulfillmentDisplay = getFulfillmentStateDisplay(fulfillmentState);
-              
+
               return (
-              <tr
-                key={eventId}
-                style={{
-                  borderBottom: '1px solid #334155',
-                  backgroundColor: isEventSelected ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
-                  transition: 'background-color 0.2s'
-                }}
-              >
-                <td style={{ padding: '12px' }}>
-                  <input
-                    type="checkbox"
-                    checked={isEventSelected}
-                    onChange={(e) => {
-                      e.stopPropagation();
-                      handleSelectEvent(event, e.target.checked);
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                    }}
-                    style={{ margin: 0, cursor: 'pointer' }}
-                  />
-                </td>
-                <td style={{ padding: '12px', color: '#f1f5f9' }}>{dealId}</td>
-                <td style={{ padding: '12px', color: '#f1f5f9' }}>{shopifyOrderId}</td>
-                <td style={{ padding: '12px', color: '#f1f5f9' }}>{categoryId}</td>
-                <td style={{ padding: '12px', color: '#f1f5f9' }}>{stageId}</td>
-                <td style={{ padding: '12px' }}>
-                  <span style={{
-                    color: fulfillmentDisplay.color,
-                    fontWeight: 600,
-                    fontSize: '0.9rem'
-                  }}>
-                    {fulfillmentDisplay.text}
-                  </span>
-                </td>
-                <td style={{ padding: '12px', color: '#94a3b8', fontSize: '0.9rem' }}>
-                  {formatDate(event.received_at || event.created_at)}
-                </td>
-                {onPreviewEvent && (
-                  <td style={{ padding: '12px', textAlign: 'center' }}>
-                    <button
+                <tr
+                  key={eventId}
+                  style={{
+                    borderBottom: '1px solid #334155',
+                    backgroundColor: isEventSelected ? 'rgba(59, 130, 246, 0.1)' : 'transparent',
+                    transition: 'background-color 0.2s'
+                  }}
+                >
+                  <td style={{ padding: '12px' }}>
+                    <input
+                      type="checkbox"
+                      checked={isEventSelected}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        handleSelectEvent(event, e.target.checked);
+                      }}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onPreviewEvent(event);
                       }}
-                      style={{
-                        padding: '6px 12px',
-                        background: '#3b82f6',
-                        border: 'none',
-                        borderRadius: '4px',
-                        color: '#f1f5f9',
-                        cursor: 'pointer',
-                        fontSize: '1rem',
-                        minWidth: '44px',
-                        height: '36px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0
-                      }}
-                      title="Preview event data"
-                    >
-                      👁️
-                    </button>
+                      style={{ margin: 0, cursor: 'pointer' }}
+                    />
                   </td>
-                )}
-              </tr>
+                  <td style={{ padding: '12px', color: '#f1f5f9' }}>{dealId}</td>
+                  <td style={{ padding: '12px', color: '#f1f5f9' }}>{shopifyOrderId}</td>
+                  <td style={{ padding: '12px', color: '#f1f5f9' }}>{categoryId}</td>
+                  <td style={{ padding: '12px', color: '#f1f5f9' }}>{stageId}</td>
+                  <td style={{ padding: '12px' }}>
+                    <span style={{
+                      color: fulfillmentDisplay.color,
+                      fontWeight: 600,
+                      fontSize: '0.9rem'
+                    }}>
+                      {fulfillmentDisplay.text}
+                    </span>
+                  </td>
+                  <td style={{ padding: '12px', color: '#94a3b8', fontSize: '0.9rem' }}>
+                    {formatDate(event.received_at || event.created_at)}
+                  </td>
+                  {onPreviewEvent && (
+                    <td style={{ padding: '12px', textAlign: 'center' }}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onPreviewEvent(event);
+                        }}
+                        style={{
+                          padding: '6px 12px',
+                          background: '#3b82f6',
+                          border: 'none',
+                          borderRadius: '4px',
+                          color: '#f1f5f9',
+                          cursor: 'pointer',
+                          fontSize: '1rem',
+                          minWidth: '44px',
+                          height: '36px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          whiteSpace: 'nowrap',
+                          flexShrink: 0
+                        }}
+                        title="Preview event data"
+                      >
+                        👁️
+                      </button>
+                    </td>
+                  )}
+                </tr>
               );
             })}
             {/* ✅ Show loading row at the bottom if loading new data */}
