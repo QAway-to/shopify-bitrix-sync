@@ -1742,14 +1742,18 @@ async function handleDealUpdate(dealId, requestId) {
 
           if (order && order.id) {
             const newOrderId = String(order.id);
-            console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId}`);
+            const newOrderName = order.name;
+            console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId} (${newOrderName})`);
 
             // Update shopifyOrderId in local scope and Bitrix
             shopifyOrderId = newOrderId;
 
             await callBitrix('crm.deal.update', {
               id: dealId,
-              fields: { UF_CRM_1742556489: newOrderId }
+              fields: {
+                UF_CRM_1742556489: newOrderId,
+                TITLE: newOrderName
+              }
             });
 
             // 2. Ensure Product exists in Bitrix (On-Demand)
@@ -1761,7 +1765,9 @@ async function handleDealUpdate(dealId, requestId) {
               product_title: productTitle,
               variant_title: variant.title,
               price: variant.price || 0,
-              qty: variant.inventoryQuantity
+              qty: variant.inventoryQuantity,
+              brand: brand,
+              category: model // Map Bitrix Model to Product Category Property
             };
 
             const syncResult = await syncProductVariantOptimized(syncData, true);
