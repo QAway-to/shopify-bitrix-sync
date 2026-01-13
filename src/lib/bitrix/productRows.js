@@ -28,6 +28,7 @@ async function fetchShopifyProductDetails(productId) {
     const description = product.body_html || null;
     const imageUrl = product.image?.src || product.images?.[0]?.src || null;
 
+    console.log(`[PRODUCT ROWS] 📥 Fetched details for ${productId}: HasDesc=${!!description}, HasImage=${!!imageUrl}`);
     return { description, imageUrl };
   } catch (error) {
     console.warn(`[PRODUCT ROWS] Failed to fetch product ${productId} details:`, error.message);
@@ -86,6 +87,8 @@ async function mapLineItemToProductRowAsync(lineItem, order) {
     description: description,
     imageUrl: imageUrl
   };
+
+  console.log(`[PRODUCT ROWS] 🔄 Syncing product ${sku}: DescLen=${description ? description.length : 0}, Image=${!!imageUrl}`);
 
   try {
     const syncResult = await syncProductVariantOptimized(syncData, true);

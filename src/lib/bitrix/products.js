@@ -64,6 +64,7 @@ export async function createBitrixProduct(productData, catalogId = 14, sectionId
   };
 
   if (description) {
+    console.log(`[BITRIX PRODUCTS] 📝 Adding description to product fields (Length: ${description.length})`);
     fields.DETAIL_TEXT = description;
     fields.DETAIL_TEXT_TYPE = 'html';
     fields.PREVIEW_TEXT = description; // Copy to preview as well
@@ -861,6 +862,7 @@ export async function syncProductVariantOptimized(productData, createNew = true,
         }
 
         // Prepare product fields with variant_id as unique identifier
+        console.log(`[BITRIX PRODUCTS] 🚀 Creating new structure. DescLen=${description ? description.length : 0}`);
         const productFields = {
           name: productName,
           price: parseFloat(price) || 0,
@@ -1015,17 +1017,25 @@ export async function syncProductVariantOptimized(productData, createNew = true,
 async function uploadProductImage(productId, imageUrl) {
   if (!imageUrl) return;
   try {
-    console.log(`[BITRIX PRODUCTS] 📸 Uploading image for product ${productId}...`);
-    const response = await fetch(imageUrl);
+    // ✅ Force Shopify to return JPG if supported (Shopify CDN supports format=jpg)
+    // Check if URL already has query params
+    const fetchUrl = imageUrl.includes('?')
+      ? `${imageUrl}&format=jpg`
+      : `${imageUrl}?format=jpg`;
+
+    console.log(`[BITRIX PRODUCTS] 📸 Fetching converted image: ${fetchUrl}`);
+    const response = await fetch(fetchUrl);
     if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
 
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const base64 = buffer.toString('base64');
 
-    // Clean filename
+    // Generate filename, ensure it end in .jpg
     let filename = imageUrl.split('/').pop().split('?')[0];
-    if (!filename || filename.length < 3) filename = 'image.jpg';
+    // Remove existing extension and append .jpg
+    filename = filename.replace(/\.(avif|webp|png|gif)$/i, '') + '.jpg';
+    if (!filename || filename.length < 5) filename = 'image.jpg';
 
     // Update both Preview and Detail pictures
     await callBitrix('crm.product.update', {
