@@ -2,7 +2,7 @@
  * Pre-Order Block Handler
  * Extracted from bitrix.js handleDealUpdate (lines 1706-1822)
  * 
- * Purpose: Automatic Reservation for Category 8 deals
+ * Purpose: Automatic Reservation for Category 4 deals
  * Trigger: When Brand, Model, Size are present and no shopifyOrderId exists
  * 
  * Flow:
@@ -24,7 +24,7 @@ const UF_SIZE = 'UF_CRM_1739793720585';
 const UF_SHOPIFY_ORDER_ID = 'UF_CRM_1742556489';
 
 /**
- * Handle Pre-Order logic for Category 8 deals
+ * Handle Pre-Order logic for Category 4 deals
  * @param {string} dealId - Bitrix deal ID
  * @param {Object} dealData - Full deal data from Bitrix
  * @param {string} requestId - Request correlation ID
@@ -34,9 +34,9 @@ const UF_SHOPIFY_ORDER_ID = 'UF_CRM_1742556489';
 export async function handlePreOrder(dealId, dealData, requestId, currentShopifyOrderId) {
     const categoryId = dealData.CATEGORY_ID;
 
-    // Only process Category 8
-    if (String(categoryId) !== '8') {
-        return { handled: false, reason: 'not_category_8' };
+    // Only process Category 4
+    if (String(categoryId) !== '4') {
+        return { handled: false, reason: 'not_category_4' };
     }
 
     const brand = dealData[UF_BRAND] || dealData[UF_BRAND.toLowerCase()];

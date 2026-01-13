@@ -1713,9 +1713,9 @@ async function handleDealUpdate(dealId, requestId) {
     }
   }
 
-  // ✅ PRE-ORDER LOGIC: Automatic Reservation for Category 8
-  // Triggered when Brand, Model, Color, and Size are present
-  if (String(categoryId) === '8') {
+  // ✅ PRE-ORDER LOGIC: Automatic Reservation for Category 4 (Pre-order in shop)
+  // Triggered when Brand, Model, (Color), and Size are present
+  if (String(categoryId) === '4') {
     const brand = dealData.UF_CRM_1768251890190 || dealData.uf_crm_1768251890190; // Brand
     const model = dealData.UF_CRM_1739793668182 || dealData.uf_crm_1739793668182; // Model
     // Color is often empty/unused in this specific pre-order flow, relying on Brand/Model/Size matches.
