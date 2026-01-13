@@ -1041,44 +1041,28 @@ async function uploadProductImage(productId, imageUrl) {
   }
 }
 
+
+
+const arrayBuffer = await response.arrayBuffer();
+const buffer = Buffer.from(arrayBuffer);
+const base64 = buffer.toString('base64');
+
+// Clean filename from URL
+let filename = imageUrl.split('/').pop().split('?')[0];
+if (!filename || filename.length < 3) filename = 'image.jpg';
+
+// Update both Preview and Detail pictures
+// fileData format: [filename, base64content]
+await callBitrix('crm.product.update', {
+  id: productId,
+  fields: {
+    PREVIEW_PICTURE: { fileData: [filename, base64] },
+    DETAIL_PICTURE: { fileData: [filename, base64] }
   }
-}
+});
 
-/**
- * Upload image to Bitrix Product (Preview and Detail text)
- * @param {number} productId 
- * @param {string} imageUrl 
- */
-async function uploadProductImage(productId, imageUrl) {
-  if (!imageUrl || !productId) return;
-
-  try {
-    // Only upload if we haven't recently uploaded (skip check for now, just overwrite)
-    console.log(`[BITRIX PRODUCTS] 📸 Uploading image for product ${productId}...`);
-
-    const response = await fetch(imageUrl);
-    if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
-
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const base64 = buffer.toString('base64');
-
-    // Clean filename from URL
-    let filename = imageUrl.split('/').pop().split('?')[0];
-    if (!filename || filename.length < 3) filename = 'image.jpg';
-
-    // Update both Preview and Detail pictures
-    // fileData format: [filename, base64content]
-    await callBitrix('crm.product.update', {
-      id: productId,
-      fields: {
-        PREVIEW_PICTURE: { fileData: [filename, base64] },
-        DETAIL_PICTURE: { fileData: [filename, base64] }
-      }
-    });
-
-    console.log(`[BITRIX PRODUCTS] ✅ Image uploaded successfully for product ${productId}`);
+console.log(`[BITRIX PRODUCTS] ✅ Image uploaded successfully for product ${productId}`);
   } catch (error) {
-    console.warn(`[BITRIX PRODUCTS] ⚠️ Image upload failed for ${productId}:`, error.message);
-  }
+  console.warn(`[BITRIX PRODUCTS] ⚠️ Image upload failed for ${productId}:`, error.message);
+}
 }
