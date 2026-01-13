@@ -190,10 +190,12 @@ export async function findShopifyVariantByAttributes({ brand, model, size }) {
               sku: variant.sku,
               price: variant.price,
               inventoryQuantity: variant.inventory_quantity,
-              // Add other fields if needed
+              imageId: variant.image_id // Capture variant image ID
             },
             productTitle: product.title,
-            vendor: product.vendor
+            vendor: product.vendor,
+            description: product.body_html, // HTML Description
+            images: product.images || [] // All images for fallback logic
           };
         }
       }

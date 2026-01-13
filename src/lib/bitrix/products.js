@@ -20,7 +20,9 @@ import { updateSkuMapping, updateSkuMappingSilent, getCategoryByHandle, getSecti
  * @returns {Promise<number>} Created product ID
  */
 export async function createBitrixProduct(productData, catalogId = 14, sectionId = 32) {
-  const { name, price, sku, variant_id, variant_title, color } = productData;
+  const { name, price, sku, variant_id, variant_title, color, description } = productData;
+
+  console.log(`[BITRIX PRODUCTS] Creating Product: ${name}, VariantTitle (Size): ${variant_title || 'N/A'}, Color: ${color || 'N/A'}`);
 
   if (!name) {
     throw new Error('Product name is required');
@@ -43,9 +45,17 @@ export async function createBitrixProduct(productData, catalogId = 14, sectionId
     MEASURE: 1, // Pieces
   };
 
+  if (description) {
+    fields.DETAIL_TEXT = description;
+    fields.DETAIL_TEXT_TYPE = 'html';
+    fields.PREVIEW_TEXT = description; // Copy to preview as well
+    fields.PREVIEW_TEXT_TYPE = 'html';
+  }
+
   // Add properties if available
   if (variant_title) {
     fields.PROPERTY_98 = variant_title; // Size
+    console.log(`[BITRIX PRODUCTS] Setting Property 98 (Size) to: ${variant_title}`);
   }
   if (color) {
     fields.PROPERTY_106 = color; // Color
@@ -779,7 +789,7 @@ export async function syncProductVariant(productData, createNew = true, sectionI
  * @returns {Promise<Object>} Sync result
  */
 export async function syncProductVariantOptimized(productData, createNew = true, sectionId = null) {
-  const { product_title, sku, price, qty, variant_id, variant_title } = productData;
+  const { product_title, sku, price, qty, variant_id, variant_title, description, imageUrl } = productData;
 
   // variant_id is REQUIRED (unique identifier from Shopify)
   if (!variant_id) {
@@ -833,7 +843,8 @@ export async function syncProductVariantOptimized(productData, createNew = true,
           sku: skuClean,
           variant_id: variantIdStr,
           variant_title: variant_title || null,
-          color: color
+          color: color,
+          description: description || null
         };
 
         productId = await createBitrixProduct(productFields, 14, actualSectionId);
@@ -869,6 +880,22 @@ export async function syncProductVariantOptimized(productData, createNew = true,
     } else {
       // Ensure mapping is in cache by variant_id
       updateVariantIdMapping(variantIdStr, productId);
+
+      // Update description for existing product if needed (optional, doing it for now to fix existing ones)
+      if (description) {
+        try {
+          // Only update if description is present. (Maybe check if empty before overwriting expensive call?)
+          // For now simpler to just update field alongside image
+          await updateBitrixProductFields(productId, {
+            DETAIL_TEXT: description,
+            DETAIL_TEXT_TYPE: 'html',
+            PREVIEW_TEXT: description,
+            PREVIEW_TEXT_TYPE: 'html'
+          });
+        } catch (descError) {
+          console.warn(`[BITRIX PRODUCTS] ⚠️ Failed to update description for existing product ${productId}:`, descError);
+        }
+      }
     }
 
     // 2.5. Sync price for existing products (if price changed)
@@ -934,6 +961,11 @@ export async function syncProductVariantOptimized(productData, createNew = true,
       }
     }
 
+    // 4. Sync Image (Last step)
+    if (imageUrl) {
+      await uploadProductImage(productId, imageUrl);
+    }
+
     return {
       success: true,
       sku: skuClean,
@@ -955,3 +987,45 @@ export async function syncProductVariantOptimized(productData, createNew = true,
   }
 }
 
+// Helper to upload image to Bitrix Product
+async function uploadProductImage(productId, imageUrl) {
+  if (!imageUrl) return;
+  try {
+    console.log(`[BITRIX PRODUCTS] 📸 Uploading image for product ${productId}...`);
+    const response = await fetch(imageUrl);
+    if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const base64 = buffer.toString('base64');
+
+    // Clean filename
+    let filename = imageUrl.split('/').pop().split('?')[0];
+    if (!filename || filename.length < 3) filename = 'image.jpg';
+
+    // Update both Preview and Detail pictures
+    await callBitrix('crm.product.update', {
+      id: productId,
+      fields: {
+        PREVIEW_PICTURE: { fileData: [filename, base64] },
+        DETAIL_PICTURE: { fileData: [filename, base64] }
+      }
+    });
+    console.log(`[BITRIX PRODUCTS] ✅ Image uploaded successfully`);
+  } catch (error) {
+    console.warn(`[BITRIX PRODUCTS] ⚠️ Image upload failed for ${productId}:`, error.message);
+  }
+}
+
+/**
+ * Update existing Bitrix product fields by ID
+ * Helper mainly for properties
+ */
+// ... (existing updateBitrixProductFields code is fine, not replacing it here)
+
+// At the end of file, inside syncProductVariantOptimized, we need to call this.
+// But I need to replace the specific function or append logic.
+// I will just add the helper function at the VERY END of the file for now,
+// AND update syncProductVariantOptimized in a separate chunk to avoid massive replacement.
+// Actually, `products.js` has `syncProductVariantOptimized` at the end.
+// So I will replacing the END of the file including the function.

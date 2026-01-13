@@ -1731,8 +1731,18 @@ async function handleDealUpdate(dealId, requestId) {
         const result = await findShopifyVariantByAttributes({ brand, model, size });
 
         if (result && result.variant) {
-          const { variant, productTitle } = result;
+          const { variant, productTitle, description, images } = result;
           console.log(`[PRE-ORDER] 🎯 Found matching variant: ${productTitle} - ${variant.title} (ID: ${variant.id})`);
+
+          // Resolve Image URL
+          let imageUrl = null;
+          if (variant.imageId) {
+            const img = (images || []).find(i => i.id === variant.imageId);
+            if (img) imageUrl = img.src;
+          }
+          if (!imageUrl && images && images.length > 0) {
+            imageUrl = images[0].src;
+          }
 
           // 1. Create Pending Order in Shopify
           const order = await createShopifyOrderForPreorder(variant.id, {
@@ -1767,7 +1777,9 @@ async function handleDealUpdate(dealId, requestId) {
               price: variant.price || 0,
               qty: variant.inventoryQuantity,
               brand: brand,
-              category: model // Map Bitrix Model to Product Category Property
+              category: model, // Map Bitrix Model to Product Category Property
+              description: description,
+              imageUrl: imageUrl
             };
 
             const syncResult = await syncProductVariantOptimized(syncData, true);
