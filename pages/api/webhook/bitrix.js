@@ -1755,16 +1755,8 @@ async function handleDealUpdate(dealId, requestId) {
             const newOrderName = order.name;
             console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId} (${newOrderName})`);
 
-            // Update shopifyOrderId in local scope and Bitrix
+            // Update shopifyOrderId in local scope (delay Bitrix update to avoid race condition)
             shopifyOrderId = newOrderId;
-
-            await callBitrix('crm.deal.update', {
-              id: dealId,
-              fields: {
-                UF_CRM_1742556489: newOrderId,
-                TITLE: newOrderName
-              }
-            });
 
             // 2. Ensure Product exists in Bitrix (On-Demand)
             // We need to sync/map it so we can add it to the deal row.
@@ -1793,6 +1785,9 @@ async function handleDealUpdate(dealId, requestId) {
               const rowsResp = await callBitrix('crm.deal.productrows.get', { id: dealId });
               const rows = rowsResp.result || [];
 
+              // Remove any existing rows? Or append? Pre-order usually implies single item.
+              // Let's append to be safe, or if clear pre-order, replacing might be cleaner.
+              // But user logic implies we found *the* variant.
               rows.push({
                 PRODUCT_ID: syncResult.productId,
                 QUANTITY: 1,
@@ -1802,6 +1797,18 @@ async function handleDealUpdate(dealId, requestId) {
 
               await callBitrix('crm.deal.productrows.set', { id: dealId, rows });
               console.log(`[PRE-ORDER] ✅ Added product ${syncResult.productId} to deal ${dealId}`);
+
+              // 4. Update Bitrix Deal with Shopify Order ID and Title (LAST STEP)
+              // We do this LAST so that if it triggers a webhook re-entry, 
+              // the deal already has product rows, preventing "Sync Quantities" from wiping the order.
+              await callBitrix('crm.deal.update', {
+                id: dealId,
+                fields: {
+                  UF_CRM_1742556489: newOrderId,
+                  TITLE: newOrderName
+                }
+              });
+              console.log(`[PRE-ORDER] ✅ Updated Deal Title and Order ID: ${newOrderName}`);
             }
           }
         } else {

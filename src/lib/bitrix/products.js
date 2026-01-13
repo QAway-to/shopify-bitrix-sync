@@ -6,6 +6,24 @@
 import { callBitrix } from './client.js';
 import { updateSkuMapping, updateSkuMappingSilent, getCategoryByHandle, getSectionIdByCategory, findProductIdBySku, findProductIdByVariantId, updateVariantIdMapping } from './mappingUtils.js';
 
+// ============ SIZE ENUM MAPPING ============
+// Maps size strings (e.g. "37") to Bitrix List Property IDs (e.g. 328) for PROPERTY_98
+const SIZE_ENUM_MAP = {
+  "20": 154, "21": 156, "22": 158, "23": 160, "24": 162,
+  "25": 164, "26": 166, "27": 168, "28": 170, "29": 172,
+  "30": 174, "31": 176, "32": 178, "33": 320, "34": 322,
+  "35": 324, "36": 326, "37": 328, "38": 330, "39": 332,
+  "40": 334, "41": 336, "42": 338, "43": 340, "44": 342,
+  "45": 344, "46": 346, "47": 348, "48": 350, "49": 352,
+  "50": 354, "51": 356, "52": 358, "53": 360, "54": 362
+};
+
+function getSizeEnumId(sizeText) {
+  if (!sizeText) return null;
+  const clean = String(sizeText).trim();
+  return SIZE_ENUM_MAP[clean] || null;
+}
+
 /**
  * Create product in Bitrix catalog
  * @param {Object} productData - Product data
@@ -54,8 +72,14 @@ export async function createBitrixProduct(productData, catalogId = 14, sectionId
 
   // Add properties if available
   if (variant_title) {
-    fields.PROPERTY_98 = variant_title; // Size
-    console.log(`[BITRIX PRODUCTS] Setting Property 98 (Size) to: ${variant_title}`);
+    const enumId = getSizeEnumId(variant_title);
+    if (enumId) {
+      fields.PROPERTY_98 = enumId; // Size Enum ID
+      console.log(`[BITRIX PRODUCTS] Setting Property 98 (Size) to ID: ${enumId} (from "${variant_title}")`);
+    } else {
+      fields.PROPERTY_98 = variant_title; // Fallback to raw value (might not work if list restricted)
+      console.warn(`[BITRIX PRODUCTS] ⚠️ Could not map size "${variant_title}" to Enum ID, using raw value`);
+    }
   }
   if (color) {
     fields.PROPERTY_106 = color; // Color
@@ -1029,3 +1053,67 @@ async function uploadProductImage(productId, imageUrl) {
 // AND update syncProductVariantOptimized in a separate chunk to avoid massive replacement.
 // Actually, `products.js` has `syncProductVariantOptimized` at the end.
 // So I will replacing the END of the file including the function.
+// 4. Sync Image (Last step)
+if (imageUrl) {
+  await uploadProductImage(productId, imageUrl);
+}
+
+return {
+  success: true,
+  sku: skuClean,
+  productId: productId,
+  productName: productName,
+  quantity: shopifyQty,
+  documentId: documentId,
+  documentType: documentType,
+  created: isNewProduct,
+  priceUpdated: priceUpdated
+};
+  } catch (error) {
+  console.error(`[BITRIX PRODUCTS] ❌ Error syncing product ${skuClean}:`, error);
+  return {
+    success: false,
+    sku: skuClean,
+    error: error.message
+  };
+}
+}
+
+/**
+ * Upload image to Bitrix Product (Preview and Detail text)
+ * @param {number} productId 
+ * @param {string} imageUrl 
+ */
+async function uploadProductImage(productId, imageUrl) {
+  if (!imageUrl || !productId) return;
+
+  try {
+    // Only upload if we haven't recently uploaded (skip check for now, just overwrite)
+    console.log(`[BITRIX PRODUCTS] 📸 Uploading image for product ${productId}...`);
+
+    const response = await fetch(imageUrl);
+    if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const base64 = buffer.toString('base64');
+
+    // Clean filename from URL
+    let filename = imageUrl.split('/').pop().split('?')[0];
+    if (!filename || filename.length < 3) filename = 'image.jpg';
+
+    // Update both Preview and Detail pictures
+    // fileData format: [filename, base64content]
+    await callBitrix('crm.product.update', {
+      id: productId,
+      fields: {
+        PREVIEW_PICTURE: { fileData: [filename, base64] },
+        DETAIL_PICTURE: { fileData: [filename, base64] }
+      }
+    });
+
+    console.log(`[BITRIX PRODUCTS] ✅ Image uploaded successfully for product ${productId}`);
+  } catch (error) {
+    console.warn(`[BITRIX PRODUCTS] ⚠️ Image upload failed for ${productId}:`, error.message);
+  }
+}
