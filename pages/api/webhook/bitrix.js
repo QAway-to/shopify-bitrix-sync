@@ -18,6 +18,16 @@ import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
 import { findShopifyVariantByAttributes, createShopifyOrderForPreorder } from '../../../src/lib/shopify/adminClient.js';
 import { syncProductVariantOptimized } from '../../../src/lib/bitrix/products.js';
 
+// ✅ EXTRACTED BLOCK MODULES (available for isolated debugging)
+// These modules contain the same logic as inline code below.
+// To switch to modular version, replace inline blocks with module calls.
+// Modules: preOrder, cancel, addressUpdate, quantitySync, orderCreate
+// import { handlePreOrder } from '../../../src/lib/blocks/preOrder.js';
+// import { handleCancel, isLoseStage } from '../../../src/lib/blocks/cancel.js';
+// import { handleAddressUpdate } from '../../../src/lib/blocks/addressUpdate.js';
+// import { handleQuantitySync } from '../../../src/lib/blocks/quantitySync.js';
+// import { handleOrderCreate } from '../../../src/lib/blocks/orderCreate.js';
+
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
 const BITRIX_FALLBACK_CUSTOMER_EMAIL = String(process.env.BITRIX_FALLBACK_CUSTOMER_EMAIL || 'hold@bfcshoes.local');

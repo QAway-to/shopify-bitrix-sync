@@ -36,3 +36,16 @@ yarn-error.log*
 current_logs.txt
 storage/
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
