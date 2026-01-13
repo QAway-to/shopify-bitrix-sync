@@ -1,35 +1,58 @@
 /**
  * Bitrix24 Deal Product Rows Management
  * Handles product rows for deals
+ * 
+ * ✅ Updated: Now uses syncProductVariantOptimized for dynamic product creation
+ *    with description and preview image (same as Pre-Order flow)
  */
 
 import { callBitrixAPI } from './client.js';
 import { BITRIX_CONFIG } from './config.js';
+import { syncProductVariantOptimized } from './products.js';
+import { callShopifyAdmin } from '../shopify/adminClient.js';
 
 /**
- * Map Shopify line item to Bitrix product row
+ * Fetch product details from Shopify to get description and images
+ * @param {string} productId - Shopify product ID
+ * @returns {Promise<{description: string|null, imageUrl: string|null}>}
+ */
+async function fetchShopifyProductDetails(productId) {
+  try {
+    const response = await callShopifyAdmin(`/products/${productId}.json`);
+    const product = response?.product;
+
+    if (!product) {
+      return { description: null, imageUrl: null };
+    }
+
+    const description = product.body_html || null;
+    const imageUrl = product.image?.src || product.images?.[0]?.src || null;
+
+    return { description, imageUrl };
+  } catch (error) {
+    console.warn(`[PRODUCT ROWS] Failed to fetch product ${productId} details:`, error.message);
+    return { description: null, imageUrl: null };
+  }
+}
+
+/**
+ * Map Shopify line item to Bitrix product row (async, creates product if needed)
  * @param {Object} lineItem - Shopify line item
  * @param {Object} order - Shopify order
- * @returns {Object|null} Bitrix product row or null if SKU not found
+ * @returns {Promise<Object|null>} Bitrix product row or null if failed
  */
-function mapLineItemToProductRow(lineItem, order) {
+async function mapLineItemToProductRowAsync(lineItem, order) {
   const sku = lineItem.sku;
-  
-  if (!sku) {
-    console.warn(`[BITRIX PRODUCT ROWS] Line item ${lineItem.id} has no SKU, skipping`);
-    return null;
-  }
+  const variantId = lineItem.variant_id;
 
-  const productId = BITRIX_CONFIG.SKU_TO_PRODUCT_ID[sku];
-
-  if (!productId) {
-    console.warn(`[BITRIX PRODUCT ROWS] SKU ${sku} not found in mapping, skipping`);
+  if (!sku && !variantId) {
+    console.warn(`[BITRIX PRODUCT ROWS] Line item ${lineItem.id} has no SKU or variant_id, skipping`);
     return null;
   }
 
   // Parse price
-  const price = typeof lineItem.price === 'string' 
-    ? parseFloat(lineItem.price) 
+  const price = typeof lineItem.price === 'string'
+    ? parseFloat(lineItem.price)
     : (lineItem.price || 0);
 
   // Get tax rate from line item or order
@@ -40,27 +63,77 @@ function mapLineItemToProductRow(lineItem, order) {
     taxRate = (order.tax_lines[0].rate || 0) * 100;
   }
 
-  return {
-    PRODUCT_ID: productId,
-    PRICE: price,
-    QUANTITY: lineItem.quantity || 1,
-    TAX_INCLUDED: order.taxes_included ? 'Y' : 'N',
-    TAX_RATE: taxRate
+  // ✅ Dynamic product sync with description and image
+  // Fetch product details from Shopify
+  const productId = lineItem.product_id;
+  let description = null;
+  let imageUrl = null;
+
+  if (productId) {
+    const details = await fetchShopifyProductDetails(productId);
+    description = details.description;
+    imageUrl = details.imageUrl;
+  }
+
+  // Sync product to Bitrix (create if not exists, update if exists)
+  const syncData = {
+    variant_id: variantId ? String(variantId) : null,
+    sku: sku || null,
+    product_title: lineItem.title || lineItem.name || 'Unknown Product',
+    variant_title: lineItem.variant_title || '',
+    price: price,
+    qty: lineItem.quantity || 1,
+    description: description,
+    imageUrl: imageUrl
   };
+
+  try {
+    const syncResult = await syncProductVariantOptimized(syncData, true);
+
+    if (syncResult.productId) {
+      console.log(`[BITRIX PRODUCT ROWS] ✅ Synced product ${syncResult.productId} for SKU ${sku}`);
+      return {
+        PRODUCT_ID: syncResult.productId,
+        PRICE: price,
+        QUANTITY: lineItem.quantity || 1,
+        TAX_INCLUDED: order.taxes_included ? 'Y' : 'N',
+        TAX_RATE: taxRate
+      };
+    }
+  } catch (syncError) {
+    console.error(`[BITRIX PRODUCT ROWS] Failed to sync product for SKU ${sku}:`, syncError.message);
+  }
+
+  // Fallback to static mapping if sync failed
+  const staticProductId = BITRIX_CONFIG.SKU_TO_PRODUCT_ID?.[sku];
+  if (staticProductId) {
+    console.log(`[BITRIX PRODUCT ROWS] Using static mapping for SKU ${sku}: ${staticProductId}`);
+    return {
+      PRODUCT_ID: staticProductId,
+      PRICE: price,
+      QUANTITY: lineItem.quantity || 1,
+      TAX_INCLUDED: order.taxes_included ? 'Y' : 'N',
+      TAX_RATE: taxRate
+    };
+  }
+
+  console.warn(`[BITRIX PRODUCT ROWS] Could not resolve product for SKU ${sku}`);
+  return null;
 }
 
 /**
- * Create product rows array from Shopify order
+ * Create product rows array from Shopify order (async version)
+ * ✅ Now syncs products with description and images
  * @param {Object} order - Shopify order
- * @returns {Array<Object>} Array of product rows
+ * @returns {Promise<Array<Object>>} Array of product rows
  */
-export function createProductRowsFromOrder(order) {
+export async function createProductRowsFromOrder(order) {
   const rows = [];
 
   // Process line items
   if (order.line_items && Array.isArray(order.line_items)) {
     for (const lineItem of order.line_items) {
-      const row = mapLineItemToProductRow(lineItem, order);
+      const row = await mapLineItemToProductRowAsync(lineItem, order);
       if (row) {
         rows.push(row);
       }
