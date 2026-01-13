@@ -186,52 +186,49 @@ export async function updateBitrixProductFields(productId, fields) {
   }
 
   try {
-    try {
-      // Separate description update (uses catalog.api as per autosync logic)
-      if (fields.DETAIL_TEXT || fields.DESCRIPTION) {
-        const desc = fields.DETAIL_TEXT || fields.DESCRIPTION;
-        console.log(`[BITRIX PRODUCTS] 📝 Updating description via catalog.product.update for ${productId}`);
-        try {
-          await callBitrix('catalog.product.update', {
-            id: productId,
-            fields: {
-              detailText: desc,
-              detailTextType: 'html'
-            }
-          });
-          // Remove from fields to avoid double sending or errors in next call
-          delete fields.DETAIL_TEXT;
-          delete fields.DETAIL_TEXT_TYPE;
-          delete fields.DESCRIPTION;
-          delete fields.DESCRIPTION_TYPE;
-          delete fields.PREVIEW_TEXT;
-          delete fields.PREVIEW_TEXT_TYPE;
-        } catch (e) {
-          console.warn(`[BITRIX PRODUCTS] ⚠️ Description update failed, trying fallback to crm.product.update`, e);
-        }
-      }
-
-      if (Object.keys(fields).length > 0) {
-        const response = await callBitrix('crm.product.update', {
+    // Separate description update (uses catalog.api as per autosync logic)
+    if (fields.DETAIL_TEXT || fields.DESCRIPTION) {
+      const desc = fields.DETAIL_TEXT || fields.DESCRIPTION;
+      console.log(`[BITRIX PRODUCTS] 📝 Updating description via catalog.product.update for ${productId}`);
+      try {
+        await callBitrix('catalog.product.update', {
           id: productId,
-          fields
+          fields: {
+            detailText: desc,
+            detailTextType: 'html'
+          }
         });
-
-        if (response.result === true) {
-          console.log(`[BITRIX PRODUCTS] ✅ Product ${productId} updated`, fields);
-          return true;
-        }
-        console.error(`[BITRIX PRODUCTS] ⚠️ Unexpected response updating product ${productId}:`, response);
-        return false;
+        // Remove from fields to avoid double sending or errors in next call
+        delete fields.DETAIL_TEXT;
+        delete fields.DETAIL_TEXT_TYPE;
+        delete fields.DESCRIPTION;
+        delete fields.DESCRIPTION_TYPE;
+        delete fields.PREVIEW_TEXT;
+        delete fields.PREVIEW_TEXT_TYPE;
+      } catch (e) {
+        console.warn(`[BITRIX PRODUCTS] ⚠️ Description update failed, trying fallback to crm.product.update`, e);
       }
-
-      return true; // If only description was updated successfully
-
-    } catch (error) {
-      console.error(`[BITRIX PRODUCTS] ❌ Error updating product ${productId}:`, error);
-      throw error;
     }
-  }
+
+    if (Object.keys(fields).length > 0) {
+      const response = await callBitrix('crm.product.update', {
+        id: productId,
+        fields
+      });
+
+      if (response.result === true) {
+        console.log(`[BITRIX PRODUCTS] ✅ Product ${productId} updated`, fields);
+        return true;
+      }
+      console.error(`[BITRIX PRODUCTS] ⚠️ Unexpected response updating product ${productId}:`, response);
+      return false;
+    }
+
+    return true; // If only description was updated successfully
+
+  } catch (error) {
+    console.error(`[BITRIX PRODUCTS] ❌ Error updating product ${productId}:`, error);
+    throw error;
   }
 }
 
