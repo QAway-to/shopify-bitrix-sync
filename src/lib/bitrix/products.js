@@ -1041,42 +1041,7 @@ async function uploadProductImage(productId, imageUrl) {
   }
 }
 
-/**
- * Update existing Bitrix product fields by ID
- * Helper mainly for properties
- */
-// ... (existing updateBitrixProductFields code is fine, not replacing it here)
-
-// At the end of file, inside syncProductVariantOptimized, we need to call this.
-// But I need to replace the specific function or append logic.
-// I will just add the helper function at the VERY END of the file for now,
-// AND update syncProductVariantOptimized in a separate chunk to avoid massive replacement.
-// Actually, `products.js` has `syncProductVariantOptimized` at the end.
-// So I will replacing the END of the file including the function.
-// 4. Sync Image (Last step)
-if (imageUrl) {
-  await uploadProductImage(productId, imageUrl);
-}
-
-return {
-  success: true,
-  sku: skuClean,
-  productId: productId,
-  productName: productName,
-  quantity: shopifyQty,
-  documentId: documentId,
-  documentType: documentType,
-  created: isNewProduct,
-  priceUpdated: priceUpdated
-};
-  } catch (error) {
-  console.error(`[BITRIX PRODUCTS] ❌ Error syncing product ${skuClean}:`, error);
-  return {
-    success: false,
-    sku: skuClean,
-    error: error.message
-  };
-}
+  }
 }
 
 /**
