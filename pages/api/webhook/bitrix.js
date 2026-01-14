@@ -3619,12 +3619,12 @@ async function handleDealUpdate(dealId, requestId) {
     return { success: true, triggerMatch: true, correlationId };
   } else {
     // Conditions not met - log skip reason
+    // Conditions not met - log skip reason
     const skipReasons = [];
-    if (!decision.categoryMatch) {
-      skipReasons.push(`categoryId=${categoryId} != ${BITRIX_CONFIG.CATEGORY_STOCK}`);
-    }
+    // Category check removed as delivery applies to multiple categories
     if (!decision.stageMatch) {
-      skipReasons.push(`stageId=${stageId} != ${(expectedExecutingStage || 'C2:EXECUTING')}`);
+      const { DELIVERY_STAGES } = await import('../../../src/lib/bitrix/stageMapping.js');
+      skipReasons.push(`stageId=${stageId} is not in [${Object.values(DELIVERY_STAGES).join(', ')}]`);
     }
     if (!decision.shopifyOrderIdPresent) {
       skipReasons.push('shopifyOrderId is missing or empty');

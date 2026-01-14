@@ -420,7 +420,9 @@ export async function getPostFulfillmentState(orderId) {
  * @param {string|number} fulfillmentId - Fulfillment ID to update
  * @param {Object} options - Update options
  * @param {string} options.tracking_number - Tracking number (optional)
- * @param {Array<string>} options.tracking_urls - Tracking URLs (optional)
+ * @param {string} options.tracking_company - Shipping carrier company (optional)
+ * @param {string} options.tracking_url - Tracking URL (optional)
+ * @param {Array<string>} options.tracking_urls - Tracking URLs (deprecated, use tracking_url)
  * @param {boolean} options.notify_customer - Whether to notify customer (default: true)
  * @returns {Promise<Object>} Update result
  */
@@ -455,27 +457,25 @@ export async function updateFulfillmentTracking(orderId, fulfillmentId, options 
       };
     }
 
-    // Build update payload
+    // Build update payload for update_tracking.json endpoint
+    // POST /admin/api/2024-07/fulfillments/{fulfillment_id}/update_tracking.json
     const updatePayload = {
       fulfillment: {
-        id: fulfillmentId,
-        notify_customer: options.notify_customer !== false // Default true
+        notify_customer: options.notify_customer !== false, // Default true
+        tracking_info: {
+          number: options.tracking_number ? String(options.tracking_number) : undefined,
+          company: options.tracking_company ? String(options.tracking_company) : undefined,
+          url: options.tracking_url ? String(options.tracking_url) : (
+            options.tracking_urls && options.tracking_urls.length > 0 ? String(options.tracking_urls[0]) : undefined
+          )
+        }
       }
     };
 
-    // Add tracking_number if provided
-    if (options.tracking_number) {
-      updatePayload.fulfillment.tracking_number = String(options.tracking_number);
-    }
-
-    // Add tracking_urls if provided
-    if (options.tracking_urls && Array.isArray(options.tracking_urls)) {
-      updatePayload.fulfillment.tracking_urls = options.tracking_urls.map(url => String(url));
-    }
-
-    // Update fulfillment
-    const response = await callShopifyAdmin(`/orders/${orderId}/fulfillments/${fulfillmentId}.json`, {
-      method: 'PUT',
+    // Update fulfillment using dedicated tracking endpoint
+    // Note: orderId is not strictly needed for this endpoint but kept in signature for compatibility
+    const response = await callShopifyAdmin(`/fulfillments/${fulfillmentId}/update_tracking.json`, {
+      method: 'POST',
       body: JSON.stringify(updatePayload)
     });
 
@@ -485,6 +485,7 @@ export async function updateFulfillmentTracking(orderId, fulfillmentId, options 
       fulfillment: response.fulfillment,
       fulfillmentId: response.fulfillment?.id,
       trackingNumber: response.fulfillment?.tracking_number,
+      trackingCompany: response.fulfillment?.tracking_company,
       trackingUrls: response.fulfillment?.tracking_urls || []
     };
   } catch (error) {
