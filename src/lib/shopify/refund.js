@@ -1,200 +1,151 @@
 /**
  * Shopify Refund Operations
- * Handles refund creation (partial and full) in Shopify
+ * Handles calculating refund amounts and executing refunds via GraphQL
  */
 
-import { callShopifyAdmin, getOrder } from './adminClient.js';
+import { callShopifyGraphQL } from './adminClient.js';
 
 /**
- * Calculate refund amounts using Shopify API
- * @param {string|number} orderId - Shopify order ID
- * @param {Object} refundParams - Refund parameters
- * @param {Array} refundParams.refund_line_items - Array of line items to refund
- * @param {boolean} refundParams.notify - Whether to notify customer
- * @param {string} refundParams.note - Refund note
- * @param {boolean} refundParams.shipping - Whether to refund shipping
- * @returns {Promise<Object>} Calculated refund data
+ * Calculate refund amount from order details
+ * Currently supports Full Refund strategy
+ * @param {Object} order - Shopify Order object
+ * @returns {Object} Refund payload components { currency, amount, shippingAmount }
  */
-export async function calculateRefund(orderId, refundParams) {
-  try {
-    const response = await callShopifyAdmin(`/orders/${orderId}/refunds/calculate.json`, {
-      method: 'POST',
-      body: JSON.stringify({
-        refund: refundParams
-      })
-    });
+export function calculateRefundAmount(order) {
+  if (!order) return null;
 
-    return {
-      success: true,
-      calculatedRefund: response.refund
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: 'CALCULATE_REFUND_ERROR',
-      message: error.message
-    };
-  }
-}
+  const currency = order.currencyCode || order.totalPriceSet?.shopMoney?.currencyCode || 'EUR';
 
-/**
- * Normalize calculated refund from Shopify API
- * @param {Object} calculatedRefund - Refund object from calculate API
- * @returns {Object} Normalized refund data
- */
-function normalizeCalculatedRefund(calculatedRefund) {
-  if (!calculatedRefund) {
-    return null;
-  }
+  // Total logic: Refund everything that was paid
+  // Use totalPriceSet if available for accuracy
+  const totalAmount = order.totalPriceSet?.shopMoney?.amount || order.totalPrice;
 
-  const normalized = {
-    refund_line_items: [],
-    transactions: [],
-    shipping: calculatedRefund.shipping || null,
-    note: calculatedRefund.note || ''
+  // ⚠️ NOTE: For now, we assume FULL REFUND including shipping
+  // If logical separation needed (e.g. shipping not refunded), modify here
+
+  return {
+    currency,
+    amount: totalAmount,
+    shippingAmount: '0.00' // If we want to refund shipping explicitly, we need line items. For now, we'll try to refund line items + shipping via "refund line items" logic or "restock" logic.
   };
-
-  // Normalize refund_line_items
-  if (Array.isArray(calculatedRefund.refund_line_items)) {
-    normalized.refund_line_items = calculatedRefund.refund_line_items.map(item => ({
-      line_item_id: item.line_item_id,
-      quantity: item.quantity,
-      restock_type: item.restock_type || 'no_restock'
-    }));
-  }
-
-  // Normalize transactions (for refund amounts)
-  if (Array.isArray(calculatedRefund.transactions)) {
-    normalized.transactions = calculatedRefund.transactions.map(txn => ({
-      parent_id: txn.parent_id,
-      amount: txn.amount,
-      kind: txn.kind || 'refund',
-      gateway: txn.gateway
-    }));
-  }
-
-  return normalized;
 }
 
 /**
- * Create refund in Shopify
- * @param {string|number} orderId - Shopify order ID
- * @param {Object} refundPayload - Refund payload from normalized action
- * @param {string} correlationId - Correlation ID for tracking
- * @param {string} payloadHash - Payload hash for loop guard
- * @returns {Promise<Object>} Refund creation result
+ * Connect to Shopify to creating a Refund
+ * @param {string} orderId - Shopify Order ID (GID or legacy)
+ * @param {Object} options - { restock: boolean, reason: string, note: string }
+ * @returns {Promise<Object>} Refund result
  */
-export async function createRefund(orderId, refundPayload, correlationId, payloadHash) {
-  if (!orderId) {
-    return {
-      success: false,
-      error: 'MISSING_ORDER_ID',
-      message: 'Shopify order ID is required for refund'
-    };
-  }
+export async function createRefund(orderId, options = {}) {
+  const {
+    restock = true,
+    note = '',
+    notify = true
+  } = options;
+
+  console.log(`[SHOPIFY REFUND] Initiating refund for order ${orderId}. Options:`, options);
 
   try {
-    // Step 1: Get order to verify it exists and get line items
-    const order = await getOrder(orderId);
-    if (!order) {
-      return {
-        success: false,
-        error: 'ORDER_NOT_FOUND',
-        message: `Order ${orderId} not found in Shopify`
-      };
-    }
+    const orderGid = orderId.toString().startsWith('gid://')
+      ? orderId
+      : `gid://shopify/Order/${orderId}`;
 
-    // Step 2: Build refund parameters
-    const refundParams = {
-      notify: false, // Don't notify customer automatically
-      note: refundPayload.note || `Refund via middleware. Correlation: ${correlationId}, Hash: ${payloadHash}`
-    };
-
-    // Step 3: Handle refund_line_items
-    if (refundPayload.items && Array.isArray(refundPayload.items) && refundPayload.items.length > 0) {
-      // Partial refund: map items to refund_line_items
-      refundParams.refund_line_items = refundPayload.items.map(item => {
-        const refundItem = {
-          line_item_id: item.line_item_id || null,
-          quantity: item.quantity || 0,
-          restock_type: item.restock_type || refundPayload.restock_type || 'no_restock'
-        };
-
-        // If line_item_id not provided, try to find by SKU
-        if (!refundItem.line_item_id && item.sku) {
-          const lineItem = order.line_items?.find(li => li.sku === item.sku);
-          if (lineItem) {
-            refundItem.line_item_id = lineItem.id;
+    // 1. Fetch Order Line Items to calculate refund
+    // We need line item GIDs to refund them
+    const query = `
+      query getOrderLines($id: ID!) {
+        order(id: $id) {
+          id
+          email
+          lineItems(first: 50) {
+            edges {
+              node {
+                id
+                quantity
+                variant {
+                  id
+                }
+              }
+            }
           }
         }
+      }
+    `;
 
-        return refundItem;
-      }).filter(item => item.line_item_id && item.quantity > 0);
-    } else {
-      // Full refund: refund all line items
-      refundParams.refund_line_items = (order.line_items || []).map(lineItem => ({
-        line_item_id: lineItem.id,
-        quantity: lineItem.quantity,
-        restock_type: refundPayload.restock_type || 'no_restock'
-      }));
+    const orderData = await callShopifyGraphQL(query, { id: orderGid });
+    if (!orderData || !orderData.order) {
+      throw new Error(`Order not found: ${orderId}`);
     }
 
-    // Step 4: Handle shipping refund
-    if (refundPayload.refund_shipping_full) {
-      refundParams.shipping = {
-        full_refund: true
-      };
+    const lineItemsToRefund = orderData.order.lineItems.edges.map(edge => ({
+      lineItemId: edge.node.id,
+      quantity: edge.node.quantity,
+      restockType: restock ? 'RETURN' : 'NO_RESTOCK', // RETURN = restock based on location, NO_RESTOCK = do nothing
+      locationId: null // Optional: specify location if 'RETURN' needs specific location context (usually auto)
+    }));
+
+    if (lineItemsToRefund.length === 0) {
+      console.warn(`[SHOPIFY REFUND] No line items to refund for order ${orderId}`);
+      return { success: false, reason: 'no_line_items' };
     }
 
-    // Step 5: Calculate refund first (Shopify best practice)
-    const calculateResult = await calculateRefund(orderId, refundParams);
-    if (!calculateResult.success) {
-      return {
-        success: false,
-        error: 'CALCULATE_REFUND_FAILED',
-        message: calculateResult.message
-      };
+    // 2. Perform Refund Mutation
+    // logic: refundOrder mutation (Calculator-based is newer, but 'refundCreate' handles manual calc)
+    // We will use 'refundCreate' which is standard for creating refunds with line items
+    const mutation = `
+      mutation refundCreate($input: RefundInput!) {
+        refundCreate(input: $input) {
+          refund {
+            id
+            totalRefundedSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const input = {
+      orderId: orderGid,
+      note: note,
+      notify: notify,
+      refundLineItems: lineItemsToRefund,
+      // For shipping refund:
+      // shipping: { fullRefund: true } // Optional: refund shipping cost fully
+    };
+
+    console.log(`[SHOPIFY REFUND] Sending mutation:`, JSON.stringify(input, null, 2));
+
+    const result = await callShopifyGraphQL(mutation, { input });
+
+    if (result?.refundCreate?.userErrors?.length > 0) {
+      const errors = result.refundCreate.userErrors.map(e => `${e.field}: ${e.message}`).join(', ');
+      throw new Error(`Refund failed: ${errors}`);
     }
 
-    // Step 6: Normalize calculated refund
-    const normalizedRefund = normalizeCalculatedRefund(calculateResult.calculatedRefund);
-    if (!normalizedRefund) {
-      return {
-        success: false,
-        error: 'NORMALIZE_REFUND_FAILED',
-        message: 'Failed to normalize calculated refund'
-      };
-    }
+    const refundId = result?.refundCreate?.refund?.id;
+    const amount = result?.refundCreate?.refund?.totalRefundedSet?.shopMoney?.amount;
 
-    // Step 7: Create refund
-    const refundResponse = await callShopifyAdmin(`/orders/${orderId}/refunds.json`, {
-      method: 'POST',
-      body: JSON.stringify({
-        refund: normalizedRefund
-      })
-    });
-
-    const refund = refundResponse.refund;
+    console.log(`[SHOPIFY REFUND] ✅ Refund created: ${refundId}, Amount: ${amount}`);
 
     return {
       success: true,
-      refundId: refund.id,
-      orderId: String(orderId),
-      refundAmount: refund.transactions?.reduce((sum, txn) => sum + parseFloat(txn.amount || 0), 0) || 0,
-      refundLineItemsCount: refund.refund_line_items?.length || 0
+      refundId,
+      amount
     };
+
   } catch (error) {
+    console.error(`[SHOPIFY REFUND] ❌ Error creating refund:`, error);
     return {
       success: false,
-      error: 'REFUND_CREATE_ERROR',
-      message: error.message,
-      httpStatus: error.status || 500
+      error: error.message
     };
   }
 }
-
-
-
-
-
-

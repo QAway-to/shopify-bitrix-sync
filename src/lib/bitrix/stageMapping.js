@@ -130,3 +130,51 @@ export const STAGE_MAPPINGS = {
         { id: 'C8:LOSE', name: 'Loss' },
     ],
 };
+
+/**
+ * Bitrix Loss Reason Field ID
+ * Field Name: "Reason for loss"
+ */
+export const BITRIX_LOSS_REASON_FIELD = 'UF_CRM_1740125449458';
+
+/**
+ * Bitrix Loss Reason Mapping to Shopify Actions
+ * Key: Bitrix List Value ID
+ * Value: { action: 'REFUND'|'CANCEL', restock: boolean, reason: 'OTHER'|'CUSTOMER'|'INVENTORY'|'DECLINED'|'FRAUD' }
+ */
+export const LOSS_REASON_MAPPING = {
+    // 80: Не забрал предзаказ (Did not pick up pre-order) -> REFUND + Restock
+    '80': { action: 'REFUND', restock: true, reason: 'CUSTOMER' },
+
+    // 82: Не подошел размер (Size didn't fit) -> REFUND + Restock
+    '82': { action: 'REFUND', restock: true, reason: 'CUSTOMER' },
+
+    // 138: Нет на складе пр-ля (Not available at manufacturer) -> CANCEL + NO Restock (Never existed)
+    '138': { action: 'CANCEL', restock: false, reason: 'INVENTORY' },
+
+    // 146: Дорого (Too expensive) -> CANCEL + NO Restock (Negotiation stage)
+    '146': { action: 'CANCEL', restock: false, reason: 'CUSTOMER' },
+
+    // 150: Брак (Defect) -> REFUND + NO Restock (Do not sell again!)
+    '150': { action: 'REFUND', restock: false, reason: 'OTHER' },
+
+    // 322: Клиент не отвечает (Client not answering) -> CANCEL + Restock
+    '322': { action: 'CANCEL', restock: true, reason: 'CUSTOMER' },
+
+    // Legacy/Other mappings (kept for safety, can be removed if strictly not needed)
+    '136': { action: 'REFUND', restock: true, reason: 'CUSTOMER' },
+    '140': { action: 'REFUND', restock: false, reason: 'CUSTOMER' },
+    '142': { action: 'REFUND', restock: true, reason: 'CUSTOMER' },
+    '148': { action: 'REFUND', restock: true, reason: 'CUSTOMER' },
+    '222': { action: 'CANCEL', restock: true, reason: 'OTHER' }
+};
+
+/**
+ * Get proposed action by Bitrix Loss Reason ID
+ * @param {string|number} reasonId
+ * @returns {Object|null} Action config or null
+ */
+export function getActionByLossReason(reasonId) {
+    if (!reasonId) return null;
+    return LOSS_REASON_MAPPING[String(reasonId)] || null;
+}
