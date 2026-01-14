@@ -3520,7 +3520,9 @@ async function handleDealUpdate(dealId, requestId) {
         fulfillmentResult = await createFulfillment(shopifyOrderId, orderData.itemsToFulfill, {
           notify_customer: true,
           tracking_number: trackingNumber,
-          tracking_urls: trackingUrls.length > 0 ? trackingUrls : undefined
+          tracking_url: trackingUrl, // Single URL preferred by new logic
+          // tracking_company: dealData.UF_CRM_CARRIER, // Uncomment and map field when available
+          tracking_urls: trackingUrls // Legacy fallback
         });
 
         if (fulfillmentResult.success) {

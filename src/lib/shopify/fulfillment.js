@@ -302,9 +302,14 @@ export async function createFulfillment(orderId, lineItems, options = {}) {
       fulfillment: {
         notify_customer: options.notify_customer !== false,
         line_items_by_fulfillment_order: lineItemsByFulfillmentOrder,
-        // ✅ Add tracking info if provided
-        ...(options.tracking_number ? { tracking_number: options.tracking_number } : {}),
-        ...(options.tracking_urls && options.tracking_urls.length > 0 ? { tracking_urls: options.tracking_urls } : {})
+        // ✅ Use structured tracking_info as per modern API (supports company/carrier)
+        tracking_info: (options.tracking_number || options.tracking_company) ? {
+          number: options.tracking_number ? String(options.tracking_number) : undefined,
+          company: options.tracking_company ? String(options.tracking_company) : undefined,
+          url: options.tracking_url ? String(options.tracking_url) : (
+            options.tracking_urls && options.tracking_urls.length > 0 ? String(options.tracking_urls[0]) : undefined
+          )
+        } : undefined
       }
     };
 
