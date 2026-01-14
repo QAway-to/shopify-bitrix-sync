@@ -736,9 +736,32 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     taxesIncluded: true // Tax is already included in price (to prevent +19% on top)
   };
 
-  // Add shipping address if provided
+  // Add shipping address if provided explicitly
   if (options.shippingAddress && typeof options.shippingAddress === 'object') {
     order_input.shippingAddress = options.shippingAddress;
+  }
+  // ✅ Build shipping/billing address from contactData if available and no explicit address
+  else if (options.contactData && (options.contactData.firstName || options.contactData.lastName || options.contactData.phone || options.contactData.address)) {
+    const contact = options.contactData;
+    const addressObj = {
+      firstName: contact.firstName || '',
+      lastName: contact.lastName || '',
+      phone: contact.phone || '',
+    };
+
+    // Add address fields if present
+    if (contact.address) {
+      addressObj.address1 = contact.address.address1 || '';
+      addressObj.address2 = contact.address.address2 || '';
+      addressObj.city = contact.address.city || '';
+      addressObj.zip = contact.address.zip || '';
+      addressObj.provinceCode = contact.address.province || '';
+      addressObj.countryCode = contact.address.country || '';
+    }
+
+    order_input.shippingAddress = addressObj;
+    order_input.billingAddress = addressObj;
+    console.log(`[CREATE ORDER FROM BITRIX] ✅ Using contact data for address: ${addressObj.firstName} ${addressObj.lastName}, ${addressObj.city || 'N/A'}`);
   }
 
   // NOTE: shippingLines is NOT supported in GraphQL orderCreate mutation

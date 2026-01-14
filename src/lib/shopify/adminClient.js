@@ -213,7 +213,10 @@ export async function findShopifyVariantByAttributes({ brand, model, size }) {
 /**
  * Create a pending order in Shopify for Pre-order
  * @param {string} variantGraphQLId - Variant ID (gid://...)
- * @param {Object} options - extra fields (dealId, etc.)
+ * @param {Object} options - extra fields (dealId, email, customer, etc.)
+ * @param {string} options.dealId - Bitrix deal ID
+ * @param {string} options.email - Customer email
+ * @param {Object} options.customer - Customer data { firstName, lastName, phone, address }
  */
 export async function createShopifyOrderForPreorder(variantGraphQLId, options = {}) {
   // Convert GID to numeric ID if needed (REST API often takes numeric, but variant_id can handle string sometimes?)
@@ -232,10 +235,35 @@ export async function createShopifyOrderForPreorder(variantGraphQLId, options = 
     note: `Pre-order from Bitrix Deal #${options.dealId || ''}`,
   };
 
+  // Customer handling
   if (options.customerId) {
     orderData.customer = { id: options.customerId };
   } else if (options.email) {
     orderData.email = options.email;
+  }
+
+  // ✅ Build shipping/billing address from customer data
+  const customer = options.customer || {};
+  if (customer.firstName || customer.lastName || customer.phone || customer.address) {
+    const addressObj = {
+      first_name: customer.firstName || '',
+      last_name: customer.lastName || '',
+      phone: customer.phone || '',
+    };
+
+    // Add address fields if present
+    if (customer.address) {
+      addressObj.address1 = customer.address.address1 || '';
+      addressObj.address2 = customer.address.address2 || '';
+      addressObj.city = customer.address.city || '';
+      addressObj.zip = customer.address.zip || '';
+      addressObj.province = customer.address.province || '';
+      addressObj.country = customer.address.country || '';
+    }
+
+    // Set both shipping and billing address
+    orderData.shipping_address = addressObj;
+    orderData.billing_address = addressObj;
   }
 
   const response = await callShopifyAdmin('/orders.json', {

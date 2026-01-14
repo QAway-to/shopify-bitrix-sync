@@ -1754,10 +1754,48 @@ async function handleDealUpdate(dealId, requestId) {
             imageUrl = images[0].src;
           }
 
-          // 1. Create Pending Order in Shopify
+          // ✅ Resolve Contact Data from Bitrix Deal before creating order
+          const customerEmail = await resolveCustomerEmailFromDeal(dealData, requestId, dealId, 'pre_order_create');
+
+          // Fetch full contact details if CONTACT_ID is available
+          let customerData = { email: customerEmail };
+          const contactIdRaw = dealData?.CONTACT_ID || dealData?.contact_id || null;
+          const contactId = contactIdRaw && String(contactIdRaw) !== '0' ? String(contactIdRaw) : null;
+
+          if (contactId) {
+            try {
+              const contactResp = await callBitrix('/crm.contact.get.json', { id: contactId });
+              const contact = contactResp?.result || null;
+              if (contact) {
+                customerData.firstName = contact.NAME || '';
+                customerData.lastName = contact.LAST_NAME || '';
+                // Phone extraction (Bitrix stores as array)
+                const phoneRaw = contact.PHONE;
+                customerData.phone = Array.isArray(phoneRaw) ? phoneRaw[0]?.VALUE : (phoneRaw?.VALUE || phoneRaw || '');
+                // Address extraction
+                const addrRaw = contact.ADDRESS || null;
+                if (addrRaw) {
+                  customerData.address = {
+                    address1: addrRaw.ADDRESS_1 || addrRaw.address1 || '',
+                    address2: addrRaw.ADDRESS_2 || addrRaw.address2 || '',
+                    city: addrRaw.CITY || addrRaw.city || '',
+                    zip: addrRaw.POSTAL_CODE || addrRaw.zip || '',
+                    province: addrRaw.PROVINCE || addrRaw.province || '',
+                    country: addrRaw.COUNTRY || addrRaw.country || ''
+                  };
+                }
+                console.log(`[PRE-ORDER] ✅ Resolved contact: ${customerData.firstName} ${customerData.lastName}, Phone: ${customerData.phone || 'N/A'}`);
+              }
+            } catch (contactErr) {
+              console.warn(`[PRE-ORDER] ⚠️ Failed to fetch contact details: ${contactErr.message}`);
+            }
+          }
+
+          // 1. Create Pending Order in Shopify with Customer Data
           const order = await createShopifyOrderForPreorder(variant.id, {
             dealId: dealId,
-            // optional: customer email from deal
+            email: customerData.email,
+            customer: customerData
           });
 
           if (order && order.id) {
@@ -3309,8 +3347,8 @@ async function handleDealUpdate(dealId, requestId) {
       }
 
       // Step 3: Check if tracking info is provided in deal fields
-      const trackingNumber = dealData.UF_CRM_TRACKING_NUMBER || dealData.uf_crm_tracking_number ||
-        dealData.UF_CRM_1742556489_TRACKING || dealData.uf_crm_1742556489_tracking || null;
+      // User field: UF_CRM_1741776378819 = Tracking Number
+      const trackingNumber = dealData.UF_CRM_1741776378819 || dealData.uf_crm_1741776378819 || null;
       const trackingUrl = dealData.UF_CRM_TRACKING_URL || dealData.uf_crm_tracking_url || null;
       const trackingUrls = trackingUrl ? [trackingUrl] : [];
 

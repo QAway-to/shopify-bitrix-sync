@@ -13,7 +13,21 @@ const BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID = String(process.env.BITRIX_EMPTY_OR
 const BITRIX_EMPTY_ORDER_DEFAULT_QTY = Number(process.env.BITRIX_EMPTY_ORDER_DEFAULT_QTY || 1) || 1;
 const BITRIX_FALLBACK_CUSTOMER_EMAIL = String(process.env.BITRIX_FALLBACK_CUSTOMER_EMAIL || 'hold@bfcshoes.local');
 
-async function resolveCustomerEmailForDeal(dealId, correlationId) {
+/**
+ * Resolve full contact data from Bitrix Deal
+ * @param {string} dealId - Bitrix deal ID
+ * @param {string} correlationId - Correlation ID for logging
+ * @returns {Promise<Object>} Contact data { email, firstName, lastName, phone, address }
+ */
+async function resolveBitrixContactForDeal(dealId, correlationId) {
+  const result = {
+    email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
+    firstName: '',
+    lastName: '',
+    phone: '',
+    address: null
+  };
+
   try {
     const dealResp = await callBitrix('/crm.deal.get.json', { id: dealId });
     const dealData = dealResp?.result || null;
@@ -22,56 +36,82 @@ async function resolveCustomerEmailForDeal(dealId, correlationId) {
 
     if (!contactId) {
       console.log(JSON.stringify({
-        event: 'UI_BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+        event: 'UI_BITRIX_TO_SHOPIFY_CONTACT_RESOLVED',
         dealId,
         correlationId,
         source: 'fallback_no_contact_id',
-        email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
+        email: result.email,
         timestamp: new Date().toISOString()
       }));
-      return BITRIX_FALLBACK_CUSTOMER_EMAIL;
+      return result;
     }
 
     const contactResp = await callBitrix('/crm.contact.get.json', { id: contactId });
     const contact = contactResp?.result || null;
-    const emailRaw = contact?.EMAIL;
-    const emailValue = Array.isArray(emailRaw) ? emailRaw?.[0]?.VALUE : (emailRaw?.VALUE || emailRaw);
-    const email = emailValue && String(emailValue).trim() !== '' ? String(emailValue).trim() : null;
 
-    if (email) {
+    if (contact) {
+      // Email
+      const emailRaw = contact.EMAIL;
+      const emailValue = Array.isArray(emailRaw) ? emailRaw?.[0]?.VALUE : (emailRaw?.VALUE || emailRaw);
+      result.email = emailValue && String(emailValue).trim() !== '' ? String(emailValue).trim() : BITRIX_FALLBACK_CUSTOMER_EMAIL;
+
+      // Name
+      result.firstName = contact.NAME || '';
+      result.lastName = contact.LAST_NAME || '';
+
+      // Phone
+      const phoneRaw = contact.PHONE;
+      result.phone = Array.isArray(phoneRaw) ? phoneRaw?.[0]?.VALUE : (phoneRaw?.VALUE || phoneRaw || '');
+
+      // Address
+      const addrRaw = contact.ADDRESS || null;
+      if (addrRaw) {
+        result.address = {
+          address1: addrRaw.ADDRESS_1 || addrRaw.address1 || '',
+          address2: addrRaw.ADDRESS_2 || addrRaw.address2 || '',
+          city: addrRaw.CITY || addrRaw.city || '',
+          zip: addrRaw.POSTAL_CODE || addrRaw.zip || '',
+          province: addrRaw.PROVINCE || addrRaw.province || '',
+          country: addrRaw.COUNTRY || addrRaw.country || ''
+        };
+      }
+
       console.log(JSON.stringify({
-        event: 'UI_BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+        event: 'UI_BITRIX_TO_SHOPIFY_CONTACT_RESOLVED',
         dealId,
         correlationId,
         source: 'contact',
         contactId,
-        email,
+        email: result.email,
+        hasName: !!(result.firstName || result.lastName),
+        hasPhone: !!result.phone,
+        hasAddress: !!result.address,
         timestamp: new Date().toISOString()
       }));
-      return email;
+    } else {
+      console.log(JSON.stringify({
+        event: 'UI_BITRIX_TO_SHOPIFY_CONTACT_RESOLVED',
+        dealId,
+        correlationId,
+        source: 'fallback_contact_not_found',
+        contactId,
+        email: result.email,
+        timestamp: new Date().toISOString()
+      }));
     }
 
-    console.log(JSON.stringify({
-      event: 'UI_BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
-      dealId,
-      correlationId,
-      source: 'fallback_contact_has_no_email',
-      contactId,
-      email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
-      timestamp: new Date().toISOString()
-    }));
-    return BITRIX_FALLBACK_CUSTOMER_EMAIL;
+    return result;
   } catch (err) {
     console.log(JSON.stringify({
-      event: 'UI_BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
+      event: 'UI_BITRIX_TO_SHOPIFY_CONTACT_RESOLVED',
       dealId,
       correlationId,
       source: 'fallback_error',
-      email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
+      email: result.email,
       error: err?.message || String(err),
       timestamp: new Date().toISOString()
     }));
-    return BITRIX_FALLBACK_CUSTOMER_EMAIL;
+    return result;
   }
 }
 
@@ -83,7 +123,7 @@ export default async function handler(req, res) {
   const { selectedEvents } = req.body;
 
   if (!selectedEvents || !Array.isArray(selectedEvents) || selectedEvents.length === 0) {
-    return res.status(400).json({ 
+    return res.status(400).json({
       error: 'No selected events provided',
       details: 'Please select at least one event to send'
     });
@@ -97,10 +137,10 @@ export default async function handler(req, res) {
     let shopifyOrderId = event.shopifyOrderId || event.shopify_order_id;
     const dealId = event.dealId || event.deal_id;
     const rawDealData = event.rawDealData || {};
-    
+
     // Check for MW action (refund_create, address_update)
     const mwActionRaw = rawDealData.UF_MW_SHOPIFY_ACTION || rawDealData.uf_mw_shopify_action || '';
-    
+
     if (mwActionRaw && typeof mwActionRaw === 'string' && mwActionRaw.trim() !== '') {
       // Handle MW action (refund_create, address_update)
       try {
@@ -121,7 +161,7 @@ export default async function handler(req, res) {
 
         const action = actionData.action;
         const normalizedPayload = normalizePayload(action, actionData);
-        
+
         if (!normalizedPayload) {
           errors.push({
             eventId: event.id,
@@ -245,7 +285,7 @@ export default async function handler(req, res) {
         continue;
       }
     }
-    
+
     // Handle fulfillment (DELIVERY_EXECUTING) - requires shopifyOrderId
     // If shopifyOrderId is missing, try to create order from Bitrix deal
     if (!shopifyOrderId) {
@@ -282,7 +322,7 @@ export default async function handler(req, res) {
               if (productResp.result) {
                 const product = productResp.result;
                 const sku = product.CODE || product.XML_ID; // SKU is usually in CODE or XML_ID
-                
+
                 if (sku && sku.trim() !== '') {
                   items.push({
                     sku: sku.trim(),
@@ -347,9 +387,10 @@ export default async function handler(req, res) {
 
             // Create order in Shopify
             const correlationId = `ui-bitrix:${dealId}:${event.id}`;
-            const customerEmail = await resolveCustomerEmailForDeal(dealId, correlationId);
+            const contactData = await resolveBitrixContactForDeal(dealId, correlationId);
             const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
-              customerEmail,
+              customerEmail: contactData.email,
+              contactData: contactData,
               isStubOrder,
               stubReason,
               stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null
@@ -449,7 +490,7 @@ export default async function handler(req, res) {
     try {
       // Read fulfillments from Shopify (DRY-RUN, no writes)
       const fulfillmentResult = await getFulfillmentOrders(shopifyOrderId);
-      
+
       // Log the operation
       console.log(JSON.stringify({
         event: 'SHOPIFY_FULFILLMENT_CHECK',
