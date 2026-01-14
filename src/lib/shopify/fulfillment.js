@@ -15,7 +15,7 @@ export async function getFulfillmentOrders(orderId) {
     // Use Shopify Admin API to get order fulfillments
     // Endpoint: GET /admin/api/{version}/orders/{order_id}/fulfillments.json
     const response = await callShopifyAdmin(`/orders/${orderId}/fulfillments.json`);
-    
+
     return {
       success: true,
       httpStatus: 200,
@@ -29,7 +29,7 @@ export async function getFulfillmentOrders(orderId) {
     // Extract HTTP status code from error message
     const statusMatch = error.message.match(/\((\d+)\)/);
     const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : null;
-    
+
     // Handle authentication errors (401/403)
     if (httpStatus === 401 || httpStatus === 403) {
       return {
@@ -42,7 +42,7 @@ export async function getFulfillmentOrders(orderId) {
         fulfillmentIds: []
       };
     }
-    
+
     // Other errors (network, 404, 500, etc.)
     return {
       success: false,
@@ -68,7 +68,7 @@ export async function getFulfillments(orderId) {
     const response = await callShopifyAdmin(`/orders/${orderId}.json`);
     const order = response.order || {};
     const fulfillments = order.fulfillments || [];
-    
+
     return {
       success: true,
       httpStatus: 200,
@@ -84,7 +84,7 @@ export async function getFulfillments(orderId) {
     // Extract HTTP status code from error message
     const statusMatch = error.message.match(/\((\d+)\)/);
     const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : null;
-    
+
     // Handle authentication errors (401/403)
     if (httpStatus === 401 || httpStatus === 403) {
       return {
@@ -97,7 +97,7 @@ export async function getFulfillments(orderId) {
         fulfillmentIds: []
       };
     }
-    
+
     // Other errors (network, 404, 500, etc.)
     return {
       success: false,
@@ -122,11 +122,11 @@ export async function getOrderForFulfillment(orderId) {
     const order = response.order || {};
     const lineItems = order.line_items || [];
     const fulfillments = order.fulfillments || [];
-    
+
     // Calculate total fulfillable quantity
     let totalFulfillableQuantity = 0;
     const itemsToFulfill = [];
-    
+
     lineItems.forEach(item => {
       const fulfillableQuantity = item.fulfillable_quantity || 0;
       if (fulfillableQuantity > 0) {
@@ -138,10 +138,10 @@ export async function getOrderForFulfillment(orderId) {
         });
       }
     });
-    
+
     // Check if order is already fully fulfilled
     const isFullyFulfilled = fulfillments.some(f => f.status === 'success') && totalFulfillableQuantity === 0;
-    
+
     return {
       success: true,
       httpStatus: 200,
@@ -156,7 +156,7 @@ export async function getOrderForFulfillment(orderId) {
   } catch (error) {
     const statusMatch = error.message.match(/\((\d+)\)/);
     const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : null;
-    
+
     if (httpStatus === 401 || httpStatus === 403) {
       return {
         success: false,
@@ -165,7 +165,7 @@ export async function getOrderForFulfillment(orderId) {
         message: error.message
       };
     }
-    
+
     return {
       success: false,
       httpStatus: httpStatus || 500,
@@ -235,7 +235,7 @@ export async function createFulfillment(orderId, lineItems, options = {}) {
     }
 
     // Find open fulfillment orders
-    const openFulfillmentOrders = fulfillmentOrders.filter(fo => 
+    const openFulfillmentOrders = fulfillmentOrders.filter(fo =>
       fo.status === 'open' || fo.status === 'in_progress'
     );
 
@@ -301,7 +301,10 @@ export async function createFulfillment(orderId, lineItems, options = {}) {
     const fulfillmentRequest = {
       fulfillment: {
         notify_customer: options.notify_customer !== false,
-        line_items_by_fulfillment_order: lineItemsByFulfillmentOrder
+        line_items_by_fulfillment_order: lineItemsByFulfillmentOrder,
+        // ✅ Add tracking info if provided
+        ...(options.tracking_number ? { tracking_number: options.tracking_number } : {}),
+        ...(options.tracking_urls && options.tracking_urls.length > 0 ? { tracking_urls: options.tracking_urls } : {})
       }
     };
 
@@ -343,27 +346,27 @@ export async function getPostFulfillmentState(orderId) {
     // Get fulfillments
     const fulfillmentsResponse = await callShopifyAdmin(`/orders/${orderId}/fulfillments.json`);
     const fulfillments = fulfillmentsResponse.fulfillments || [];
-    
+
     // Get order (brief)
     const orderResponse = await callShopifyAdmin(`/orders/${orderId}.json`);
     const order = orderResponse.order || {};
     const lineItems = order.line_items || [];
-    
+
     // Extract fulfillment statuses
     const fulfillmentStatuses = fulfillments.map(f => f.status || 'unknown');
     const fulfillmentIds = fulfillments.map(f => f.id);
-    
+
     // Determine order fulfillment status
     let orderFulfillmentStatus = 'unfulfilled';
     if (fulfillments.length > 0) {
       const allSuccessful = fulfillments.every(f => f.status === 'success');
       const hasPartial = fulfillments.some(f => f.status === 'success') && !allSuccessful;
-      
+
       if (allSuccessful) {
         // Check if all items are fulfilled
         const totalQuantity = lineItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
         const fulfilledQuantity = lineItems.reduce((sum, item) => sum + (item.fulfilled_quantity || 0), 0);
-        
+
         if (fulfilledQuantity >= totalQuantity) {
           orderFulfillmentStatus = 'fulfilled';
         } else if (fulfilledQuantity > 0) {
@@ -373,14 +376,14 @@ export async function getPostFulfillmentState(orderId) {
         orderFulfillmentStatus = 'partial';
       }
     }
-    
+
     // Build line items summary
     const lineItemsSummary = lineItems.map(item => ({
       sku: item.sku || 'N/A',
       quantity: item.quantity || 0,
       fulfilled_quantity: item.fulfilled_quantity || 0
     }));
-    
+
     return {
       success: true,
       httpStatus: 200,
@@ -393,7 +396,7 @@ export async function getPostFulfillmentState(orderId) {
   } catch (error) {
     const statusMatch = error.message.match(/\((\d+)\)/);
     const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : null;
-    
+
     return {
       success: false,
       httpStatus: httpStatus || 500,
@@ -517,7 +520,7 @@ export async function updateOrderFulfillmentForDelivery(orderId, options = {}) {
   try {
     // Get fulfillments for order
     const fulfillmentsResponse = await getFulfillmentOrders(orderId);
-    
+
     if (!fulfillmentsResponse.success || !fulfillmentsResponse.fulfillments || fulfillmentsResponse.fulfillments.length === 0) {
       return {
         success: false,
@@ -528,7 +531,7 @@ export async function updateOrderFulfillmentForDelivery(orderId, options = {}) {
 
     // Find the most recent fulfillment (usually the first one)
     const fulfillment = fulfillmentsResponse.fulfillments[0];
-    
+
     // Update fulfillment with tracking
     return await updateFulfillmentTracking(orderId, fulfillment.id, options);
   } catch (error) {

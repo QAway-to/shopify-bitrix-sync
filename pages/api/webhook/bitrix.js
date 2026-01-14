@@ -3518,7 +3518,9 @@ async function handleDealUpdate(dealId, requestId) {
 
         const { createFulfillment } = await import('../../../src/lib/shopify/fulfillment.js');
         fulfillmentResult = await createFulfillment(shopifyOrderId, orderData.itemsToFulfill, {
-          notify_customer: true
+          notify_customer: true,
+          tracking_number: trackingNumber,
+          tracking_urls: trackingUrls.length > 0 ? trackingUrls : undefined
         });
 
         if (fulfillmentResult.success) {
