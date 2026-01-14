@@ -3307,17 +3307,17 @@ async function handleDealUpdate(dealId, requestId) {
         : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
       const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
 
-      // Only process fulfillment for orders NOT created from Bitrix
-      if (isBitrixOrder) {
-        console.log(JSON.stringify({
-          event: 'DELIVERY_SKIP_BITRIX_ORDER',
-          requestId,
-          dealId,
-          shopifyOrderId,
-          timestamp: new Date().toISOString()
-        }));
-        return { success: true, triggerMatch: true, correlationId };
-      }
+      // ✅ REMOVED: isBitrixOrder skip - we WANT fulfillment to work for ALL orders
+      // Previously this was skipping Bitrix-created orders, but user needs fulfillment+tracking for them too
+      console.log(JSON.stringify({
+        event: 'DELIVERY_BITRIX_ORDER_CHECK',
+        requestId,
+        dealId,
+        shopifyOrderId,
+        isBitrixOrder,
+        proceedingWithFulfillment: true,
+        timestamp: new Date().toISOString()
+      }));
 
       // Step 2: Set provenance marker first
       const provenanceResult = await setProvenanceMarker(shopifyOrderId, correlationId);
