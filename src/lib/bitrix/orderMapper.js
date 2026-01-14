@@ -706,8 +706,23 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       const currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
 
       // Skip only if BOTH are 0 (truly refunded/removed)
-      // If quantity > 0 but current_quantity = 0, treat as pre-order (use quantity)
-      const effectiveQuantity = currentQuantity > 0 ? currentQuantity : originalQuantity;
+      // If quantity > 0 but current_quantity = 0:
+      // - If fulfilled: treat as sold (use original quantity)
+      // - If NOT fulfilled: treat as removed/refunded before fulfillment (use 0)
+      const isFulfilled = item.fulfillment_status === 'fulfilled';
+
+      let effectiveQuantity = currentQuantity;
+      if (currentQuantity === 0) {
+        if (isFulfilled) {
+          // It was sold and fulfilled, so we keep it in the deal
+          effectiveQuantity = originalQuantity;
+        } else if (originalQuantity > 0) {
+          // It was ordered but now current=0 and NOT fulfilled -> Removed from order
+          // Treat as 0 to exclude from deal
+          effectiveQuantity = 0;
+          console.log(`[ORDER MAPPER] 🗑️ Item ${item.id} (SKU: ${item.sku}) marked as REMOVED (unfulfilled, current_qty=0)`);
+        }
+      }
 
       if (effectiveQuantity <= 0) {
         console.log(`[ORDER MAPPER] ⏭️ Skipping item ${item.id} (SKU: ${item.sku || 'N/A'}) - both quantity and current_quantity are 0 (fully refunded)`);
