@@ -1,144 +1,119 @@
 /**
  * Shopify Refund Operations
- * Handles calculating refund amounts and executing refunds via GraphQL
+ * Handles calculating refund amounts and executing refunds via REST API (matching Python script logic)
+ * 
+ * Logic based on User's Python script:
+ * 1. Calculate Refund (POST /refunds/calculate.json)
+ * 2. Normalize Transactions (suggested_refund -> refund)
+ * 3. Create Refund (POST /refunds.json)
  */
 
-import { callShopifyGraphQL } from './adminClient.js';
+import { callShopifyAdmin, callShopifyGraphQL } from './adminClient.js';
 
 /**
- * Calculate refund amount from order details
- * Currently supports Full Refund strategy
- * @param {Object} order - Shopify Order object
- * @returns {Object} Refund payload components { currency, amount, shippingAmount }
+ * Calculate refund amount from order details (Legacy/Helper)
+ * Currently unused in new logic which relies on Shopify's "calculate" endpoint
  */
 export function calculateRefundAmount(order) {
   if (!order) return null;
-
   const currency = order.currencyCode || order.totalPriceSet?.shopMoney?.currencyCode || 'EUR';
-
-  // Total logic: Refund everything that was paid
-  // Use totalPriceSet if available for accuracy
   const totalAmount = order.totalPriceSet?.shopMoney?.amount || order.totalPrice;
-
-  // ⚠️ NOTE: For now, we assume FULL REFUND including shipping
-  // If logical separation needed (e.g. shipping not refunded), modify here
-
-  return {
-    currency,
-    amount: totalAmount,
-    shippingAmount: '0.00' // If we want to refund shipping explicitly, we need line items. For now, we'll try to refund line items + shipping via "refund line items" logic or "restock" logic.
-  };
+  return { currency, amount: totalAmount, shippingAmount: '0.00' };
 }
 
 /**
- * Connect to Shopify to creating a Refund
- * @param {string} orderId - Shopify Order ID (GID or legacy)
- * @param {Object} options - { restock: boolean, reason: string, note: string }
- * @returns {Promise<Object>} Refund result
+ * Normalize transactions from 'calculate' response
+ * Converts 'suggested_refund' kind to 'refund' for final creation
+ * @param {Object} calcRefund - The 'refund' object from calculate response
+ * @returns {Array} Normalized transactions
+ */
+function normalizeTransactions(calcRefund) {
+  const txs = calcRefund.transactions || [];
+  return txs.map(t => {
+    // Clone to avoid mutating original if needed, though here we map
+    const newT = { ...t };
+    if (newT.kind === 'suggested_refund') {
+      newT.kind = 'refund';
+    }
+    // Remove read-only/calculated fields that might cause issues if sent back
+    delete newT.maximum_refundable;
+    return newT;
+  });
+}
+
+/**
+ * Create a Refund (Advanced Logic)
+ * @param {string} orderId - Shopify Order ID
+ * @param {Object} options
+ * @param {Array} options.refundLineItems - Array of { line_item_id, quantity, restock_type, location_id }
+ * @param {boolean} options.refundShipping - Whether to refund shipping (default false)
+ * @param {string} options.note - Note for the refund
+ * @returns {Promise<Object>} Result
  */
 export async function createRefund(orderId, options = {}) {
   const {
-    restock = true,
+    refundLineItems = [],
+    refundShipping = false,
     note = '',
     notify = true
   } = options;
 
-  console.log(`[SHOPIFY REFUND] Initiating refund for order ${orderId}. Options:`, options);
+  console.log(`[SHOPIFY REFUND] Initiating refund for order ${orderId}. Items: ${refundLineItems.length}`);
 
   try {
-    const orderGid = orderId.toString().startsWith('gid://')
-      ? orderId
-      : `gid://shopify/Order/${orderId}`;
+    // Ensure numeric ID for REST API
+    const numericOrderId = String(orderId).replace('gid://shopify/Order/', '');
 
-    // 1. Fetch Order Line Items to calculate refund
-    // We need line item GIDs to refund them
-    const query = `
-      query getOrderLines($id: ID!) {
-        order(id: $id) {
-          id
-          email
-          lineItems(first: 50) {
-            edges {
-              node {
-                id
-                quantity
-                variant {
-                  id
-                }
-              }
-            }
-          }
-        }
+    // 1. Prepare Payload for Calculation
+    const calcPayload = {
+      refund: {
+        refund_line_items: refundLineItems,
+        shipping: { full_refund: refundShipping }
       }
-    `;
-
-    const orderData = await callShopifyGraphQL(query, { id: orderGid });
-    if (!orderData || !orderData.order) {
-      throw new Error(`Order not found: ${orderId}`);
-    }
-
-    const lineItemsToRefund = orderData.order.lineItems.edges.map(edge => ({
-      lineItemId: edge.node.id,
-      quantity: edge.node.quantity,
-      restockType: restock ? 'RETURN' : 'NO_RESTOCK', // RETURN = restock based on location, NO_RESTOCK = do nothing
-      locationId: null // Optional: specify location if 'RETURN' needs specific location context (usually auto)
-    }));
-
-    if (lineItemsToRefund.length === 0) {
-      console.warn(`[SHOPIFY REFUND] No line items to refund for order ${orderId}`);
-      return { success: false, reason: 'no_line_items' };
-    }
-
-    // 2. Perform Refund Mutation
-    // logic: refundOrder mutation (Calculator-based is newer, but 'refundCreate' handles manual calc)
-    // We will use 'refundCreate' which is standard for creating refunds with line items
-    const mutation = `
-      mutation refundCreate($input: RefundInput!) {
-        refundCreate(input: $input) {
-          refund {
-            id
-            totalRefundedSet {
-              shopMoney {
-                amount
-                currencyCode
-              }
-            }
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `;
-
-    const input = {
-      orderId: orderGid,
-      note: note,
-      notify: notify,
-      refundLineItems: lineItemsToRefund,
-      // For shipping refund:
-      // shipping: { fullRefund: true } // Optional: refund shipping cost fully
     };
 
-    console.log(`[SHOPIFY REFUND] Sending mutation:`, JSON.stringify(input, null, 2));
+    console.log(`[SHOPIFY REFUND] Calculating refund...`);
 
-    const result = await callShopifyGraphQL(mutation, { input });
+    // 2. Call Calculate Endpoint
+    // POST /admin/api/{version}/orders/{order_id}/refunds/calculate.json
+    const calcResponse = await callShopifyAdmin(`/orders/${numericOrderId}/refunds/calculate.json`, {
+      method: 'POST',
+      body: JSON.stringify(calcPayload)
+    });
 
-    if (result?.refundCreate?.userErrors?.length > 0) {
-      const errors = result.refundCreate.userErrors.map(e => `${e.field}: ${e.message}`).join(', ');
-      throw new Error(`Refund failed: ${errors}`);
-    }
+    const calculatedRefund = calcResponse.refund;
 
-    const refundId = result?.refundCreate?.refund?.id;
-    const amount = result?.refundCreate?.refund?.totalRefundedSet?.shopMoney?.amount;
+    // 3. Normalize Transactions
+    calculatedRefund.transactions = normalizeTransactions(calculatedRefund);
+    calculatedRefund.note = note;
+    if (notify !== undefined) calculatedRefund.notify = notify; // 'notify' might be a top-level field or inside? REST API usually takes 'notify' at root of POST, but here we embed in 'refund' object for creation? 
+    // Wait, POST /refunds.json takes { refund: { ... } }. 'notify' is usually passed? 
+    // Checking docs/script: Script doesn't explicitly send 'notify' in final POST, but maybe defaults?
+    // We will inject 'notify' into the refund object if needed, or check API. 
+    // Actually, 'notify' (boolean) is a property of the Refund resource in creation.
+    calculatedRefund.notify = notify;
 
-    console.log(`[SHOPIFY REFUND] ✅ Refund created: ${refundId}, Amount: ${amount}`);
+    console.log(`[SHOPIFY REFUND] Creating final refund...`);
+
+    // 4. Create Final Refund
+    // POST /admin/api/{version}/orders/{order_id}/refunds.json
+    const ensureUniqueHeaders = {
+      "X-Shopify-Api-Features": "include-presentment-prices" // Good practice
+    };
+
+    const createResponse = await callShopifyAdmin(`/orders/${numericOrderId}/refunds.json`, {
+      method: 'POST',
+      body: JSON.stringify({ refund: calculatedRefund }),
+      headers: ensureUniqueHeaders
+    });
+
+    const finalRefund = createResponse.refund;
+    console.log(`[SHOPIFY REFUND] ✅ Refund created: ${finalRefund.id}`);
 
     return {
       success: true,
-      refundId,
-      amount
+      refundId: finalRefund.id,
+      amount: finalRefund.transactions?.[0]?.amount || '0.00' // Approximation
     };
 
   } catch (error) {
@@ -149,3 +124,4 @@ export async function createRefund(orderId, options = {}) {
     };
   }
 }
+
