@@ -770,7 +770,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
   // Removing shippingLines from order_input to prevent GraphQL errors
 
   const options_input = {
-    inventoryBehaviour: 'DECREMENT_OBEYING_POLICY', // Reserve inventory (British spelling as per Shopify API)
+    inventoryBehaviour: 'DECREMENT_IGNORING_POLICY', // Force decrement even if stock is 0 (allow negative)
     sendReceipt: false,
     sendFulfillmentReceipt: false
   };
