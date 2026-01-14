@@ -308,7 +308,9 @@ export async function createFulfillment(orderId, lineItems, options = {}) {
       }
     };
 
-    const response = await callShopifyAdmin(`/orders/${orderId}/fulfillments.json`, {
+    // ✅ Use new endpoint /fulfillments.json (not /orders/{id}/fulfillments.json)
+    // The old endpoint doesn't support line_items_by_fulfillment_order format
+    const response = await callShopifyAdmin(`/fulfillments.json`, {
       method: 'POST',
       body: JSON.stringify(fulfillmentRequest)
     });
