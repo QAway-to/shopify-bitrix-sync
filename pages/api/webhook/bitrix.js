@@ -17,6 +17,7 @@ import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
 import { findShopifyVariantByAttributes, createShopifyOrderForPreorder } from '../../../src/lib/shopify/adminClient.js';
 import { syncProductVariantOptimized } from '../../../src/lib/bitrix/products.js';
+import { isDeliveryStage, DELIVERY_STAGES } from '../../../src/lib/bitrix/stageMapping.js';
 
 // ✅ EXTRACTED BLOCK MODULES (available for isolated debugging)
 // These modules contain the same logic as inline code below.
@@ -3245,14 +3246,14 @@ async function handleDealUpdate(dealId, requestId) {
     }
   }
 
-  // No MW action found, continue with DELIVERY_EXECUTING trigger (existing logic)
-  // Check Delivery trigger conditions (C2:EXECUTING = "Delivery" stage)
+  // No MW action found, continue with DELIVERY trigger (all categories)
+  // Check Delivery trigger conditions
+  // ✅ Updated: Now uses centralized stage mapping for C2:EXECUTING, C4:2, C8:2
   // Unified fulfillment logic: check existence first, then update or create
   const correlationId = `${dealId}:${shopifyOrderId || 'no-shopify-id'}`;
-  const expectedExecutingStage = BITRIX_CONFIG?.STAGES_CAT_2?.EXECUTING;
   const decision = {
-    categoryMatch: String(categoryId) === String(BITRIX_CONFIG.CATEGORY_STOCK) || String(categoryId) === '2',
-    stageMatch: (expectedExecutingStage ? String(stageId) === String(expectedExecutingStage) : false) || String(stageId) === 'C2:EXECUTING',
+    // ✅ Remove category restriction - delivery applies to all categories
+    stageMatch: isDeliveryStage(stageId),
     shopifyOrderIdPresent: shopifyOrderId && shopifyOrderId.trim() !== '',
   };
 
@@ -3266,13 +3267,12 @@ async function handleDealUpdate(dealId, requestId) {
     stageId,
     shopifyOrderId,
     decision,
-    expectedCategoryId: BITRIX_CONFIG.CATEGORY_STOCK,
-    expectedStageId: expectedExecutingStage || 'C2:EXECUTING',
+    supportedDeliveryStages: DELIVERY_STAGES,
     timestamp: new Date().toISOString()
   }));
 
-  // Check if all conditions are met
-  if (decision.categoryMatch && decision.stageMatch && decision.shopifyOrderIdPresent) {
+  // Check if all conditions are met (removed categoryMatch - now using stageMatch only)
+  if (decision.stageMatch && decision.shopifyOrderIdPresent) {
     // ✅ DELIVERY TRIGGER MATCHED
     console.log(JSON.stringify({
       event: 'DELIVERY_TRIGGER_MATCH',
