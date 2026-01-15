@@ -973,6 +973,26 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       setRecentOrderId(dealId, canonicalOrderId);
     }
 
+    // ✅ CRITICAL FIX: GraphQL 'orderCreate' does NOT support 'shippingLines'.
+    // We MUST add the delivery method via REST API immediately after creation.
+    if (!wasDuplicate && options.shippingLines && options.shippingLines.length > 0) {
+      try {
+        console.log(`[CREATE ORDER] 🚚 Adding shipping lines via REST for order ${canonicalOrderId}...`);
+        await callShopifyAdmin(`/orders/${canonicalOrderId}.json`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            order: {
+              id: canonicalOrderId,
+              shipping_lines: options.shippingLines
+            }
+          })
+        });
+        console.log(`[CREATE ORDER] ✅ Shipping lines added successfully.`);
+      } catch (shippingError) {
+        console.error(`[CREATE ORDER] ⚠️ Failed to add shipping lines: ${shippingError.message}`);
+      }
+    }
+
     console.log(JSON.stringify({
       event: 'CREATE_ORDER_FROM_BITRIX_SUCCESS',
       dealId,

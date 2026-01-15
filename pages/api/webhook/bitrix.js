@@ -4056,6 +4056,13 @@ async function handleDealCreate(dealId, requestId) {
                   storedEvent.shopifyOrderId = existingShopifyOrderId;
                 }
 
+                // ✅ SYNC PAYMENT STATUS (Fix: Ensure status is synced immediately after creation)
+                try {
+                  await syncShopifyPaymentStatusFromBitrix(dealData, existingShopifyOrderId, requestId, dealId);
+                } catch (paySyncErr) {
+                  console.error(`[BITRIX TO SHOPIFY] Failed to sync payment status after create:`, paySyncErr);
+                }
+
                 return {
                   success: true,
                   triggerMatch: true,
