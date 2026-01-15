@@ -103,201 +103,150 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         console.warn(`[CANCEL BLOCK] ⚠️ Order ${shopifyOrderId} is already FULFILLED. Skipping orderCancel part.`);
                     }
 
-                    // 🆕 ADVANCED REFUND LOGIC (Diff-based)
-                    if (performRefund) {
-                        console.log(`[CANCEL BLOCK] 💸 Checking Refund Eligibility based on Bitrix Items Diff...`);
+                    // Determine Strategy
+                    let doRefund = false;
+                    let doCancel = false;
 
-                        // 1. Map Shopify Items {variantId: {lineItemId, quantity, ...}}
+                    if (isFulfilled) {
+                        // Must use Refund logic (Diff)
+                        doRefund = true;
+                        doCancel = false;
+                        console.log(`[CANCEL BLOCK] ⚠️ Order is FULFILLED. Forcing REFUND strategy (Diff Only). Cancel disabled.`);
+                    } else {
+                        // Unfulfilled
+                        if (lossAction.action === 'CANCEL') {
+                            doRefund = false; // Void/Cancel entire order
+                            doCancel = true;
+                        } else {
+                            // Action === 'REFUND'
+                            doRefund = true; // Refund specific items (Diff)
+                            doCancel = false; // Don't cancel the rest
+                        }
+                    }
+
+                    // STEP 1: CALCULATE DIFF & REFUND
+                    if (doRefund) {
+                        console.log(`[CANCEL BLOCK] 🔄 Calculating Item Diff for Refund...`);
+
+                        // 1. Map Shopify Items (ID -> Qty)
                         const shopifyItemsMap = {};
-                        // Helper to find variant ID from line item (variant_id is numeric)
-                        shopifyOrder.line_items.forEach(li => {
-                            if (li.variant_id) {
-                                shopifyItemsMap[li.variant_id] = {
-                                    id: li.id,
-                                    quantity: li.quantity,
-                                    variant_id: li.variant_id
-                                };
+                        shopifyOrder.line_items.forEach(item => {
+                            if (item.variant_id) {
+                                shopifyItemsMap[item.variant_id] = item;
                             }
                         });
 
-                        // 2. Map Bitrix Items {variantId: quantity}
-                        // Bitrix 'PRODUCT_ID' usually maps to Shopify Variant ID if stored correctly, 
-                        // BUT better to check 'XML_ID' or similar if available. 
-                        // Typically we store Variant ID in PRODUCT_ID or a custom field. 
-                        const isFulfilled = shopifyOrder.fulfillment_status === 'fulfilled';
-                        // Can only cancel if NOT fulfilled
-                        let canCancel = !isFulfilled;
-
-                        // Determine Strategy:
-                        // 1. If Fulfilled: CANNOT Cancel. Must use Refund (Diff) logic.
-                        // 2. If Unfulfilled:
-                        //    a. Action CANCEL: Void entire order (Cancel). Skip Refund (Diff).
-                        //    b. Action REFUND: Refund specific items (Diff). Keep order "Open" (don't Cancel).
-
-                        // However, user specifically asked: "refund specifically for the removed product".
-                        // This validates "Diff" logic.
-
-                        let performRefund = false;
-                        let performCancel = false;
-
-                        if (isFulfilled) {
-                            // Must use Refund logic
-                            performRefund = true;
-                            performCancel = false; // Cannot cancel fulfilled
-                            console.log(`[CANCEL BLOCK] ⚠️ Order is FULFILLED. Forcing REFUND strategy (Diff Only). Cancel disabled.`);
-                        } else {
-                            // Unfulfilled
-                            if (lossAction.action === 'CANCEL') {
-                                performRefund = false; // Void/Cancel entire order
-                                performCancel = true;
-                            } else {
-                                // Action === 'REFUND'
-                                performRefund = true; // Refund specific items (Diff)
-                                performCancel = false; // Don't cancel the rest
-                            }
-                        }
-
-                        // STEP 1: CALCULATE DIFF & REFUND (If performRefund is true)
-                        if (performRefund) {
-                            console.log(`[CANCEL BLOCK] 🔄 Calculating Item Diff for Refund...`);
-
-                            // 1. Map Shopify Items (ID -> Qty)
-                            const shopifyItemsMap = {};
-                            shopifyOrder.line_items.forEach(item => {
-                                // Use Variant ID as key (if possible) or SKU?
-                                // Bitrix rows have PRODUCT_ID which maps to XML_ID (Variant ID).
-                                // Shopify items have variant_id.
-                                if (item.variant_id) {
-                                    shopifyItemsMap[item.variant_id] = item;
-                                }
-                            });
-
-                            // 2. Map Bitrix Rows (VariantID -> Qty)
-                            const bitrixItemMap = {};
-                            if (bitrixRows && bitrixRows.length > 0) {
-                                // Pre-fetch all product IDs to optimize? 
-                                // We'll loop. Acceptable overhead for cancel flow.
-                                for (const row of bitrixRows) {
-                                    try {
-                                        // We need to resolve PRODUCT_ID to VariantID (XML_ID)
-                                        // This requires API call per row.
-                                        const prod = await callBitrix('crm.product.get', { id: row.PRODUCT_ID });
-                                        const xmlId = prod?.result?.XML_ID || prod?.result?.ORIGIN_ID;
-                                        if (xmlId) {
-                                            bitrixItemMap[Number(xmlId)] = (bitrixItemMap[Number(xmlId)] || 0) + row.QUANTITY;
-                                        }
-                                    } catch (e) {
-                                        console.warn(`[CANCEL BLOCK] Failed to resolve Bitrix Product ${row.PRODUCT_ID}`, e);
-                                    }
-                                }
-                            }
-
-                            // 3. Calculate Diff (Items to Refund)
-                            // Refund = (Shopify Qty) - (Bitrix Qty)
-                            const itemsToRefund = [];
-                            let fullRefundCalc = true; // Assume full unless we find items kept
-
-                            // Iterate over Shopify Items (Source of Truth for Order)
-                            for (const [variantIdStr, shopItem] of Object.entries(shopifyItemsMap)) {
-                                const variantId = Number(variantIdStr);
-                                const bitrixQty = bitrixItemMap[variantId] || 0;
-                                const shopQty = shopItem.quantity;
-
-                                const refundQty = shopQty - bitrixQty;
-
-                                if (bitrixQty > 0) fullRefundCalc = false; // User kept some items of this variant
-
-                                if (refundQty > 0) {
-                                    itemsToRefund.push({
-                                        line_item_id: shopItem.id,
-                                        quantity: refundQty,
-                                        restock_type: shouldRestock ? 'return' : 'no_restock',
-                                        location_id: 98948808968 // Hardcoded location (TODO: dynamic?)
-                                    });
-                                }
-                            }
-
-                            if (itemsToRefund.length > 0) {
-                                console.log(`[CANCEL BLOCK] 📉 Refund Diff Calculated:`, itemsToRefund);
-
-                                // Execute Refund
+                        // 2. Map Bitrix Rows (VariantID -> Qty)
+                        const bitrixItemMap = {};
+                        if (bitrixRows && bitrixRows.length > 0) {
+                            for (const row of bitrixRows) {
                                 try {
-                                    const refundResult = await createRefund(shopifyOrderId, {
-                                        refundLineItems: itemsToRefund,
-                                        refundShipping: fullRefundCalc, // Refund shipping ONLY if logical full refund (all items gone/returned)
-                                        note: `Refund triggered by Bitrix Loss Reason ID: ${lossReasonId}. Mode: ${fullRefundCalc ? 'FULL' : 'PARTIAL'}`,
-                                        notify: true
-                                    });
-
-                                    if (refundResult.success) {
-                                        console.log(`[CANCEL BLOCK] ✅ Refund successful (Mode: ${fullRefundCalc ? 'FULL' : 'PARTIAL'})`);
-                                    } else {
-                                        console.error(`[CANCEL BLOCK] ❌ Refund failed: ${refundResult.error}`);
+                                    const prod = await callBitrix('crm.product.get', { id: row.PRODUCT_ID });
+                                    const xmlId = prod?.result?.XML_ID || prod?.result?.ORIGIN_ID;
+                                    if (xmlId) {
+                                        bitrixItemMap[Number(xmlId)] = (bitrixItemMap[Number(xmlId)] || 0) + row.QUANTITY;
                                     }
-                                } catch (refundErr) {
-                                    console.error(`[CANCEL BLOCK] ❌ Refund Exception:`, refundErr);
+                                } catch (e) {
+                                    console.warn(`[CANCEL BLOCK] Failed to resolve Bitrix Product ${row.PRODUCT_ID}`, e);
                                 }
-
-                            } else {
-                                console.log(`[CANCEL BLOCK] ℹ️ No refund required (Shopify & Bitrix items match).`);
                             }
-                        } // End performRefund
-
-                        // STEP 2: CANCEL ORDER (If performCancel is true)
-                        let cancelData = null;
-                        if (performCancel && canCancel) {
-                            console.log(`[CANCEL BLOCK] 🚫 Executing Full Order Cancel (Reason: ${lossAction.reason})...`);
-
-                            const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
-                            const mutation = `
-            mutation orderCancel($orderId: ID!, $restock: Boolean!) {
-              orderCancel(
-                orderId: $orderId,
-                reason: OTHER,
-                restock: $restock,
-                email: false
-              ) {
-                userErrors {
-                  field
-                  message
-                }
-                job {
-                  id
-                }
-              }
-            }
-          `;
-
-                            cancelData = await callShopifyGraphQL(mutation, {
-                                orderId: orderGid,
-                                restock: performRefund ? false : shouldRestock // If refunded/restocked individually, don't restock again globally
-                            });
-
-                            // Log cancel result...
-                            if (cancelData?.orderCancel?.userErrors && cancelData.orderCancel.userErrors.length > 0) {
-                                // Log but don't crash if we already successfully refunded
-                                console.warn(`[CANCEL BLOCK] Cancel Warnings:`, cancelData.orderCancel.userErrors);
-                            } else {
-                                console.log(`[CANCEL BLOCK] 🚫 Order Cancelled Successfully`);
-                            }
-                        } else {
-                            console.log(`[CANCEL BLOCK] ⏭️ Skipping Cancellation (Order Fulfilled). Status: ${shopifyOrder.fulfillment_status}`);
                         }
 
-                        // Add BitrixUpdated tag...
-                        if (!isBitrixOrder) await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+                        // 3. Calculate Diff
+                        const itemsToRefund = [];
+                        let fullRefundCalc = true;
 
-                        return {
-                            handled: true,
-                            success: true,
-                            action: performRefund ? 'order_refunded_logic_executed' : 'order_cancelled',
-                            shopifyOrderId
-                        };
+                        for (const [variantIdStr, shopItem] of Object.entries(shopifyItemsMap)) {
+                            const variantId = Number(variantIdStr);
+                            const bitrixQty = bitrixItemMap[variantId] || 0;
+                            const shopQty = shopItem.quantity;
+                            const refundQty = shopQty - bitrixQty;
+
+                            if (bitrixQty > 0) fullRefundCalc = false;
+
+                            if (refundQty > 0) {
+                                itemsToRefund.push({
+                                    line_item_id: shopItem.id,
+                                    quantity: refundQty,
+                                    restock_type: shouldRestock ? 'return' : 'no_restock',
+                                    location_id: 98948808968
+                                });
+                            }
+                        }
+
+                        if (itemsToRefund.length > 0) {
+                            console.log(`[CANCEL BLOCK] 📉 Refund Diff Calculated:`, itemsToRefund);
+                            try {
+                                const refundResult = await createRefund(shopifyOrderId, {
+                                    refundLineItems: itemsToRefund,
+                                    refundShipping: fullRefundCalc,
+                                    note: `Refund triggered by Bitrix Loss Reason ID: ${lossReasonId}. Mode: ${fullRefundCalc ? 'FULL' : 'PARTIAL'}`,
+                                    notify: true
+                                });
+                                if (refundResult.success) {
+                                    console.log(`[CANCEL BLOCK] ✅ Refund successful (Mode: ${fullRefundCalc ? 'FULL' : 'PARTIAL'})`);
+                                } else {
+                                    console.error(`[CANCEL BLOCK] ❌ Refund failed: ${refundResult.error}`);
+                                }
+                            } catch (refundErr) {
+                                console.error(`[CANCEL BLOCK] ❌ Refund Exception:`, refundErr);
+                            }
+                        } else {
+                            console.log(`[CANCEL BLOCK] ℹ️ No refund required (Shopify & Bitrix items match).`);
+                        }
                     }
-                } catch (regularCancelError) {
-                    console.log(`[CANCEL BLOCK] Error during detail processing: ${regularCancelError.message}`);
-                    // Proceed to fallback?
-                }
+
+                    // STEP 2: CANCEL ORDER
+                    let cancelData = null;
+                    if (doCancel && canCancel) {
+                        console.log(`[CANCEL BLOCK] 🚫 Executing Full Order Cancel (Reason: ${lossAction.reason})...`);
+                        const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
+                        const mutation = `
+                        mutation orderCancel($orderId: ID!, $restock: Boolean!) {
+                          orderCancel(
+                            orderId: $orderId,
+                            reason: OTHER,
+                            restock: $restock,
+                            email: false
+                          ) {
+                            userErrors {
+                              field
+                              message
+                            }
+                            job {
+                              id
+                            }
+                          }
+                        }
+                        `;
+                        cancelData = await callShopifyGraphQL(mutation, {
+                            orderId: orderGid,
+                            restock: doRefund ? false : shouldRestock
+                        });
+
+                        if (cancelData?.orderCancel?.userErrors && cancelData.orderCancel.userErrors.length > 0) {
+                            console.warn(`[CANCEL BLOCK] Cancel Warnings:`, cancelData.orderCancel.userErrors);
+                        } else {
+                            console.log(`[CANCEL BLOCK] 🚫 Order Cancelled Successfully`);
+                        }
+                    } else {
+                        if (!canCancel) {
+                            console.log(`[CANCEL BLOCK] ⏭️ Skipping Cancellation (Order Fulfilled or strategy)`);
+                        }
+                    }
+
+                    if (!isBitrixOrder) await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+
+                    return {
+                        handled: true,
+                        success: true,
+                        action: doRefund ? 'order_refunded_logic_executed' : 'order_cancelled',
+                        shopifyOrderId
+                    };
+                } // Close if (shopifyOrder)
+            } catch (regularCancelError) {
+                console.log(`[CANCEL BLOCK] Error during detail processing: ${regularCancelError.message}`);
+                // Proceed to fallback?
             }
         }
 
