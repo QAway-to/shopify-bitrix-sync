@@ -509,10 +509,28 @@ async function handleOrderCreated(order) {
       console.warn(`[SHOPIFY WEBHOOK] ⚠️ Validation warnings before update:`, validation.warnings);
     }
 
+    // ✅ CHECK TITLE CHANGE
+    if (existingDeal.TITLE !== dealFields.TITLE) {
+      console.log(`[SHOPIFY WEBHOOK] 🔄 TITLE update detected: "${existingDeal.TITLE}" -> "${dealFields.TITLE}"`);
+    } else {
+      console.log(`[SHOPIFY WEBHOOK] ℹ️ TITLE matches existing: "${existingDeal.TITLE}"`);
+    }
+
+    // ✅ SAFE CATEGORY UPDATE: Only send CATEGORY_ID if it changed
+    // Sending the same CATEGORY_ID might be harmless, but for safety regarding "immutable" comment
+    const fieldsToUpdate = { ...dealFields };
+    if (String(existingDeal.CATEGORY_ID) === String(fieldsToUpdate.CATEGORY_ID)) {
+      console.log(`[SHOPIFY WEBHOOK] ℹ️ CATEGORY_ID matches (${existingDeal.CATEGORY_ID}), removing from update payload`);
+      delete fieldsToUpdate.CATEGORY_ID;
+    } else {
+      console.log(`[SHOPIFY WEBHOOK] 🔄 CATEGORY_ID changing: ${existingDeal.CATEGORY_ID} -> ${fieldsToUpdate.CATEGORY_ID}`);
+      // NOTE: Changing category requires valid STAGE_ID for the new category
+    }
+
     // Update deal fields
     await callBitrix('/crm.deal.update.json', {
       id: dealId,
-      fields: dealFields,
+      fields: fieldsToUpdate,
     });
     console.log(`[SHOPIFY WEBHOOK] ✅ Existing deal ${dealId} updated`);
 
@@ -523,7 +541,8 @@ async function handleOrderCreated(order) {
         ID: verifiedDeal.ID,
         TITLE: verifiedDeal.TITLE,
         OPPORTUNITY: verifiedDeal.OPPORTUNITY,
-        STAGE_ID: verifiedDeal.STAGE_ID
+        STAGE_ID: verifiedDeal.STAGE_ID,
+        TITLE_MATCH: verifiedDeal.TITLE === dealFields.TITLE ? '✅ YES' : `❌ NO (Expected: "${dealFields.TITLE}")`
       });
     }
 

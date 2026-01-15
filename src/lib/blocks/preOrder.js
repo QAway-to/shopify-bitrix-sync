@@ -40,8 +40,19 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
     }
 
     const brand = dealData[UF_BRAND] || dealData[UF_BRAND.toLowerCase()];
-    const model = dealData[UF_MODEL] || dealData[UF_MODEL.toLowerCase()];
+    let model = dealData[UF_MODEL] || dealData[UF_MODEL.toLowerCase()];
     const size = dealData[UF_SIZE] || dealData[UF_SIZE.toLowerCase()];
+
+    // Sloppy Input Handling: Strip " - Size" suffix from model if present
+    // Example: "Ground TTJ black Barefoot Kids Sneakers - 27" -> "Ground TTJ black Barefoot Kids Sneakers"
+    if (model && typeof model === 'string' && model.includes(' - ')) {
+        const parts = model.split(' - ');
+        if (parts.length > 1) {
+            parts.pop(); // Remove last part (size/variant suffix)
+            model = parts.join(' - '); // Join back
+            console.log(`[PRE-ORDER] Stripped suffix from model input: "${dealData[UF_MODEL]}" -> "${model}"`);
+        }
+    }
 
     console.log(JSON.stringify({
         event: 'PRE_ORDER_FIELD_CHECK',
