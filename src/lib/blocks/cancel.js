@@ -299,76 +299,77 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                     // Proceed to fallback?
                 }
             }
+        }
 
 
         // STEP A2: Cancel technical order if exists (fallback)
         try {
-                const cancelResult = await cancelOrderByDealId(dealId);
+            const cancelResult = await cancelOrderByDealId(dealId);
 
-                if (cancelResult.success) {
-                    console.log(JSON.stringify({
-                        event: 'BITRIX_TO_SHOPIFY_TECHNICAL_ORDER_CANCEL_SUCCESS',
-                        requestId,
-                        dealId,
-                        stageId,
-                        shopifyOrderId: cancelResult.orderId,
-                        orderName: cancelResult.orderName,
-                        timestamp: new Date().toISOString()
-                    }));
-
-                    return {
-                        handled: true,
-                        success: true,
-                        action: 'technical_order_cancelled',
-                        shopifyOrderId: cancelResult.orderId
-                    };
-                } else if (cancelResult.error === 'ORDER_NOT_FOUND') {
-                    console.log(JSON.stringify({
-                        event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SKIP',
-                        requestId,
-                        dealId,
-                        stageId,
-                        skip_reason: 'no_order_found',
-                        timestamp: new Date().toISOString()
-                    }));
-                    // No order to cancel - continue with normal flow
-                    return { handled: false, reason: 'no_order_found' };
-                } else {
-                    console.log(JSON.stringify({
-                        event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_ERROR',
-                        requestId,
-                        dealId,
-                        stageId,
-                        error: cancelResult.error,
-                        message: cancelResult.message,
-                        timestamp: new Date().toISOString()
-                    }));
-                    return { handled: false, reason: 'cancel_failed', error: cancelResult.error };
-                }
-            } catch (techCancelError) {
+            if (cancelResult.success) {
                 console.log(JSON.stringify({
-                    event: 'BITRIX_TO_SHOPIFY_TECHNICAL_ORDER_CANCEL_ERROR',
+                    event: 'BITRIX_TO_SHOPIFY_TECHNICAL_ORDER_CANCEL_SUCCESS',
                     requestId,
                     dealId,
                     stageId,
-                    error: techCancelError.message,
+                    shopifyOrderId: cancelResult.orderId,
+                    orderName: cancelResult.orderName,
                     timestamp: new Date().toISOString()
                 }));
-                return { handled: false, reason: 'technical_cancel_error', error: techCancelError.message };
-            }
 
-        } catch (cancelError) {
-            console.error(`[BITRIX TO SHOPIFY] Error cancelling order for deal ${dealId}:`, cancelError);
+                return {
+                    handled: true,
+                    success: true,
+                    action: 'technical_order_cancelled',
+                    shopifyOrderId: cancelResult.orderId
+                };
+            } else if (cancelResult.error === 'ORDER_NOT_FOUND') {
+                console.log(JSON.stringify({
+                    event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SKIP',
+                    requestId,
+                    dealId,
+                    stageId,
+                    skip_reason: 'no_order_found',
+                    timestamp: new Date().toISOString()
+                }));
+                // No order to cancel - continue with normal flow
+                return { handled: false, reason: 'no_order_found' };
+            } else {
+                console.log(JSON.stringify({
+                    event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_ERROR',
+                    requestId,
+                    dealId,
+                    stageId,
+                    error: cancelResult.error,
+                    message: cancelResult.message,
+                    timestamp: new Date().toISOString()
+                }));
+                return { handled: false, reason: 'cancel_failed', error: cancelResult.error };
+            }
+        } catch (techCancelError) {
             console.log(JSON.stringify({
-                event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_EXCEPTION',
+                event: 'BITRIX_TO_SHOPIFY_TECHNICAL_ORDER_CANCEL_ERROR',
                 requestId,
                 dealId,
                 stageId,
-                error: cancelError.message,
+                error: techCancelError.message,
                 timestamp: new Date().toISOString()
             }));
-            return { handled: false, reason: 'exception', error: cancelError.message };
+            return { handled: false, reason: 'technical_cancel_error', error: techCancelError.message };
         }
+
+    } catch (cancelError) {
+        console.error(`[BITRIX TO SHOPIFY] Error cancelling order for deal ${dealId}:`, cancelError);
+        console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_EXCEPTION',
+            requestId,
+            dealId,
+            stageId,
+            error: cancelError.message,
+            timestamp: new Date().toISOString()
+        }));
+        return { handled: false, reason: 'exception', error: cancelError.message };
     }
+}
 
 export default { handleCancel, isLoseStage };
