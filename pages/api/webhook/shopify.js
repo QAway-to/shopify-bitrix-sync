@@ -681,6 +681,28 @@ async function handleOrderCreated(order) {
     console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to set (deal created without products)`);
   }
 
+  // ✅ CRITICAL FIX: Force Title Update if Bitrix Automation overwrote it
+  // Check if verifiedDeal title matches what we wanted
+  if (verifiedDeal && verifiedDeal.TITLE !== dealFields.TITLE) {
+    console.warn(`[SHOPIFY WEBHOOK] ⚠️ TITLE MISMATCH DETECTED: Created deal has "${verifiedDeal.TITLE}", expected "${dealFields.TITLE}"`);
+    console.warn(`[SHOPIFY WEBHOOK] 🔧 Forcing TITLE update to correct value...`);
+
+    try {
+      await callBitrix('/crm.deal.update.json', {
+        id: dealId,
+        fields: { TITLE: dealFields.TITLE }
+      });
+      console.log(`[SHOPIFY WEBHOOK] ✅ TITLE forced update successful: "${dealFields.TITLE}"`);
+
+      // Update verifiedDeal object for storage
+      verifiedDeal.TITLE = dealFields.TITLE;
+    } catch (titleErr) {
+      console.error(`[SHOPIFY WEBHOOK] ❌ Failed to force TITLE update:`, titleErr);
+    }
+  } else if (verifiedDeal) {
+    console.log(`[SHOPIFY WEBHOOK] ✅ TITLE verification passed: "${verifiedDeal.TITLE}"`);
+  }
+
   // ✅ Store successful operation
   try {
     successAdapter.storeOperation({
