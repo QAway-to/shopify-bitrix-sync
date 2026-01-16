@@ -68,7 +68,7 @@ export default function InstructionPage() {
               />
             </p>
             <p><strong>Action in Bitrix:</strong> Create a Deal and manually enter <strong>Brand</strong>, <strong>Model</strong>, and <strong>Size</strong> to define the product.</p>
-            <p><strong>Result in Shopify:</strong> The system searches for a matching product by these attributes. If found, it creates an order for that item. If not found, it may create a custom item order.</p>
+            <p><strong>Result in Shopify:</strong> The system searches for a matching product by these attributes. If found, it creates an order for that item.</p>
           </SectionCard>
 
           {/* SCENARIO 2: FULL CONTROL SYNC */}
@@ -85,10 +85,11 @@ export default function InstructionPage() {
           {/* SCENARIO 3: DELIVERY */}
           <SectionCard title="3) Delivery: Trigger Fulfillment">
             <p><strong>Action in Bitrix:</strong> Move Deal stage to <strong>Delivery</strong>.</p>
-            <p><strong>Result in Shopify:</strong> All open items in the order are marked as <strong>Fulfilled</strong>.</p>
+            <p><strong>Result in Shopify:</strong></p>
             <ul>
-              <li><strong>Verification:</strong> Shopify Order status changes to "Fulfilled".</li>
-              <li><strong>Tracking:</strong> If tracking info is available, it is sent to Shopify.</li>
+              <li><strong>Fulfillment:</strong> All open items in the order are marked as <strong>Fulfilled</strong>.</li>
+              <li><strong>Tracking:</strong> If tracking info is available, it is sent to Shopify. Note: The tracking number will be the same for all items in the Shopify order.</li>
+              <li><strong>Address:</strong> The delivery address is also synced from Bitrix to ensure shipping labels are correct.</li>
             </ul>
           </SectionCard>
 
@@ -109,14 +110,17 @@ export default function InstructionPage() {
             </ul>
           </SectionCard>
 
-          {/* SCENARIO 5: CONTACT SYNC */}
-          <SectionCard title="5) Customer Sync: Update Email">
-            <p><strong>Action in Shopify:</strong> Update Customer Email on an existing Order.</p>
-            <p><strong>Result in Bitrix:</strong> The Deal links to the correct Contact.</p>
+          {/* SCENARIO 5: SHOPIFY -> BITRIX UPDATE */}
+          <SectionCard title="5) Shopify Update → Bitrix Sync">
+            <p><strong>Automatic Updates:</strong> Changes made in Shopify are automatically synced to Bitrix.</p>
+            <p><strong>What updates:</strong></p>
             <ul>
-              <li>If the contact exists in Bitrix, the Deal is linked to it.</li>
-              <li>If the contact is new, a new Contact is created in Bitrix and linked.</li>
+              <li><strong>Stage:</strong> If order status changes (e.g. Cancelled, Refunded, Partially Refunded), the Bitrix Deal Stage updates automatically.</li>
+              <li><strong>Payment Status:</strong> If payment is captured/voided in Shopify, the Payment Status field in Bitrix updates.</li>
+              <li><strong>Totals:</strong> Order Total and Paid Amount are kept in sync.</li>
+              <li><strong>Customer/Contact:</strong> Updating the customer email or details in a Shopify Order links the Deal to the correct Contact in Bitrix (or creates a new one).</li>
             </ul>
+            <p><strong>Conditions:</strong> This sync happens whenever an order is updated in Shopify (e.g., via Admin panel or by another app).</p>
           </SectionCard>
 
           <SectionCard title="What NOT to do">
