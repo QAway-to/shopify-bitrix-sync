@@ -110,19 +110,28 @@ export async function resolveCatalogOrderItems(dealId, dealData, requestId) {
             return [];
         }
 
-        // Add product row to deal
+        // Add product row to deal ONLY if not already present
         const rowsResp = await callBitrix('crm.deal.productrows.get', { id: dealId });
-        const rows = rowsResp.result || [];
+        const existingRows = rowsResp.result || [];
 
-        rows.push({
-            PRODUCT_ID: syncResult.productId,
-            QUANTITY: 1,
-            PRICE: variant.price || 0,
-            PRODUCT_NAME: syncResult.productName || `${productTitle} - ${variant.title}`
-        });
+        // Check if this product is already in deal (prevent duplicates from multiple webhook events)
+        const alreadyExists = existingRows.some(row =>
+            String(row.PRODUCT_ID) === String(syncResult.productId)
+        );
 
-        await callBitrix('crm.deal.productrows.set', { id: dealId, rows });
-        console.log(`[CATALOG ORDER] ✅ Added product ${syncResult.productId} to deal ${dealId}`);
+        if (alreadyExists) {
+            console.log(`[CATALOG ORDER] ⏭️ Product ${syncResult.productId} already in deal ${dealId}, skipping add`);
+        } else {
+            existingRows.push({
+                PRODUCT_ID: syncResult.productId,
+                QUANTITY: 1,
+                PRICE: variant.price || 0,
+                PRODUCT_NAME: syncResult.productName || `${productTitle} - ${variant.title}`
+            });
+
+            await callBitrix('crm.deal.productrows.set', { id: dealId, rows: existingRows });
+            console.log(`[CATALOG ORDER] ✅ Added product ${syncResult.productId} to deal ${dealId}`);
+        }
 
         // Return item for order creation
         return [{
