@@ -123,6 +123,16 @@ export default function InstructionPage() {
             <p><strong>Conditions:</strong> This sync happens whenever an order is updated in Shopify (e.g., via Admin panel or by another app).</p>
           </SectionCard>
 
+          {/* SCENARIO 6: NEW SHOPIFY PRODUCT */}
+          <SectionCard title="6) How to apply new product that was added in Shopify">
+            <p>
+              If you added a new product directly in Shopify (ensuring <strong>Vendor</strong>, <strong>Title</strong> includes Model, and <strong>Size</strong> option exists):
+            </p>
+            <p>
+              When you next create a deal for this product in Bitrix following the instructions in <strong>1.2 (Catalog Order)</strong>, this product will appear in Bitrix and will be attached to the new deal.
+            </p>
+          </SectionCard>
+
           <SectionCard title="What NOT to do">
             <ul>
               <li>Don't manually refund in Shopify if you expect Bitrix to handle it (let Bitrix drive the process).</li>
