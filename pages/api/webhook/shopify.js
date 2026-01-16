@@ -959,6 +959,18 @@ async function handleOrderUpdated(order) {
     fields.UF_CRM_1739183268662 = mappedFields.UF_CRM_1739183268662; // Order type
   }
 
+  // ✅ CONTACT SYNC: Ensure Deal is linked to the correct Contact (updates if email changed)
+  try {
+    const webhookUrl = getBitrixWebhookBase();
+    const contactId = await upsertBitrixContact(webhookUrl, order);
+    if (contactId) {
+      fields.CONTACT_ID = contactId;
+      console.log(`[SHOPIFY WEBHOOK] 👤 Linked Contact ID ${contactId} to Deal ${dealId}`);
+    }
+  } catch (contactError) {
+    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Failed to sync Contact during update: ${contactError.message}`);
+  }
+
   // Note: CATEGORY_ID is immutable after creation, so we don't update it
 
   // ✅ ALWAYS update deal fields (even if values are the same, ensures sync and triggers update event)
