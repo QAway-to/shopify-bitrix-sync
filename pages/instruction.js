@@ -84,6 +84,13 @@ export default function InstructionPage() {
 
           {/* SCENARIO 3: DELIVERY */}
           <SectionCard title="3) Delivery: Trigger Fulfillment">
+            <p>
+              <img
+                src="/instructions/delivery_details.png"
+                alt="Delivery Details"
+                style={{ width: '50%', maxWidth: '100%', border: '1px solid #ddd', borderRadius: '4px' }}
+              />
+            </p>
             <p><strong>Action in Bitrix:</strong> Move Deal stage to <strong>Delivery</strong>.</p>
             <p><strong>Result in Shopify:</strong></p>
             <ul>
