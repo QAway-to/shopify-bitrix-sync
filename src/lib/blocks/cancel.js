@@ -165,6 +165,19 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                             }
                         });
 
+                        // 1.5 Calculate Already Refunded Quantities
+                        const refundedQtyMap = {}; // LineItemID -> Qty
+                        if (shopifyOrder.refunds && Array.isArray(shopifyOrder.refunds)) {
+                            shopifyOrder.refunds.forEach(refund => {
+                                if (refund.refund_line_items && Array.isArray(refund.refund_line_items)) {
+                                    refund.refund_line_items.forEach(rli => {
+                                        const liId = rli.line_item_id;
+                                        refundedQtyMap[liId] = (refundedQtyMap[liId] || 0) + rli.quantity;
+                                    });
+                                }
+                            });
+                        }
+
                         // 2. Map Bitrix Rows (VariantID -> Qty)
                         const bitrixItemMap = {};
                         if (bitrixRows && bitrixRows.length > 0) {
@@ -188,11 +201,15 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         for (const [variantIdStr, shopItem] of Object.entries(shopifyItemsMap)) {
                             const variantId = Number(variantIdStr);
                             const bitrixQty = bitrixItemMap[variantId] || 0;
-                            const shopQty = shopItem.quantity;
-                            const refundQty = shopQty - bitrixQty;
+                            const originalShopQty = shopItem.quantity;
+                            const alreadyRefunded = refundedQtyMap[shopItem.id] || 0;
+                            const activeShopQty = originalShopQty - alreadyRefunded; // The quantity currently "owned"
 
-                            if (bitrixQty > 0) fullRefundCalc = false;
+                            const refundQty = activeShopQty - bitrixQty;
 
+                            if (bitrixQty > 0) fullRefundCalc = false; // If keeping any item, it's partial
+
+                            // Only refund if we have positive active quantity to refund
                             if (refundQty > 0) {
                                 itemsToRefund.push({
                                     line_item_id: shopItem.id,

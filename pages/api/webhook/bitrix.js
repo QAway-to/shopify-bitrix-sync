@@ -1945,10 +1945,18 @@ async function handleDealUpdate(dealId, requestId) {
 
   // ✅ STEP 0: Sync Item Quantities (Full Control)
   // Ensure Shopify items match Bitrix items exactly (add/remove/update)
+  // SKIPPED if in LOSE stage (to allow handleCancel to manage partial refunds gracefully)
   if (shopifyOrderId && shopifyOrderId.trim() !== '') {
     try {
-      const { handleQuantitySync } = await import('../../../src/lib/blocks/quantitySync.js');
-      await handleQuantitySync(shopifyOrderId, dealId, requestId);
+      const { isLoseStage: checkLose } = await import('../../../src/lib/blocks/cancel.js');
+      const isLose = checkLose(stageId);
+
+      if (!isLose) {
+        const { handleQuantitySync } = await import('../../../src/lib/blocks/quantitySync.js');
+        await handleQuantitySync(shopifyOrderId, dealId, requestId);
+      } else {
+        console.log(`[BITRIX WEBHOOK] Quantity sync skipped in LOSE stage (${stageId}) to allow refund logic.`);
+      }
     } catch (syncError) {
       console.warn(`[BITRIX WEBHOOK] Quantity sync failed: ${syncError.message}`);
     }
