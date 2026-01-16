@@ -811,209 +811,107 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
 
   try {
     console.log(JSON.stringify({
-      event: 'CREATE_ORDER_FROM_BITRIX_GRAPHQL_ATTEMPT',
+      event: 'CREATE_ORDER_FROM_BITRIX_REST_ATTEMPT',
       dealId,
       correlationId,
-      lineItemsCount: lineItems.length,
-      hasShippingAddress: !!options.shippingAddress,
-      hasShippingLines: !!(options.shippingLines && options.shippingLines.length > 0),
+      lineItemsCount: lineItemsRest.length,
+      isStubOrder,
       timestamp: new Date().toISOString()
     }));
 
-    // ✅ For stub orders we want Payment Pending (not Paid).
-    // Shopify often marks $0 orders as Paid automatically; REST order creation allows forcing financial_status=pending.
-    if (isStubOrder) {
-      console.log(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_STUB_REST_ATTEMPT',
-        dealId,
-        correlationId,
-        lineItemsCount: lineItemsRest.length,
-        timestamp: new Date().toISOString()
-      }));
+    const shippingAddressRaw = options?.shippingAddress && typeof options.shippingAddress === 'object'
+      ? options.shippingAddress
+      : null;
 
-      const shippingAddressRaw = options?.shippingAddress && typeof options.shippingAddress === 'object'
-        ? options.shippingAddress
-        : null;
+    const shipping_address = shippingAddressRaw ? {
+      first_name: shippingAddressRaw.first_name || shippingAddressRaw.firstName || undefined,
+      last_name: shippingAddressRaw.last_name || shippingAddressRaw.lastName || undefined,
+      address1: shippingAddressRaw.address1 || undefined,
+      address2: shippingAddressRaw.address2 || undefined,
+      city: shippingAddressRaw.city || undefined,
+      zip: shippingAddressRaw.zip || undefined,
+      province: shippingAddressRaw.province || shippingAddressRaw.provinceCode || undefined,
+      country: shippingAddressRaw.country || undefined,
+      country_code: shippingAddressRaw.country_code || shippingAddressRaw.countryCode || undefined,
+      phone: shippingAddressRaw.phone || undefined,
+    } : undefined;
 
-      const shipping_address = shippingAddressRaw ? {
-        first_name: shippingAddressRaw.first_name || shippingAddressRaw.firstName || undefined,
-        last_name: shippingAddressRaw.last_name || shippingAddressRaw.lastName || undefined,
-        address1: shippingAddressRaw.address1 || undefined,
-        address2: shippingAddressRaw.address2 || undefined,
-        city: shippingAddressRaw.city || undefined,
-        zip: shippingAddressRaw.zip || undefined,
-        province: shippingAddressRaw.province || shippingAddressRaw.provinceCode || undefined,
-        country: shippingAddressRaw.country || undefined,
-        country_code: shippingAddressRaw.country_code || shippingAddressRaw.countryCode || undefined,
-        phone: shippingAddressRaw.phone || undefined,
-      } : undefined;
-
-      const restResp = await callShopifyAdmin('/orders.json', {
-        method: 'POST',
-        body: JSON.stringify({
-          order: {
-            line_items: lineItemsRest,
-            tags: tags.join(', '),
-            note,
-            email: customerEmail || 'hold@bfcshoes.local',
-            taxes_included: true,
-            financial_status: 'pending',
-            inventory_behaviour: 'decrement_obeying_policy',
-            send_receipt: false,
-            send_fulfillment_receipt: false,
-            ...(shipping_address ? { shipping_address } : {})
-          }
-        })
-      });
-
-      const restOrder = restResp?.order;
-      if (!restOrder?.id) {
-        throw new Error('REST order creation failed: missing order.id');
+    // Contact data fallback for shipping address (if not explicitly provided)
+    let final_shipping_address = shipping_address;
+    if (!final_shipping_address && options.contactData) {
+      const contact = options.contactData;
+      if (contact.firstName || contact.lastName || contact.address) {
+        final_shipping_address = {
+          first_name: contact.firstName || '',
+          last_name: contact.lastName || '',
+          phone: contact.phone || '',
+          address1: contact.address?.address1 || '',
+          address2: contact.address?.address2 || '',
+          city: contact.address?.city || '',
+          zip: contact.address?.zip || '',
+          province: contact.address?.province || '',
+          country_code: contact.address?.country || '' // Admin often expects code
+        };
       }
+    }
 
-      const createdOrderId = String(restOrder.id);
-      setRecentOrderId(dealId, createdOrderId);
-
-      const canonicalOrderId = await reconcileDuplicateOrdersForDeal(dealId, createdOrderId, correlationId);
-      const wasDuplicate = String(canonicalOrderId) !== String(createdOrderId);
-      if (wasDuplicate) {
-        setRecentOrderId(dealId, canonicalOrderId);
+    const payload = {
+      order: {
+        line_items: lineItemsRest,
+        tags: tags.join(', '),
+        note,
+        email: customerEmail || 'hold@bfcshoes.local',
+        taxes_included: true,
+        financial_status: 'pending', // ✅ KEY FIX: Forces Pending instead of Void/Null
+        inventory_behaviour: 'decrement_obeying_policy',
+        send_receipt: false,
+        send_fulfillment_receipt: false,
+        ...(final_shipping_address ? { shipping_address: final_shipping_address } : {}),
+        ...(final_shipping_address ? { billing_address: final_shipping_address } : {}), // Usually billing = shipping
+        ...(options.shippingLines ? { shipping_lines: options.shippingLines } : {})
       }
+    };
 
-      console.log(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_STUB_REST_SUCCESS',
-        dealId,
-        correlationId,
-        orderId: canonicalOrderId,
-        orderName: restOrder.name || null,
-        financialStatus: restOrder.financial_status || null,
-        wasDuplicate,
-        timestamp: new Date().toISOString()
-      }));
+    const restResp = await callShopifyAdmin('/orders.json', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
 
-      return {
-        success: true,
-        order: restOrder,
-        orderId: canonicalOrderId,
-        orderName: wasDuplicate ? `Existing order ${canonicalOrderId}` : (restOrder.name || `#${canonicalOrderId}`),
-        wasDuplicate,
-        lineItems: restOrder.line_items || [],
-        tags: Array.isArray(restOrder.tags) ? restOrder.tags : (restOrder.tags ? String(restOrder.tags).split(',').map(t => t.trim()) : []),
-        note: restOrder.note || ''
-      };
+    const restOrder = restResp?.order;
+    if (!restOrder?.id) {
+      throw new Error('REST order creation failed: missing order.id');
     }
 
-    const data = await callShopifyGraphQL(mutation, variables);
-
-    console.log(JSON.stringify({
-      event: 'CREATE_ORDER_FROM_BITRIX_GRAPHQL_RESPONSE',
-      dealId,
-      correlationId,
-      hasData: !!data,
-      hasOrderCreate: !!data?.orderCreate,
-      hasUserErrors: !!(data?.orderCreate?.userErrors && data.orderCreate.userErrors.length > 0),
-      userErrorsCount: data?.orderCreate?.userErrors?.length || 0,
-      hasOrder: !!data?.orderCreate?.order,
-      timestamp: new Date().toISOString()
-    }));
-
-    if (!data?.orderCreate) {
-      const errorMsg = 'Invalid GraphQL response: orderCreate is missing';
-      console.error(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_GRAPHQL_ERROR',
-        dealId,
-        correlationId,
-        error: 'INVALID_RESPONSE',
-        message: errorMsg,
-        responseData: JSON.stringify(data).substring(0, 500),
-        timestamp: new Date().toISOString()
-      }));
-      throw new Error(errorMsg);
-    }
-
-    const { order, userErrors } = data.orderCreate;
-
-    // Check for user errors (business logic errors from Shopify)
-    if (userErrors && userErrors.length > 0) {
-      const errorMessages = userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
-      const errorMsg = `Shopify orderCreate userErrors: ${errorMessages}`;
-      console.error(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_USER_ERRORS',
-        dealId,
-        correlationId,
-        error: 'SHOPIFY_USER_ERRORS',
-        message: errorMsg,
-        userErrors: userErrors,
-        timestamp: new Date().toISOString()
-      }));
-      throw new Error(errorMsg);
-    }
-
-    if (!order) {
-      const errorMsg = 'Order creation failed: order is null';
-      console.error(JSON.stringify({
-        event: 'CREATE_ORDER_FROM_BITRIX_NULL_ORDER',
-        dealId,
-        correlationId,
-        error: 'NULL_ORDER',
-        message: errorMsg,
-        timestamp: new Date().toISOString()
-      }));
-      throw new Error(errorMsg);
-    }
-
-    // Extract numeric order ID from GraphQL ID
-    const createdOrderId = order.legacyResourceId || order.id.split('/').pop();
+    const createdOrderId = String(restOrder.id);
     setRecentOrderId(dealId, createdOrderId);
 
-    // ✅ Best-effort reconciliation: if duplicates exist (multi-instance race), cancel extras and return canonical orderId
-    const canonicalOrderId = await reconcileDuplicateOrdersForDeal(dealId, String(createdOrderId), correlationId);
+    // ✅ Best-effort reconciliation (race condition check)
+    const canonicalOrderId = await reconcileDuplicateOrdersForDeal(dealId, createdOrderId, correlationId);
     const wasDuplicate = String(canonicalOrderId) !== String(createdOrderId);
     if (wasDuplicate) {
       setRecentOrderId(dealId, canonicalOrderId);
     }
 
-    // ✅ CRITICAL FIX: GraphQL 'orderCreate' does NOT support 'shippingLines'.
-    // We MUST add the delivery method via REST API immediately after creation.
-    if (!wasDuplicate && options.shippingLines && options.shippingLines.length > 0) {
-      try {
-        console.log(`[CREATE ORDER] 🚚 Adding shipping lines via REST for order ${canonicalOrderId}...`);
-        await callShopifyAdmin(`/orders/${canonicalOrderId}.json`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            order: {
-              id: canonicalOrderId,
-              shipping_lines: options.shippingLines
-            }
-          })
-        });
-        console.log(`[CREATE ORDER] ✅ Shipping lines added successfully.`);
-      } catch (shippingError) {
-        console.error(`[CREATE ORDER] ⚠️ Failed to add shipping lines: ${shippingError.message}`);
-      }
-    }
-
     console.log(JSON.stringify({
-      event: 'CREATE_ORDER_FROM_BITRIX_SUCCESS',
+      event: 'CREATE_ORDER_FROM_BITRIX_REST_SUCCESS',
       dealId,
       correlationId,
       orderId: canonicalOrderId,
-      orderName: order.name,
-      lineItemsCount: order.lineItems?.edges?.length || 0,
-      tags: order.tags || [],
+      orderName: restOrder.name,
+      financialStatus: restOrder.financial_status,
       wasDuplicate,
       timestamp: new Date().toISOString()
     }));
 
     return {
       success: true,
-      order: order,
+      order: restOrder,
       orderId: canonicalOrderId,
-      orderName: wasDuplicate ? `Existing order ${canonicalOrderId}` : order.name,
+      orderName: wasDuplicate ? `Existing order ${canonicalOrderId}` : (restOrder.name || `#${canonicalOrderId}`),
       wasDuplicate,
-      lineItems: order.lineItems?.edges?.map(e => e.node) || [],
-      tags: order.tags || [],
-      note: order.note || ''
+      lineItems: restOrder.line_items || [],
+      tags: Array.isArray(restOrder.tags) ? restOrder.tags : (restOrder.tags ? String(restOrder.tags).split(',').map(t => t.trim()) : []),
+      note: restOrder.note || ''
     };
   } catch (error) {
     console.error(JSON.stringify({
