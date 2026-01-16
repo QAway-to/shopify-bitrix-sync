@@ -25,6 +25,21 @@ const UF_SIZE = 'UF_CRM_1739793720585';
  * @returns {Promise<Array<{variantId: string, qty: number}>>}
  */
 export async function resolveCatalogOrderItems(dealId, dealData, requestId) {
+    // Debug: log raw UF field values
+    console.log(JSON.stringify({
+        event: 'CATALOG_ORDER_RAW_UF_DEBUG',
+        requestId,
+        dealId,
+        brandUppercase: dealData[UF_BRAND],
+        brandLowercase: dealData[UF_BRAND.toLowerCase()],
+        modelUppercase: dealData[UF_MODEL],
+        modelLowercase: dealData[UF_MODEL.toLowerCase()],
+        sizeUppercase: dealData[UF_SIZE],
+        sizeLowercase: dealData[UF_SIZE.toLowerCase()],
+        allUFKeys: Object.keys(dealData).filter(k => k.startsWith('UF_') || k.startsWith('uf_')),
+        timestamp: new Date().toISOString()
+    }));
+
     const brand = dealData[UF_BRAND] || dealData[UF_BRAND.toLowerCase()];
     let model = dealData[UF_MODEL] || dealData[UF_MODEL.toLowerCase()];
     const size = dealData[UF_SIZE] || dealData[UF_SIZE.toLowerCase()];
