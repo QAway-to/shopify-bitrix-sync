@@ -24,158 +24,95 @@ export default function InstructionPage() {
       </Head>
 
       <DocsLayout
-        title="Instructions"
-        subtitle="Test scenarios: actions and expected results in Bitrix and Shopify."
+        title="Instructions & Test Scenarios"
+        subtitle="Guide for verifying synchronization between Bitrix24 and Shopify."
         active="instruction"
       >
         <section className="card doc-card">
           <div className="doc-prose">
             <p>
-              Below are practical test scenarios. Perform an action in one system and verify
-              the result in the other.
+              This guide describes how to verify the integration. Perform actions in one system
+              and observe the automatic updates in the other.
             </p>
           </div>
         </section>
 
         <div className="doc-sections">
-          <SectionCard title="Shopify → Bitrix (auto)">
-            <p>
-              <strong>Test:</strong> Create an order in Shopify (site or POS) → deal appears in
-              Bitrix.
-            </p>
+
+          {/* SCENARIO 1: BASIC SYNC */}
+          <SectionCard title="1) Basic: Create Deal → Shopify Order">
+            <p><strong>Action in Bitrix:</strong> Create a new Deal and add products.</p>
+            <p><strong>Result in Shopify:</strong> A new Order is immediately created with the same items.</p>
             <ul>
-              <li>
-                <strong>In Bitrix you'll see:</strong> new deal with products and order total.
-              </li>
-              <li>
-                <strong>Deal name:</strong> matches Shopify order number (e.g.,
-                <strong> #2448</strong>).
+              <li><strong>Verification:</strong> The Deal Title in Bitrix will update to the Shopify Order # (e.g., <strong>#1024</strong>).</li>
+              <li><strong>Note:</strong> If you create a deal <em>without</em> products, a "Stub Order" is created. Adding products later will automatically update it to a real order.</li>
+            </ul>
+          </SectionCard>
+
+          {/* SCENARIO 2: FULL CONTROL SYNC */}
+          <SectionCard title="2) Full Control: Add/Remove Items">
+            <p><strong>Action in Bitrix:</strong> Add or remove products in an existing Deal.</p>
+            <p><strong>Result in Shopify:</strong> The Order updates immediately to match.</p>
+            <ul>
+              <li><strong>Add Item:</strong> Add a product row in Bitrix → Item appears in Shopify order.</li>
+              <li><strong>Remove Item:</strong> Delete a product row in Bitrix → Item is removed from Shopify order.</li>
+              <li><strong>Quantity Change:</strong> Change quantity in Bitrix → Quantity updates in Shopify.</li>
+            </ul>
+          </SectionCard>
+
+          {/* SCENARIO 3: DELIVERY */}
+          <SectionCard title="3) Delivery: Trigger Fulfillment">
+            <p><strong>Action in Bitrix:</strong> Move Deal stage to <strong>Delivery</strong>.</p>
+            <p><strong>Result in Shopify:</strong> All open items in the order are marked as <strong>Fulfilled</strong>.</p>
+            <ul>
+              <li><strong>Verification:</strong> Shopify Order status changes to "Fulfilled".</li>
+              <li><strong>Tracking:</strong> If tracking info is available, it is sent to Shopify.</li>
+            </ul>
+          </SectionCard>
+
+          {/* SCENARIO 4: REFUNDS & CANCELLATION */}
+          <SectionCard title="4) Refunds & Cancellation (LOSE Stage)">
+            <p><strong>Action in Bitrix:</strong> Move Deal stage to <strong>LOSE</strong>.</p>
+            <p><strong>Result in Shopify:</strong> Expected behavior depends on how you handle items:</p>
+            <ul>
+              <li><strong>Full Cancel:</strong> Move Deal to LOSE directly → **Full Refund** & Order Cancelled in Shopify.</li>
+              <li><strong>Partial Refund (Step-by-Step):</strong>
+                <ol>
+                  <li>Move Deal to <strong>LOSE</strong> stage.</li>
+                  <li><strong>Remove one item</strong> in Bitrix Deal.</li>
+                  <li>Result: Shopify issues a **Partial Refund** for <em>only</em> that item.</li>
+                  <li>Remove remaining items → Shopify issues Full Refund and Cancels order.</li>
+                </ol>
               </li>
             </ul>
           </SectionCard>
 
-          <SectionCard title="Bitrix → Shopify (main scenarios)">
-            <p>
-              Actions by manager in Bitrix and what automatically changes in Shopify.
-            </p>
-          </SectionCard>
-
-          <SectionCard title="1) Test: Create deal with products → Order appears in Shopify">
-            <p>
-              <strong>Action in Bitrix:</strong> create deal and add products.
-            </p>
-            <p>
-              <strong>What you'll see in Shopify:</strong> new order (inventory reserved) with
-              same products and quantities.
-            </p>
+          {/* SCENARIO 5: CONTACT SYNC */}
+          <SectionCard title="5) Customer Sync: Update Email">
+            <p><strong>Action in Shopify:</strong> Update Customer Email on an existing Order.</p>
+            <p><strong>Result in Bitrix:</strong> The Deal links to the correct Contact.</p>
             <ul>
-              <li>
-                <strong>Detail:</strong> order in Shopify gets tags (e.g.,
-                <code> BITRIX:1234</code>).
-              </li>
-              <li>
-                <strong>Detail:</strong> deal name in Bitrix updates to Shopify order number
-                (e.g., <strong>#2513</strong>).
-              </li>
-            </ul>
-            <p>
-              <strong>How to test:</strong>
-            </p>
-            <ol>
-              <li>Create new deal in Bitrix and add 1-2 products</li>
-              <li>Wait 10-60 seconds</li>
-              <li>Open Shopify → Orders → find the new order</li>
-            </ol>
-          </SectionCard>
-
-          <SectionCard title="1.1) Test: Create deal WITHOUT products → Stub order in Shopify">
-            <p>
-              <strong>Action in Bitrix:</strong> create deal but <strong>don't add products</strong> (or add products without SKU/XML_ID).
-            </p>
-            <p>
-              <strong>What you'll see in Shopify:</strong> stub order with default product.
-            </p>
-            <ul>
-              <li>
-                <strong>Visual marker:</strong> order has tag <code>BITRIX_STUB</code> and note marked "STUB ORDER".
-              </li>
-              <li>
-                <strong>Auto cleanup:</strong> when real products are added in Bitrix, stub clears automatically:
-                <ul>
-                  <li>Default product removed</li>
-                  <li>Tag <code>BITRIX_STUB</code> removed</li>
-                  <li>Note updates to normal format</li>
-                </ul>
-              </li>
-              <li>
-                <strong>Detail:</strong> deal name in Bitrix updates to Shopify order number.
-              </li>
-            </ul>
-            <p>
-              <strong>How to test:</strong>
-            </p>
-            <ol>
-              <li>Create new deal in Bitrix <strong>without products</strong></li>
-              <li>Wait 10-60 seconds</li>
-              <li>Open Shopify → Orders → find order with <code>BITRIX_STUB</code> tag</li>
-              <li>Add products to deal in Bitrix</li>
-              <li>Wait 10-60 seconds</li>
-              <li>Verify <code>BITRIX_STUB</code> tag is gone and default product removed</li>
-            </ol>
-          </SectionCard>
-
-          <SectionCard title="2) Test: Change address in Bitrix → Address updates in Shopify">
-            <p>
-              <strong>Action in Bitrix:</strong> change shipping address in deal.
-            </p>
-            <p>
-              <strong>What you'll see in Shopify:</strong> shipping address updates in order.
-            </p>
-            <ul>
-              <li>
-                <strong>Detail:</strong> after Bitrix update, Shopify order gets
-                <code> BitrixUpdated</code> tag (prevents sync loops).
-              </li>
+              <li>If the contact exists in Bitrix, the Deal is linked to it.</li>
+              <li>If the contact is new, a new Contact is created in Bitrix and linked.</li>
             </ul>
           </SectionCard>
 
-          <SectionCard title="3) Test: Move deal to 'Delivery' → Fulfillment updates in Shopify">
-            <p>
-              <strong>Action in Bitrix:</strong> move deal to "Delivery" stage.
-            </p>
-            <p>
-              <strong>What you'll see in Shopify:</strong> order gets fulfillment info,
-              showing it's "being delivered".
-            </p>
-          </SectionCard>
-
-          <SectionCard title="4) Test: Move deal to LOSE → Order cancelled in Shopify">
-            <p>
-              <strong>Action in Bitrix:</strong> move deal to LOSE.
-            </p>
-            <p>
-              <strong>What you'll see in Shopify:</strong> linked order is cancelled,
-              inventory restocked.
-            </p>
+          {/* SCENARIO 6: PRE-ORDER */}
+          <SectionCard title="6) Pre-Order: Reservation">
+            <p><strong>Action in Bitrix:</strong> Create a Deal in the <strong>Pre-order</strong> category (Category ID: 4).</p>
+            <p><strong>Result in Shopify:</strong> A "Pending" order is created to reserve inventory.</p>
             <ul>
-              <li>
-                <strong>Detail:</strong> order in Shopify gets <code>BitrixUpdated</code>{' '}
-                tag after cancellation from Bitrix.
-              </li>
+              <li>Once the item is in stock/processed, moving the stage will update the order status.</li>
             </ul>
           </SectionCard>
 
-          <SectionCard title="What NOT to do (to avoid confusion)">
+          <SectionCard title="What NOT to do">
             <ul>
-              <li>
-                Don't change the same thing in both places simultaneously (e.g., address in both
-                Bitrix and Shopify)
-              </li>
-              <li>
-                Don't manually duplicate an order in Shopify if you're managing it via Bitrix
-              </li>
+              <li>Don't manually refund in Shopify if you expect Bitrix to handle it (let Bitrix drive the process).</li>
+              <li>Don't delete orders in Shopify; cancel them via Bitrix LOSE stage instead.</li>
             </ul>
           </SectionCard>
+
         </div>
       </DocsLayout>
     </>
