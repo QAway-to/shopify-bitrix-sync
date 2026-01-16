@@ -163,6 +163,15 @@ export async function findShopifyVariantByAttributes({ brand, model, size }) {
     const response = await callShopifyAdmin(endpoint);
     const products = response.products || [];
 
+    // Debug: Log what we're searching for and what we found
+    console.log(JSON.stringify({
+      event: 'FIND_VARIANT_DEBUG',
+      searchCriteria: { brand, model, size },
+      productsFound: products.length,
+      productTitles: products.slice(0, 5).map(p => ({ title: p.title, vendor: p.vendor })),
+      timestamp: new Date().toISOString()
+    }));
+
     for (const product of products) {
       // 1. Strict Brand Check (case-insensitive)
       if (product.vendor.toLowerCase() !== brand.toLowerCase()) continue;
