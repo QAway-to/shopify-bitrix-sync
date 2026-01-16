@@ -547,7 +547,89 @@ export async function updateOrderFulfillmentForDelivery(orderId, options = {}) {
       success: false,
       error: 'SHOPIFY_FULFILLMENT_UPDATE_ERROR',
       message: error.message
-    };
-  }
-}
+    }
+
+    /**
+     * Fulfill ALL open items for an order
+     * @param {string|number} orderId - Shopify order ID
+     * @param {Object} options - Tracking options
+     * @returns {Promise<Object>} Fulfillment result
+     */
+    export async function fulfillAllOpenItems(orderId, options = {}) {
+      try {
+        // 1. Get fulfillment orders
+        const fulfillmentOrdersResponse = await callShopifyAdmin(`/orders/${orderId}/fulfillment_orders.json`);
+        const fulfillmentOrders = fulfillmentOrdersResponse.fulfillment_orders || [];
+
+        // 2. Filter open ones
+        const openFulfillmentOrders = fulfillmentOrders.filter(fo =>
+          fo.status === 'open' || fo.status === 'in_progress'
+        );
+
+        if (openFulfillmentOrders.length === 0) {
+          return {
+            success: true, // Treated as success (idempotent)
+            skipped: true,
+            reason: 'no_open_fulfillment_orders',
+            message: 'No open fulfillment orders found'
+          };
+        }
+
+        // 3. Construct payload for EVERYTHING that is fulfillable
+        const lineItemsByFulfillmentOrder = openFulfillmentOrders.map(fo => {
+          const fulfillableItems = fo.line_items.filter(li => li.fulfillable_quantity > 0);
+          if (fulfillableItems.length === 0) return null;
+
+          return {
+            fulfillment_order_id: fo.id,
+            fulfillment_order_line_items: fulfillableItems.map(li => ({
+              id: li.id,
+              quantity: li.fulfillable_quantity
+            }))
+          };
+        }).filter(Boolean);
+
+        if (lineItemsByFulfillmentOrder.length === 0) {
+          return {
+            success: true,
+            skipped: true,
+            reason: 'nothing_to_fulfill',
+            message: 'No fulfillable quantities found'
+          };
+        }
+
+        // 4. Create fulfillment
+        const payload = {
+          fulfillment: {
+            message: options.message || 'Auto-fulfilled via Bitrix Sync',
+            notify_customer: options.notify_customer !== false,
+            tracking_info: options.tracking_number ? {
+              number: options.tracking_number,
+              url: options.tracking_url,
+              company: options.tracking_company
+            } : undefined,
+            line_items_by_fulfillment_order: lineItemsByFulfillmentOrder
+          }
+        };
+
+        const response = await callShopifyAdmin('/fulfillments.json', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+
+        return {
+          success: true,
+          fulfillment: response.fulfillment,
+          fulfillmentId: response.fulfillment?.id,
+          itemsFulfilled: lineItemsByFulfillmentOrder.reduce((acc, fo) => acc + fo.fulfillment_order_line_items.length, 0)
+        };
+
+      } catch (error) {
+        return {
+          success: false,
+          error: 'FULFILL_ALL_ERROR',
+          message: error.message
+        };
+      }
+    }
 

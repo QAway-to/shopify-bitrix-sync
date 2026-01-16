@@ -213,12 +213,21 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId) {
                     const decrementResult = await decrementLineItemQuantity(shopifyOrderId, change.sku, change.newQty);
                     if (decrementResult.success) {
                         hasChanges = true;
-                        console.log(JSON.stringify({
-                            event: 'QUANTITY_SYNC_DECREMENT_SUCCESS',
-                            requestId, dealId, shopifyOrderId,
-                            sku: change.sku, previousQty: change.shopifyQty, newQty: decrementResult.newQuantity,
-                            timestamp: new Date().toISOString()
-                        }));
+                        if (change.newQty === 0) {
+                            console.log(JSON.stringify({
+                                event: 'QUANTITY_SYNC_REMOVE_SUCCESS',
+                                requestId, dealId, shopifyOrderId,
+                                sku: change.sku, previousQty: change.shopifyQty,
+                                timestamp: new Date().toISOString()
+                            }));
+                        } else {
+                            console.log(JSON.stringify({
+                                event: 'QUANTITY_SYNC_DECREMENT_SUCCESS',
+                                requestId, dealId, shopifyOrderId,
+                                sku: change.sku, previousQty: change.shopifyQty, newQty: decrementResult.newQuantity,
+                                timestamp: new Date().toISOString()
+                            }));
+                        }
                     } else {
                         console.log(JSON.stringify({
                             event: 'QUANTITY_SYNC_DECREMENT_ERROR',

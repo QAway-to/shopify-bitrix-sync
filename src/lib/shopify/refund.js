@@ -83,6 +83,23 @@ export async function createRefund(orderId, options = {}) {
 
     const calculatedRefund = calcResponse.refund;
 
+    // 2.5 Override transactions if explicit amount provided (Reconciliation Mode)
+    if (options.amount && parseFloat(options.amount) > 0) {
+      console.log(`[SHOPIFY REFUND] Overriding calculated refund with explicit amount: ${options.amount}`);
+      calculatedRefund.transactions = [{
+        parent_id: calculatedRefund.transactions?.[0]?.parent_id || null, // Best effort to link to parent
+        amount: options.amount,
+        kind: 'refund',
+        gateway: 'manual', // Default, will likely be overridden by parent_id if present
+        currency: options.currency || 'EUR'
+      }];
+      // If parent_id exists (from previous calculation), use it
+      if (calcResponse.refund.transactions?.[0]?.parent_id) {
+        calculatedRefund.transactions[0].parent_id = calcResponse.refund.transactions[0].parent_id;
+        delete calculatedRefund.transactions[0].gateway; // Let Shopify determine gateway from parent
+      }
+    }
+
     // 3. Normalize Transactions
     calculatedRefund.transactions = normalizeTransactions(calculatedRefund);
     calculatedRefund.note = note;

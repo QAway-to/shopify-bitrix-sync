@@ -103,6 +103,35 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         console.warn(`[CANCEL BLOCK] ⚠️ Order ${shopifyOrderId} is already FULFILLED. Skipping orderCancel part.`);
                     }
 
+                    // STEP 0.5: RECONCILIATION REFUND (If items were removed previously)
+                    try {
+                        const totalReceived = parseFloat(shopifyOrder.total_received_set?.shop_money?.amount || shopifyOrder.total_price_set?.shop_money?.amount || shopifyOrder.total_price || '0');
+                        // Note: total_received is often on root in REST, but safer to check structure or fallback.
+                        // Actually REST API provided 'shopifyOrder' usually has 'total_received' at root?
+                        // Let's use robust extraction.
+                        const receivedAmount = parseFloat(shopifyOrder.total_received || '0');
+                        const currentTotal = parseFloat(shopifyOrder.current_total_price || '0');
+                        const overpayment = receivedAmount - currentTotal;
+                        const currency = shopifyOrder.currency || 'EUR';
+
+                        if (overpayment > 0.01) {
+                            console.log(`[CANCEL BLOCK] 💰 Detected Overpayment of ${overpayment} ${currency}. Initiating Reconciliation Refund...`);
+                            const reconciliationResult = await createRefund(shopifyOrderId, {
+                                amount: String(overpayment),
+                                currency: currency,
+                                note: `Reconciliation Refund (Bitrix Loss/Removal)`,
+                                notify: true
+                            });
+                            if (reconciliationResult.success) {
+                                console.log(`[CANCEL BLOCK] ✅ Reconciliation Refund created.`);
+                            } else {
+                                console.warn(`[CANCEL BLOCK] ⚠️ Reconciliation Refund failed: ${reconciliationResult.error}`);
+                            }
+                        }
+                    } catch (reconError) {
+                        console.warn(`[CANCEL BLOCK] ⚠️ Error during reconciliation check: ${reconError.message}`);
+                    }
+
                     // Determine Strategy
                     let doRefund = false;
                     let doCancel = false;

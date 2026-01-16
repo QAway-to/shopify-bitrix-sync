@@ -1943,6 +1943,17 @@ async function handleDealUpdate(dealId, requestId) {
     timestamp: new Date().toISOString()
   }));
 
+  // ✅ STEP 0: Sync Item Quantities (Full Control)
+  // Ensure Shopify items match Bitrix items exactly (add/remove/update)
+  if (shopifyOrderId && shopifyOrderId.trim() !== '') {
+    try {
+      const { handleQuantitySync } = await import('../../../src/lib/blocks/quantitySync.js');
+      await handleQuantitySync(shopifyOrderId, dealId, requestId);
+    } catch (syncError) {
+      console.warn(`[BITRIX WEBHOOK] Quantity sync failed: ${syncError.message}`);
+    }
+  }
+
   // ✅ STEP A: Check if deal is cancelled (LOSE stage) and cancel order in Shopify
   // Check if stage ends with :LOSE or is exactly LOSE (handles both C6:LOSE and LOSE formats)
   // 🔄 REFACTORED: Now uses src/lib/blocks/cancel.js for enhanced Refund support
@@ -3136,6 +3147,52 @@ async function handleDealUpdate(dealId, requestId) {
 
   // Check if all conditions are met (removed categoryMatch - now using stageMatch only)
   if (decision.stageMatch && decision.shopifyOrderIdPresent) {
+
+    // 🚀 FULL CONTROL SYNC: DELIVERY AUTOMATION (Intercepted)
+    console.log(`[DELIVERY TRIGGER] 🚀 Starting Full Fulfillment Sync...`);
+    const { fulfillAllOpenItems } = await import('../../../src/lib/shopify/fulfillment.js');
+    const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
+    const { updateOrder, getOrder } = await import('../../../src/lib/shopify/adminClient.js');
+
+    // 1. Get Tracking info
+    const trackingNumber = dealData.UF_CRM_1741776378819 || dealData.uf_crm_1741776378819 || null;
+    const trackingUrl = dealData.UF_CRM_TRACKING_URL || dealData.uf_crm_tracking_url || null;
+
+    // 2. Fulfill All Open Items
+    const fulfillmentResult = await fulfillAllOpenItems(shopifyOrderId, {
+      tracking_number: trackingNumber,
+      tracking_url: trackingUrl,
+      notify_customer: true,
+      message: 'Auto-fulfilled via Bitrix C2:Delivery'
+    });
+
+    if (fulfillmentResult.success) {
+      console.log(`[DELIVERY TRIGGER] ✅ Fulfilled Status: ${fulfillmentResult.skipped ? 'Skipped/No-Op' : 'Success'}`, fulfillmentResult);
+    } else {
+      console.error(`[DELIVERY TRIGGER] ❌ Fulfillment Error: ${fulfillmentResult.message}`);
+    }
+
+    // 3. Update Order Note & Tags
+    try {
+      await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
+      await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
+
+      const shopifyOrder = await getOrder(shopifyOrderId);
+      if (shopifyOrder) {
+        const currentNote = shopifyOrder.note || '';
+        if (!currentNote.toLowerCase().includes('in delivery')) {
+          const newNote = currentNote ? `${currentNote}\n\n[Bitrix] Order in delivery` : `[Bitrix] Order in delivery`;
+          await updateOrder(shopifyOrderId, { id: shopifyOrderId, note: newNote });
+        }
+      }
+    } catch (e) {
+      console.warn(`[DELIVERY TRIGGER] Tag/Note update failed: ${e.message}`);
+    }
+
+    // Return immediately to bypass legacy logic
+    return { success: true, triggerMatch: true, correlationId };
+
+    // ⬇️ LEGACY LOGIC BELOW (UNREACHABLE) ⬇️
     // ✅ DELIVERY TRIGGER MATCHED
     console.log(JSON.stringify({
       event: 'DELIVERY_TRIGGER_MATCH',
