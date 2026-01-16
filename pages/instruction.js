@@ -68,6 +68,7 @@ export default function InstructionPage() {
               />
             </p>
             <p><strong>Action in Bitrix:</strong> Create a Deal and manually enter <strong>Brand</strong>, <strong>Model</strong>, and <strong>Size</strong> to define the product.</p>
+            <p><strong>Tip:</strong> You can copy the <em>full product title</em> (including the size) into the <strong>Model</strong> field (e.g., <code>Ilo KL grey Suede Barefoot Mens Sneakers - 42</code>). The system will correctly parse it.</p>
             <p><strong>Result in Shopify:</strong> The system searches for a matching product by these attributes. If found, it creates an order for that item.</p>
           </SectionCard>
 
