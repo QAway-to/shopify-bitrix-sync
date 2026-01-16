@@ -104,7 +104,7 @@ export default function InstructionPage() {
                   <li>Move Deal to <strong>LOSE</strong> stage.</li>
                   <li><strong>Remove one item</strong> in Bitrix Deal.</li>
                   <li>Result: Shopify issues a **Partial Refund** for <em>only</em> that item.</li>
-                  <li>Remove remaining items → Shopify issues Full Refund and Cancels order.</li>
+                  <li>Remove remaining items → Shopify issues Full Refund.</li>
                 </ol>
               </li>
             </ul>
