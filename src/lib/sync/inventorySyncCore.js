@@ -547,7 +547,7 @@ async function syncSection(sectionId, allVariants, bitrixProducts, progressCallb
             }
 
             createPayloads.push({
-                NAME: shopifyName,
+                NAME: `${variant.product_title}${variant.variant_title && variant.variant_title !== 'Default Title' ? ' - ' + variant.variant_title : ''}`,
                 PRICE: variant.price,
                 CURRENCY_ID: 'EUR',
                 CATALOG_ID: 14,
