@@ -146,22 +146,28 @@ export async function callShopifyGraphQL(query, variables = {}) {
 }
 
 /**
- * Find Shopify variant by attributes (Brand, Model, Color, Size)
+ * Find Shopify variant by attributes (Brand, Model, Size)
+ * Based on user's working Python script:
+ * - Filter by TITLE (model) instead of vendor (vendor data may be empty/wrong)
+ * - Check brand in BOTH vendor AND title
+ * - Fuzzy size matching (size IN option value)
+ * 
  * @param {Object} criteria
- * @param {string} criteria.brand - Vendor
- * @param {string} criteria.model - Part of Title
- * @param {string} criteria.size - Option value
+ * @param {string} criteria.brand - Brand name (checked in vendor or title)
+ * @param {string} criteria.model - Model name (used for API title filter)
+ * @param {string} criteria.size - Size value
  * @returns {Promise<Object|null>} Found variant or null
  */
 export async function findShopifyVariantByAttributes({ brand, model, size }) {
-  // Use REST API logic EXACTLY matching user's robust Python script
-  // 1. Fetch products by Vendor (limit 50)
-  // 2. Filter Client-side: Title must contain Model
-  // 3. Variant Check: Size must be in [option1, option2, option3]
   try {
-    const endpoint = `/products.json?limit=50&vendor=${encodeURIComponent(brand)}`;
+    // Use TITLE filter instead of vendor (this is the key fix!)
+    const endpoint = `/products.json?limit=50&title=${encodeURIComponent(model)}`;
     const response = await callShopifyAdmin(endpoint);
     const products = response.products || [];
+
+    const targetBrand = brand.toLowerCase().trim();
+    const targetModel = model.toLowerCase().trim();
+    const targetSize = String(size).toLowerCase().trim();
 
     // Debug: Log what we're searching for and what we found
     console.log(JSON.stringify({
@@ -173,39 +179,35 @@ export async function findShopifyVariantByAttributes({ brand, model, size }) {
     }));
 
     for (const product of products) {
-      // 1. Strict Brand Check (case-insensitive)
-      if (product.vendor.toLowerCase() !== brand.toLowerCase()) continue;
+      const pTitle = product.title.toLowerCase();
+      const pVendor = (product.vendor || '').toLowerCase();
 
-      // 2. Model Check (Title must contain model)
-      if (!product.title.toLowerCase().includes(model.toLowerCase())) continue;
+      // Check brand in BOTH vendor AND title (like Python script)
+      const brandMatch = pVendor.includes(targetBrand) || pTitle.includes(targetBrand);
 
-      // 3. Variant Check (Size must match one of the option values exactly)
+      // Check model in title
+      const modelMatch = pTitle.includes(targetModel);
+
+      if (!brandMatch || !modelMatch) continue;
+
+      // Check variants for size match
       for (const variant of product.variants) {
-        // Collect all option values (option1, option2, option3)
-        const variantValues = [
-          variant.option1,
-          variant.option2,
-          variant.option3
-        ].map(v => v ? String(v).toLowerCase() : '');
+        const vOptions = [
+          String(variant.option1 || '').toLowerCase().trim(),
+          String(variant.option2 || '').toLowerCase().trim(),
+          String(variant.option3 || '').toLowerCase().trim()
+        ];
 
-        // Check if size is in the values (exact match)
-        if (variantValues.includes(size.toLowerCase())) {
-          // Found match!
-          // Normalize structure to match expected format
-          return {
-            variant: {
-              id: String(variant.id), // Ensure string ID
-              title: variant.title,
-              sku: variant.sku,
-              price: variant.price,
-              inventoryQuantity: variant.inventory_quantity,
-              imageId: variant.image_id // Capture variant image ID
-            },
-            productTitle: product.title,
-            vendor: product.vendor,
-            description: product.body_html, // HTML Description
-            images: product.images || [] // All images for fallback logic
-          };
+        // Exact match first
+        if (vOptions.includes(targetSize)) {
+          console.log(`[FIND VARIANT] ✅ Found exact match: ${product.title} - Size ${size}`);
+          return formatVariantResult(variant, product);
+        }
+
+        // Fuzzy match: size contained in option (e.g., "40" in "EU 40" or "40 (Toddler)")
+        if (vOptions.some(opt => opt && opt.includes(targetSize))) {
+          console.log(`[FIND VARIANT] ✅ Found fuzzy match: ${product.title} - Size ${size}`);
+          return formatVariantResult(variant, product);
         }
       }
     }
@@ -217,6 +219,24 @@ export async function findShopifyVariantByAttributes({ brand, model, size }) {
     console.error(`[FIND VARIANT] Error searching Shopify (REST): ${error.message}`);
     throw error;
   }
+}
+
+// Helper to format variant result consistently
+function formatVariantResult(variant, product) {
+  return {
+    variant: {
+      id: String(variant.id),
+      title: variant.title,
+      sku: variant.sku,
+      price: variant.price,
+      inventoryQuantity: variant.inventory_quantity,
+      imageId: variant.image_id
+    },
+    productTitle: product.title,
+    vendor: product.vendor,
+    description: product.body_html,
+    images: product.images || []
+  };
 }
 
 /**
