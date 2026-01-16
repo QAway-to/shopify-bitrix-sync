@@ -39,14 +39,36 @@ export default function InstructionPage() {
 
         <div className="doc-sections">
 
-          {/* SCENARIO 1: BASIC SYNC */}
-          <SectionCard title="1) Basic: Create Deal → Shopify Order">
-            <p><strong>Action in Bitrix:</strong> Create a new Deal and add products.</p>
-            <p><strong>Result in Shopify:</strong> A new Order is immediately created with the same items.</p>
-            <ul>
-              <li><strong>Verification:</strong> The Deal Title in Bitrix will update to the Shopify Order # (e.g., <strong>#1024</strong>).</li>
-              <li><strong>Note:</strong> If you create a deal <em>without</em> products, a "Stub Order" is created. Adding products later will automatically update it to a real order.</li>
-            </ul>
+          {/* SCENARIO 1: PRE-ORDER (IN THE SHOP) */}
+          <SectionCard title="1) Pre-order (in the shop)">
+            <p>
+              When taking a pre-order in the shop (Category ID: 4), you can select an existing product or define a new one.
+            </p>
+
+            <h4>1. Regular Order (Product exists)</h4>
+            <p>
+              <img
+                src="/instructions/regular_order.png"
+                alt="Regular Order Selection"
+                style={{ width: '50%', maxWidth: '100%', border: '1px solid #ddd', borderRadius: '4px' }}
+              />
+            </p>
+            <p><strong>Action in Bitrix:</strong> Create a Deal and select a product from the list (must have <strong>SIZE</strong> in the title).</p>
+            <p><strong>Result in Shopify:</strong> A "Pending" order is created reserving this specific variant.</p>
+            <p><em>If the desired product/size is not in the list, proceed to method 2.</em></p>
+
+            <hr style={{ margin: '20px 0', border: '0', borderTop: '1px solid #eee' }} />
+
+            <h4>2. Catalog Order (New/Custom Product)</h4>
+            <p>
+              <img
+                src="/instructions/catalog_order.png"
+                alt="Catalog Order Creation"
+                style={{ width: '50%', maxWidth: '100%', border: '1px solid #ddd', borderRadius: '4px' }}
+              />
+            </p>
+            <p><strong>Action in Bitrix:</strong> Create a Deal and manually enter <strong>Brand</strong>, <strong>Model</strong>, and <strong>Size</strong> to define the product.</p>
+            <p><strong>Result in Shopify:</strong> The system searches for a matching product by these attributes. If found, it creates an order for that item. If not found, it may create a custom item order.</p>
           </SectionCard>
 
           {/* SCENARIO 2: FULL CONTROL SYNC */}
@@ -94,15 +116,6 @@ export default function InstructionPage() {
             <ul>
               <li>If the contact exists in Bitrix, the Deal is linked to it.</li>
               <li>If the contact is new, a new Contact is created in Bitrix and linked.</li>
-            </ul>
-          </SectionCard>
-
-          {/* SCENARIO 6: PRE-ORDER */}
-          <SectionCard title="6) Pre-Order: Reservation">
-            <p><strong>Action in Bitrix:</strong> Create a Deal in the <strong>Pre-order</strong> category (Category ID: 4).</p>
-            <p><strong>Result in Shopify:</strong> A "Pending" order is created to reserve inventory.</p>
-            <ul>
-              <li>Once the item is in stock/processed, moving the stage will update the order status.</li>
             </ul>
           </SectionCard>
 
