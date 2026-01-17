@@ -2113,6 +2113,16 @@ async function handleDealUpdate(dealId, requestId) {
     }
   }
 
+  // ✅ STEP C1.5: Sync contact data (email, phone, name) from Bitrix to Shopify
+  if (shopifyOrderId && shopifyOrderId.trim() !== '') {
+    try {
+      const { syncContactToShopify } = await import('../../../src/lib/blocks/contactSync.js');
+      await syncContactToShopify(shopifyOrderId, dealData, requestId, dealId);
+    } catch (contactSyncError) {
+      console.warn(`[BITRIX TO SHOPIFY] Contact sync error: ${contactSyncError.message}`);
+    }
+  }
+
   // ✅ STEP C2: Sync product quantities from Bitrix to Shopify (if order exists)
   // NOTE: This only runs if shopifyOrderId exists, so it won't block order creation
   if (shopifyOrderId && shopifyOrderId.trim() !== '') {
