@@ -143,13 +143,21 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         console.log(`[CANCEL BLOCK] ⚠️ Order is FULFILLED. Forcing REFUND strategy (Diff Only). Cancel disabled.`);
                     } else {
                         // Unfulfilled
-                        if (lossAction.action === 'CANCEL') {
-                            doRefund = false; // Void/Cancel entire order
+                        // Unfulfilled
+                        // ✅ FIX: If order is UNPAID (pending), we should CANCEL it even if action is REFUND
+                        // (Because you cannot "refund" money that wasn't taken, and "Refund" action implies VOIDING the transaction for unpaid orders)
+                        const isUnpaid = shopifyOrder.financial_status === 'pending' || shopifyOrder.financial_status === 'authorized';
+
+                        if (lossAction.action === 'CANCEL' || (lossAction.action === 'REFUND' && isUnpaid)) {
+                            doRefund = false; // Void/Cancel entire order (Refund not needed if unpaid)
                             doCancel = true;
+                            if (isUnpaid && lossAction.action === 'REFUND') {
+                                console.log(`[CANCEL BLOCK] ℹ️ Action is REFUND but order is UNPAID. Switching to CANCEL strategy.`);
+                            }
                         } else {
-                            // Action === 'REFUND'
+                            // Action === 'REFUND' AND Order is PAID/PARTIALLY_PAID
                             doRefund = true; // Refund specific items (Diff)
-                            doCancel = false; // Don't cancel the rest
+                            doCancel = false; // Don't cancel the rest (keep as Refunded state)
                         }
                     }
 
