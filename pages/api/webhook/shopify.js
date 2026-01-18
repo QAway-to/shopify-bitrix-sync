@@ -1197,10 +1197,27 @@ export default async function handler(req, res) {
     console.log(`[SHOPIFY WEBHOOK] Order ID: ${order?.id || 'N/A'}`);
     console.log(`[SHOPIFY WEBHOOK] Order Name: ${order?.name || 'N/A'}`);
 
+    // ✅ CRITICAL: Detect cancellation/refund FIRST (must sync to Bitrix LOSE regardless of loop guard)
+    const financialStatusForGuard = (order?.financial_status || '').toLowerCase();
+    const cancelledAtForGuard = order?.cancelled_at;
+    const isCancelledOrRefunded =
+      financialStatusForGuard === 'cancelled' ||
+      financialStatusForGuard === 'voided' ||
+      financialStatusForGuard === 'refunded' ||
+      (cancelledAtForGuard !== null && cancelledAtForGuard !== undefined && cancelledAtForGuard !== '');
+
+    if (isCancelledOrRefunded) {
+      console.log(`[SHOPIFY WEBHOOK] ⚠️⚠️⚠️ CANCELLATION/REFUND DETECTED - BYPASSING LOOP GUARD!`);
+      console.log(`[SHOPIFY WEBHOOK]   - financial_status: ${financialStatusForGuard}`);
+      console.log(`[SHOPIFY WEBHOOK]   - cancelled_at: ${cancelledAtForGuard || 'N/A'}`);
+      console.log(`[SHOPIFY WEBHOOK]   - Order ${order?.name || order?.id} will be processed to sync LOSE stage to Bitrix`);
+    }
+
     // ✅ CRITICAL: Check if this is a technical order or Bitrix-updated order (should not be sent to Bitrix)
     // Technical orders are created FROM Bitrix to reserve inventory, so they should not create deals IN Bitrix
     // BitrixUpdated orders were updated FROM Bitrix, so webhook from this update should not go back to Bitrix (loop guard)
     // Orders with BITRIX:{dealId} tag are created FROM Bitrix, so they should not create deals IN Bitrix
+    // ⚠️ EXCEPTION: Cancelled/refunded orders ALWAYS bypass loop guard to sync LOSE stage
     // Handle tags as either array or comma-separated string (Shopify webhook may return both formats)
     const orderTags = Array.isArray(order?.tags)
       ? order.tags
@@ -1208,7 +1225,8 @@ export default async function handler(req, res) {
     const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
     const isBitrixUpdated = orderTags.includes('BitrixUpdated');
 
-    if (isBitrixOrder || isBitrixUpdated) {
+    // ✅ MODIFIED: Only skip if NOT a cancellation/refund
+    if ((isBitrixOrder || isBitrixUpdated) && !isCancelledOrRefunded) {
       const skipReason = isBitrixOrder
         ? 'Order created from Bitrix (BITRIX:{dealId} tag) - not sent to Bitrix'
         : 'Bitrix-updated order (BitrixUpdated tag) - loop guard, not sent to Bitrix';
@@ -1237,6 +1255,8 @@ export default async function handler(req, res) {
         orderName: order?.name,
         tags: orderTags
       });
+    } else if ((isBitrixOrder || isBitrixUpdated) && isCancelledOrRefunded) {
+      console.log(`[SHOPIFY WEBHOOK] ✅ LOOP GUARD BYPASSED: Order ${order?.name || order?.id} is cancelled/refunded, must sync LOSE stage to Bitrix`);
     }
 
     // ✅ CRITICAL: Check provenance marker (middleware.last_write) to prevent loop
@@ -1250,7 +1270,8 @@ export default async function handler(req, res) {
         const lastSource = provenanceValue.source;
 
         // If last write was from Bitrix, skip to prevent loop
-        if (lastSource === 'bitrix') {
+        // ⚠️ EXCEPTION: Cancelled/refunded orders ALWAYS bypass loop guard to sync LOSE stage
+        if (lastSource === 'bitrix' && !isCancelledOrRefunded) {
           const skipReason = `Provenance marker indicates last update was from Bitrix (source: ${lastSource}, action: ${provenanceValue.action || 'unknown'}) - loop guard, not sent to Bitrix`;
 
           console.log(`[SHOPIFY WEBHOOK] 🔧 SKIPPING: Provenance marker detected. Order ${order?.name || order?.id} was last updated by Bitrix. Will NOT be sent to Bitrix.`);
@@ -1278,6 +1299,8 @@ export default async function handler(req, res) {
             orderName: order?.name,
             provenance: provenanceValue
           });
+        } else if (lastSource === 'bitrix' && isCancelledOrRefunded) {
+          console.log(`[SHOPIFY WEBHOOK] ✅ PROVENANCE LOOP GUARD BYPASSED: Order ${order?.name || order?.id} is cancelled/refunded, must sync LOSE stage to Bitrix`);
         }
       }
     } catch (provenanceError) {
