@@ -569,6 +569,26 @@ export async function fulfillAllOpenItems(orderId, options = {}) {
     );
 
     if (openFulfillmentOrders.length === 0) {
+      // ✅ FALLBACK: If order is already fulfilled but tracking_number is provided,
+      // update the existing fulfillment with tracking info
+      if (options.tracking_number) {
+        console.log(`[FULFILL ALL] No open orders, but tracking provided. Updating existing fulfillment...`);
+        const updateResult = await updateOrderFulfillmentForDelivery(orderId, options);
+        if (updateResult.success) {
+          return {
+            success: true,
+            skipped: false,
+            trackingUpdated: true,
+            fulfillmentId: updateResult.fulfillmentId,
+            trackingNumber: updateResult.trackingNumber,
+            message: 'Tracking updated on existing fulfillment'
+          };
+        } else {
+          // Log but don't fail - tracking update is best-effort
+          console.warn(`[FULFILL ALL] Failed to update tracking: ${updateResult.message}`);
+        }
+      }
+
       return {
         success: true, // Treated as success (idempotent)
         skipped: true,
