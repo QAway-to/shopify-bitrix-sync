@@ -2138,13 +2138,16 @@ async function handleDealUpdate(dealId, requestId) {
       const shopifyOrder = await getOrder(shopifyOrderId);
 
       if (shopifyOrder) {
-        // Check if order is created from Bitrix (has BITRIX:{dealId} tag) - should sync quantities
+        // ✅ UPDATED: Sync quantities for ALL linked orders (Bitrix-created OR Shopify-created)
+        // Same logic as LOSE/Cancel bypass: if order is linked, allow updates to propagate
+        // Loop prevention: BitrixUpdated tag is added after sync, Shopify webhook will skip
         const orderTags = Array.isArray(shopifyOrder.tags)
           ? shopifyOrder.tags
           : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
         const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
 
-        if (isBitrixOrder) {
+        // Sync for ALL linked orders (removed isBitrixOrder restriction)
+        {
           // Get product rows from Bitrix
           const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
             id: dealId
