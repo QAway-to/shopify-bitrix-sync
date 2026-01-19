@@ -589,6 +589,33 @@ async function handleOrderCreated(order) {
     console.log(`[SHOPIFY WEBHOOK] First product row:`, JSON.stringify(productRows[0], null, 2));
   }
 
+  // ✅ ADDRESS SYNC: Include shipping address in deal on CREATE
+  if (order?.shipping_address) {
+    const addr = order.shipping_address;
+    // Build Bitrix address string format: "Street, ZIP City Region, Country"
+    const addressParts = [];
+    if (addr.address1) addressParts.push(addr.address1);
+    if (addr.address2) addressParts.push(addr.address2);
+
+    const cityParts = [];
+    if (addr.zip) cityParts.push(addr.zip);
+    if (addr.city) cityParts.push(addr.city);
+    if (addr.province) cityParts.push(addr.province);
+
+    let bitrixAddress = addressParts.join(', ');
+    if (cityParts.length > 0) {
+      bitrixAddress += (bitrixAddress ? ', ' : '') + cityParts.join(' ');
+    }
+    if (addr.country) {
+      bitrixAddress += (bitrixAddress ? ', ' : '') + addr.country;
+    }
+
+    if (bitrixAddress.trim()) {
+      dealFields.UF_CRM_1742037435676 = bitrixAddress;
+      console.log(`[SHOPIFY WEBHOOK] 📍 Address included in CREATE: "${bitrixAddress}"`);
+    }
+  }
+
   // ✅ VALIDATION: Validate deal fields before sending
   console.log(`[SHOPIFY WEBHOOK] 🔍 Validating deal fields before creation...`);
   const validation = validateDealFields(dealFields);
