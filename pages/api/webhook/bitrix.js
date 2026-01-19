@@ -11,6 +11,7 @@ import { createHoldOrder } from '../../../src/lib/shopify/hold.js';
 import { createRefund } from '../../../src/lib/shopify/refund.js';
 import { updateShippingAddress } from '../../../src/lib/shopify/address.js';
 import { createOrderFromBitrix, findExistingOrderByDealId, cancelOrderByDealId, cancelOrderById, addTagToOrder } from '../../../src/lib/shopify/order.js';
+import { getProvenanceMarker, setProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
 import { addPositionToOrder, incrementLineItemQuantity, decrementLineItemQuantity } from '../../../src/lib/shopify/orderEdit.js';
 import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/lib/bitrix/webhookParser.js';
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
@@ -1854,69 +1855,48 @@ async function handleDealUpdate(dealId, requestId) {
               }
             }
 
+            // ✅ VALIDATION: City is required for Shopify
+            if (!parsedAddress.city || parsedAddress.city.trim() === '') {
+              console.warn(`[BITRIX ADDRESS] ⚠️ Skipping address update: City is missing (Bitrix: "${bitrixAddressField}")`);
+              parsedAddress = null; // Invalidate parsing
+            }
+
             // Compare with current Shopify address
-            const currentAddress = shopifyOrder.shipping_address || {};
-            addressChanged = hasAddressChanged(parsedAddress, currentAddress);
+            if (parsedAddress) {
+              const currentAddress = shopifyOrder.shipping_address || {};
+              addressChanged = hasAddressChanged(parsedAddress, currentAddress);
 
-            // Debug: Log detailed comparison
-            const addressComparison = {
-              address1: {
-                new: parsedAddress.address1,
-                current: currentAddress.address1,
-                changed: (parsedAddress.address1 || '').trim().toLowerCase() !== (currentAddress.address1 || '').trim().toLowerCase()
-              },
-              city: {
-                new: parsedAddress.city,
-                current: currentAddress.city,
-                changed: (parsedAddress.city || '').trim().toLowerCase() !== (currentAddress.city || '').trim().toLowerCase()
-              },
-              zip: {
-                new: parsedAddress.zip,
-                current: currentAddress.zip,
-                changed: (parsedAddress.zip || '').trim().toLowerCase() !== (currentAddress.zip || '').trim().toLowerCase()
-              },
-              country: {
-                new: parsedAddress.country,
-                current: currentAddress.country,
-                changed: (parsedAddress.country || '').trim().toLowerCase() !== (currentAddress.country || '').trim().toLowerCase()
-              },
-              province: {
-                new: parsedAddress.province,
-                current: currentAddress.province,
-                changed: (parsedAddress.province || '').trim().toLowerCase() !== (currentAddress.province || '').trim().toLowerCase()
-              }
-            };
+              // Debug: Log detailed comparison
+              const addressComparison = {
+                address1: {
+                  new: parsedAddress.address1,
+                  current: currentAddress.address1,
+                  changed: (parsedAddress.address1 || '').trim().toLowerCase() !== (currentAddress.address1 || '').trim().toLowerCase()
+                },
+                city: {
+                  new: parsedAddress.city,
+                  current: currentAddress.city,
+                  changed: (parsedAddress.city || '').trim().toLowerCase() !== (currentAddress.city || '').trim().toLowerCase()
+                },
+                zip: {
+                  new: parsedAddress.zip,
+                  current: currentAddress.zip,
+                  changed: (parsedAddress.zip || '').trim().toLowerCase() !== (currentAddress.zip || '').trim().toLowerCase()
+                },
+                country: {
+                  new: parsedAddress.country,
+                  current: currentAddress.country,
+                  changed: (parsedAddress.country || '').trim().toLowerCase() !== (currentAddress.country || '').trim().toLowerCase()
+                },
+                province: {
+                  new: parsedAddress.province,
+                  current: currentAddress.province,
+                  changed: (parsedAddress.province || '').trim().toLowerCase() !== (currentAddress.province || '').trim().toLowerCase()
+                }
+              };
 
-            console.log(JSON.stringify({
-              event: 'AUTO_ADDRESS_CHECK',
-              requestId,
-              dealId,
-              shopifyOrderId,
-              bitrixAddress: bitrixAddressField,
-              parsedAddress,
-              currentShopifyAddress: {
-                address1: currentAddress.address1,
-                city: currentAddress.city,
-                zip: currentAddress.zip,
-                country: currentAddress.country,
-                country_code: currentAddress.country_code,
-                province: currentAddress.province
-              },
-              addressComparison,
-              addressChanged,
-              deliveryPrice: deliveryPrice,
-              currentShippingPrice: currentShippingPrice,
-              deliveryPriceChanged: deliveryPriceChanged,
-              timestamp: new Date().toISOString()
-            }));
-
-            // Always update if address is provided (even if comparison says no change)
-            // This ensures address is synced even if comparison logic has issues
-            const shouldUpdateAddress = addressChanged || (parsedAddress && Object.keys(parsedAddress).length > 0);
-
-            if (shouldUpdateAddress || deliveryPriceChanged) {
               console.log(JSON.stringify({
-                event: 'AUTO_ADDRESS_UPDATE_DETECTED',
+                event: 'AUTO_ADDRESS_CHECK',
                 requestId,
                 dealId,
                 shopifyOrderId,
@@ -1926,7 +1906,53 @@ async function handleDealUpdate(dealId, requestId) {
                   address1: currentAddress.address1,
                   city: currentAddress.city,
                   zip: currentAddress.zip,
-                  country: currentAddress.country
+                  country: currentAddress.country,
+                  country_code: currentAddress.country_code,
+                  province: currentAddress.province
+                },
+                addressComparison,
+                addressChanged,
+                deliveryPrice: deliveryPrice,
+                currentShippingPrice: currentShippingPrice,
+                deliveryPriceChanged: deliveryPriceChanged,
+                timestamp: new Date().toISOString()
+              }));
+            } else {
+              addressChanged = false;
+            }
+
+            // Always update if address is provided (even if comparison says no change)
+            // This ensures address is synced even if comparison logic has issues
+            const shouldUpdateAddress = addressChanged || (parsedAddress && Object.keys(parsedAddress).length > 0);
+
+            // ✅ LOOP GUARD: Check Provenance
+            let isLoop = false;
+            try {
+              const lastWrite = await getProvenanceMarker(shopifyOrderId);
+              if (lastWrite && lastWrite.exists && lastWrite.value && lastWrite.value.source === 'shopify') {
+                const timeDiff = Date.now() - new Date(lastWrite.value.ts).getTime();
+                if (timeDiff < 60000) { // 60 seconds debounce for loop guard
+                  console.warn(`[BITRIX ADDRESS] 🛑 LOOP GUARD: Skipping update, last write was from Shopify ${Math.round(timeDiff / 1000)}s ago.`);
+                  isLoop = true;
+                }
+              }
+            } catch (pErr) {
+              console.warn(`[BITRIX ADDRESS] Provenance check failed: ${pErr.message}`);
+            }
+
+            if ((shouldUpdateAddress || deliveryPriceChanged) && !isLoop) {
+              console.log(JSON.stringify({
+                event: 'AUTO_ADDRESS_UPDATE_DETECTED',
+                requestId,
+                dealId,
+                shopifyOrderId,
+                bitrixAddress: bitrixAddressField,
+                parsedAddress,
+                currentShopifyAddress: {
+                  address1: shopifyOrder.shipping_address?.address1,
+                  city: shopifyOrder.shipping_address?.city,
+                  zip: shopifyOrder.shipping_address?.zip,
+                  country: shopifyOrder.shipping_address?.country
                 },
                 addressChanged: addressChanged,
                 deliveryPriceChanged: deliveryPriceChanged,
@@ -2012,6 +2038,13 @@ async function handleDealUpdate(dealId, requestId) {
               const addressResult = await updateShippingAddress(shopifyOrderId, updatePayload, correlationId, null);
 
               if (addressResult.success) {
+                // ✅ SET PROVENANCE MARKER (Source: Bitrix)
+                try {
+                  await setProvenanceMarker(shopifyOrderId, correlationId, 'address_update_from_bitrix', null, 'bitrix');
+                } catch (pmErr) {
+                  console.warn('Failed to set provenance marker:', pmErr);
+                }
+
                 console.log(JSON.stringify({
                   event: 'AUTO_ADDRESS_UPDATE_SUCCESS',
                   requestId,

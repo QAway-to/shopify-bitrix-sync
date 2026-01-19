@@ -13,21 +13,21 @@ import { callShopifyAdmin } from './adminClient.js';
  * @param {string} payloadHash - Payload hash for strong loop guard (optional)
  * @returns {Promise<Object>} Response with metafield data
  */
-export async function setProvenanceMarker(orderId, correlationId, action = 'fulfillment_create', payloadHash = null) {
+export async function setProvenanceMarker(orderId, correlationId, action = 'fulfillment_create', payloadHash = null, source = 'bitrix') {
   try {
     const timestamp = new Date().toISOString();
     const markerValue = {
-      source: 'bitrix',
+      source: source,
       action: action,
       correlationId: correlationId,
       ts: timestamp
     };
-    
+
     // Add payloadHash if provided (for strong loop guard)
     if (payloadHash) {
       markerValue.payloadHash = payloadHash;
     }
-    
+
     const value = JSON.stringify(markerValue);
 
     // Get existing metafields first to check if we need to update or create
@@ -99,11 +99,11 @@ export async function setProvenanceMarker(orderId, correlationId, action = 'fulf
 export async function getProvenanceMarker(orderId) {
   try {
     const response = await callShopifyAdmin(`/orders/${orderId}/metafields.json?namespace=middleware&key=last_write`);
-    
+
     if (response.metafields && response.metafields.length > 0) {
       const metafield = response.metafields[0];
       let parsedValue = null;
-      
+
       try {
         parsedValue = JSON.parse(metafield.value);
       } catch (parseError) {

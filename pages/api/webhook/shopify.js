@@ -6,7 +6,7 @@ import { callBitrix, getBitrixWebhookBase, classifyBitrixError } from '../../../
 import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
 import { upsertBitrixContact } from '../../../src/lib/bitrix/contact.js';
 import { BITRIX_CONFIG } from '../../../src/lib/bitrix/config.js';
-import { getProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
+import { getProvenanceMarker, setProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
 
 // Configure body parser to accept raw JSON
 export const config = {
@@ -1035,6 +1035,21 @@ async function handleOrderUpdated(order) {
       console.error(`[SHOPIFY WEBHOOK] ❌ Error details:`, updateResponse.error_description || updateResponse.error_description);
     } else {
       console.log(`[SHOPIFY WEBHOOK] ✅ Deal ${dealId} updated successfully`);
+
+      // ✅ SET PROVENANCE MARKER (Source: Shopify)
+      // This tells Bitrix that this update came from Shopify, so Bitrix shouldn't echo it back
+      try {
+        const correlationId = `shopify-webhook-${Date.now()}`;
+        // Verify shopifyOrderId is available (it should be in scope)
+        if (shopifyOrderId) {
+          await setProvenanceMarker(shopifyOrderId, correlationId, 'deal_update_from_shopify', null, 'shopify');
+          console.log(`[SHOPIFY WEBHOOK] ✅ Provenance marker set (source: shopify) for order ${shopifyOrderId}`);
+        } else {
+          console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not set provenance marker: shopifyOrderId missing`);
+        }
+      } catch (pmErr) {
+        console.warn(`[SHOPIFY WEBHOOK] ⚠️ Failed to set provenance marker: ${pmErr.message}`);
+      }
     }
   } catch (error) {
     console.error(`[SHOPIFY WEBHOOK] ❌ Error updating deal ${dealId}:`, error);
