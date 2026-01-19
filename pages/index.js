@@ -1030,15 +1030,17 @@ export default function ShopifyPage() {
             <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem', flexShrink: 0 }}>
               Shopify → Middleware → Bitrix
             </h3>
-            <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-              <EventsList
-                events={events}
-                selectedEvents={selectedEvents}
-                onSelectionChange={setSelectedEvents}
-                onPreviewEvent={handlePreviewEvent}
-                isLoading={isInitialFetch && isLoading}
-              />
-            </div>
+            <LockedSection isGuestMode={!isControlsUnlocked} title="Login to view events">
+              <div style={{ flex: '1 1 auto', minHeight: 0 }}>
+                <EventsList
+                  events={events}
+                  selectedEvents={selectedEvents}
+                  onSelectionChange={setSelectedEvents}
+                  onPreviewEvent={handlePreviewEvent}
+                  isLoading={isInitialFetch && isLoading}
+                />
+              </div>
+            </LockedSection>
           </div>
 
           {/* Middle column: Bitrix → Shopify - Fixed width */}
@@ -1085,15 +1087,17 @@ export default function ShopifyPage() {
                 )}
               </div>
             )}
-            <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-              <BitrixEventsList
-                events={bitrixEvents}
-                selectedEvents={selectedBitrixEvents}
-                onSelectionChange={setSelectedBitrixEvents}
-                onPreviewEvent={handleBitrixPreviewEvent}
-                isLoading={isInitialFetch && isBitrixLoading}
-              />
-            </div>
+            <LockedSection isGuestMode={!isControlsUnlocked} title="Login to view events">
+              <div style={{ flex: '1 1 auto', minHeight: 0 }}>
+                <BitrixEventsList
+                  events={bitrixEvents}
+                  selectedEvents={selectedBitrixEvents}
+                  onSelectionChange={setSelectedBitrixEvents}
+                  onPreviewEvent={handleBitrixPreviewEvent}
+                  isLoading={isInitialFetch && isBitrixLoading}
+                />
+              </div>
+            </LockedSection>
           </div>
 
           {/* Right column: Success Operations - Fixed width */}
@@ -1101,48 +1105,52 @@ export default function ShopifyPage() {
             <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem', flexShrink: 0 }}>
               Success Operations (Testing)
             </h3>
-            <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-              <SuccessOperationsList
-                operations={successOperations}
-                selectedOperations={selectedSuccessOperations}
-                onSelectionChange={setSelectedSuccessOperations}
-                onPreviewOperation={handleSuccessPreviewOperation}
-                isLoading={isInitialFetch && isSuccessLoading}
-              />
-            </div>
+            <LockedSection isGuestMode={!isControlsUnlocked} title="Login to view operations">
+              <div style={{ flex: '1 1 auto', minHeight: 0 }}>
+                <SuccessOperationsList
+                  operations={successOperations}
+                  selectedOperations={selectedSuccessOperations}
+                  onSelectionChange={setSelectedSuccessOperations}
+                  onPreviewOperation={handleSuccessPreviewOperation}
+                  isLoading={isInitialFetch && isSuccessLoading}
+                />
+              </div>
+            </LockedSection>
           </div>
         </div>
 
         {/* Data Preview - Wide block below */}
         {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation) ? (
-          <div style={{ marginTop: '20px', width: '100%' }}>
-            {previewData && previewEvent && !successPreviewOperation && (
-              <DataPreview
-                shopifyData={previewData.shopifyData}
-                bitrixData={previewData.bitrixData}
-                eventId={previewEvent.id}
-                onSendEvent={handleSendPreviewEvent}
-                isSending={isSending}
-              />
-            )}
-            {bitrixPreviewData && bitrixPreviewEvent && (
-              <DataPreview
-                shopifyData={bitrixPreviewData.shopifyData}
-                bitrixData={bitrixPreviewData.bitrixData}
-                eventId={bitrixPreviewEvent.dealId || bitrixPreviewEvent.id}
-                eventType="bitrix"
-              />
-            )}
-            {previewData && successPreviewOperation && (
-              <DataPreview
-                shopifyData={previewData.shopifyData}
-                bitrixData={previewData.bitrixData}
-                eventId={successPreviewOperation.dealId || successPreviewOperation.id}
-                eventType="success"
-                operation={successPreviewOperation}
-              />
-            )}
-          </div>
+          <LockedSection isGuestMode={!isControlsUnlocked} title="Login to view preview">
+            <div style={{ marginTop: '20px', width: '100%' }}>
+              {previewData && previewEvent && !successPreviewOperation && (
+                <DataPreview
+                  shopifyData={previewData.shopifyData}
+                  bitrixData={previewData.bitrixData}
+                  eventId={previewEvent.id}
+                  onSendEvent={handleSendPreviewEvent}
+                  isSending={isSending}
+                />
+              )}
+              {bitrixPreviewData && bitrixPreviewEvent && (
+                <DataPreview
+                  shopifyData={bitrixPreviewData.shopifyData}
+                  bitrixData={bitrixPreviewData.bitrixData}
+                  eventId={bitrixPreviewEvent.dealId || bitrixPreviewEvent.id}
+                  eventType="bitrix"
+                />
+              )}
+              {previewData && successPreviewOperation && (
+                <DataPreview
+                  shopifyData={previewData.shopifyData}
+                  bitrixData={previewData.bitrixData}
+                  eventId={successPreviewOperation.dealId || successPreviewOperation.id}
+                  eventType="success"
+                  operation={successPreviewOperation}
+                />
+              )}
+            </div>
+          </LockedSection>
         ) : null}
       </main>
     </>
