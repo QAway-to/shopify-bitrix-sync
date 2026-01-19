@@ -959,6 +959,39 @@ async function handleOrderUpdated(order) {
     fields.UF_CRM_1739183268662 = mappedFields.UF_CRM_1739183268662; // Order type
   }
 
+  // ✅ ADDRESS SYNC: Shopify → Bitrix (only for UNFULFILLED orders)
+  // Once order is fulfilled, address shouldn't change
+  const fulfillmentStatus = order?.fulfillment_status || '';
+  const isFulfilled = fulfillmentStatus === 'fulfilled';
+
+  if (!isFulfilled && order?.shipping_address) {
+    const addr = order.shipping_address;
+    // Build Bitrix address string format: "Street, ZIP City Region, Country"
+    const addressParts = [];
+    if (addr.address1) addressParts.push(addr.address1);
+    if (addr.address2) addressParts.push(addr.address2);
+
+    const cityParts = [];
+    if (addr.zip) cityParts.push(addr.zip);
+    if (addr.city) cityParts.push(addr.city);
+    if (addr.province) cityParts.push(addr.province);
+
+    let bitrixAddress = addressParts.join(', ');
+    if (cityParts.length > 0) {
+      bitrixAddress += (bitrixAddress ? ', ' : '') + cityParts.join(' ');
+    }
+    if (addr.country) {
+      bitrixAddress += (bitrixAddress ? ', ' : '') + addr.country;
+    }
+
+    if (bitrixAddress.trim()) {
+      fields.UF_CRM_1742037435676 = bitrixAddress;
+      console.log(`[SHOPIFY WEBHOOK] 📍 Address synced to Bitrix: "${bitrixAddress}"`);
+    }
+  } else if (isFulfilled) {
+    console.log(`[SHOPIFY WEBHOOK] 📍 Address sync skipped (order is ${fulfillmentStatus})`);
+  }
+
   // ✅ CONTACT SYNC: Ensure Deal is linked to the correct Contact (updates if email changed)
   try {
     const webhookUrl = getBitrixWebhookBase();
