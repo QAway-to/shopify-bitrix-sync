@@ -6,7 +6,7 @@ import { callBitrix } from '../../../src/lib/bitrix/client.js';
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
 import { BITRIX_CONFIG } from '../../../src/lib/bitrix/config.js';
 import { getFulfillmentOrders, getOrderForFulfillment, createFulfillment, getPostFulfillmentState } from '../../../src/lib/shopify/fulfillment.js';
-import { setProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
+
 import { createHoldOrder } from '../../../src/lib/shopify/hold.js';
 import { createRefund } from '../../../src/lib/shopify/refund.js';
 import { updateShippingAddress } from '../../../src/lib/shopify/address.js';
