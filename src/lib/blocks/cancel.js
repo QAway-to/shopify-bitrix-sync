@@ -251,7 +251,6 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                     }
 
                     // STEP 2: CANCEL ORDER
-                    let cancelData = null;
                     if (doCancel && canCancel) {
                         console.log(`[CANCEL BLOCK] 🚫 Executing Full Order Cancel (Reason: ${lossAction.reason})...`);
                         const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
@@ -260,8 +259,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                           orderCancel(
                             orderId: $orderId,
                             reason: OTHER,
-                            restock: $restock,
-                            email: false
+                            restock: $restock
                           ) {
                             userErrors {
                               field
@@ -279,7 +277,14 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         });
 
                         if (cancelData?.orderCancel?.userErrors && cancelData.orderCancel.userErrors.length > 0) {
-                            console.warn(`[CANCEL BLOCK] Cancel Warnings:`, cancelData.orderCancel.userErrors);
+                            const errorMessages = cancelData.orderCancel.userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
+
+                            // Check if order is already cancelled - treat as success
+                            if (errorMessages.includes('already been canceled') || errorMessages.includes('already cancelled')) {
+                                console.log(`[CANCEL BLOCK] ℹ️ Order ${shopifyOrderId} is already cancelled, ignoring error.`);
+                            } else {
+                                console.warn(`[CANCEL BLOCK] Cancel Warnings:`, cancelData.orderCancel.userErrors);
+                            }
                         } else {
                             console.log(`[CANCEL BLOCK] 🚫 Order Cancelled Successfully`);
                         }
@@ -299,6 +304,17 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                     };
                 } // Close if (shopifyOrder)
             } catch (regularCancelError) {
+                // If it's the "already cancelled" error from inside callShopifyGraphQL (unlikely but possible if it throws)
+                if (regularCancelError.message && (regularCancelError.message.includes('already been canceled') || regularCancelError.message.includes('already cancelled'))) {
+                    console.log(`[CANCEL BLOCK] ℹ️ Order ${shopifyOrderId} was already cancelled (caught exception).`);
+                    return {
+                        handled: true,
+                        success: true,
+                        action: 'order_already_cancelled',
+                        shopifyOrderId
+                    };
+                }
+
                 console.log(`[CANCEL BLOCK] Error during detail processing: ${regularCancelError.message}`);
                 // Proceed to fallback?
             }

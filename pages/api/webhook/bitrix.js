@@ -3682,11 +3682,37 @@ async function handleDealCreate(dealId, requestId) {
 
         const correlationId = `CREATE_MODE:${dealId}:${Date.now()}`;
 
-        // Get customer email from deal
-        const customerEmail = dealData.UF_CRM_1741232139524 || dealData.uf_crm_1741232139524 || 'order@bfriendsclub.com';
+        // Get customer email from deal or fetch from Contact
+        let customerEmail = dealData.UF_CRM_1741232139524 || dealData.uf_crm_1741232139524;
+        let contactData = { firstName: '', lastName: '', phone: '', email: '' };
+
+        if (!customerEmail && dealData.CONTACT_ID) {
+          try {
+            console.log(`[CREATE MODE] Fetching contact ${dealData.CONTACT_ID} for email/info...`);
+            const contactRes = await callBitrix('crm.contact.get', { id: dealData.CONTACT_ID });
+            if (contactRes && contactRes.result) {
+              const contact = contactRes.result;
+              contactData.firstName = contact.NAME || '';
+              contactData.lastName = contact.LAST_NAME || '';
+              contactData.phone = Array.isArray(contact.PHONE) && contact.PHONE.length > 0 ? contact.PHONE[0].VALUE : '';
+
+              if (Array.isArray(contact.EMAIL) && contact.EMAIL.length > 0) {
+                customerEmail = contact.EMAIL[0].VALUE;
+                contactData.email = customerEmail;
+                console.log(`[CREATE MODE] Found email in contact: ${customerEmail}`);
+              }
+            }
+          } catch (contactErr) {
+            console.warn(`[CREATE MODE] Error fetching contact ${dealData.CONTACT_ID}:`, contactErr.message);
+          }
+        }
+
+        // Fallback default if still no email
+        if (!customerEmail) customerEmail = 'order@bfriendsclub.com';
 
         const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
           customerEmail,
+          contactData, // Pass contact details for address/billing
           isStubOrder: false,
           stubReason: null
         });
@@ -3701,11 +3727,8 @@ async function handleDealCreate(dealId, requestId) {
               UF_CRM_1742556489: createdOrderId
             };
 
-            // Update title with order name
-            const currentTitle = dealData.TITLE || '';
-            if (!currentTitle.includes(orderName) && !currentTitle.includes('#')) {
-              updateFields.TITLE = `${orderName} ${currentTitle}`.trim();
-            }
+            // Update title with order name (Force replace)
+            updateFields.TITLE = orderName;
 
             await callBitrix('/crm.deal.update.json', {
               id: dealId,
