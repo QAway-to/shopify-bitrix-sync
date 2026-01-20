@@ -3704,681 +3704,704 @@ async function handleDealCreate(dealId, requestId) {
 
               // Extract Address from Bitrix Contact
               // Bitrix fields: ADDRESS, ADDRESS_2, ADDRESS_CITY, ADDRESS_POSTAL_CODE, ADDRESS_REGION, ADDRESS_COUNTRY
-              if (contact.ADDRESS || contact.ADDRESS_CITY) {
-                contactData.address = {
-                  address1: contact.ADDRESS || '',
-                  address2: contact.ADDRESS_2 || '',
-                  city: contact.ADDRESS_CITY || '',
-                  zip: contact.ADDRESS_POSTAL_CODE || '',
-                  province: contact.ADDRESS_REGION || '', // Bitrix calls it REGION/PROVINCE
-                  country: contact.ADDRESS_COUNTRY || ''
-                };
-                console.log(`[CREATE MODE] Found address in contact: ${contact.ADDRESS_CITY}, ${contact.ADDRESS}`);
+              contactData.address = {
+                address1: contact.ADDRESS || '',
+                address2: contact.ADDRESS_2 || '',
+                city: contact.ADDRESS_CITY || '',
+                zip: contact.ADDRESS_POSTAL_CODE || '',
+                province: contact.ADDRESS_REGION || '', // Bitrix calls it REGION/PROVINCE
+                country: contact.ADDRESS_COUNTRY || ''
+              };
+              console.log(`[CREATE MODE] Found address in contact: ${contactData.address.city}, ${contactData.address.country}`);
+
+              // Try to resolve Country Name to Code if > 2 chars
+              if (contactData.address.country && contactData.address.country.length > 2) {
+                try {
+                  console.log(`[CREATE MODE] Resolving country name "${contactData.address.country}" to code...`);
+                  const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
+                  // Fetch countries (TODO: Cache this?)
+                  const countriesResponse = await callShopifyAdmin('/countries.json');
+                  const countries = countriesResponse.countries || [];
+                  const countryMatch = countries.find(c =>
+                    c.name.toLowerCase() === contactData.address.country.toLowerCase() ||
+                    (c.code && c.code.toLowerCase() === contactData.address.country.toLowerCase())
+                  );
+
+                  if (countryMatch) {
+                    console.log(`[CREATE MODE] Resolved country "${contactData.address.country}" -> "${countryMatch.code}"`);
+                    contactData.address.country = countryMatch.code; // Set to ISO 2-char code
+                  } else {
+                    console.warn(`[CREATE MODE] Could not resolve country "${contactData.address.country}" to a Shopify country code.`);
+                  }
+                } catch (countryErr) {
+                  console.warn(`[CREATE MODE] Error resolving country code: ${countryErr.message}`);
+                }
               }
             }
+          }
           } catch (contactErr) {
-            console.warn(`[CREATE MODE] Error fetching contact ${dealData.CONTACT_ID}:`, contactErr.message);
-          }
-        }
-
-        // Fallback default if still no email
-        if (!customerEmail) customerEmail = 'order@bfriendsclub.com';
-
-        const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
-          customerEmail,
-          contactData, // Pass contact details for address/billing
-          isStubOrder: false,
-          stubReason: null
-        });
-
-        if (orderResult.success) {
-          const createdOrderId = String(orderResult.orderId);
-
-          // Update deal with Shopify Order ID and Title
-          try {
-            let orderName = orderResult.orderName || `#${createdOrderId}`;
-            const updateFields = {
-              UF_CRM_1742556489: createdOrderId
-            };
-
-            // Update title with order name (Force replace)
-            updateFields.TITLE = orderName;
-
-            await callBitrix('/crm.deal.update.json', {
-              id: dealId,
-              fields: updateFields
-            });
-
-            console.log(JSON.stringify({
-              event: 'CREATE_MODE_ORDER_SUCCESS',
-              requestId,
-              dealId,
-              shopifyOrderId: createdOrderId,
-              orderName,
-              timestamp: new Date().toISOString()
-            }));
-          } catch (updateError) {
-            console.warn(`[CREATE MODE] Failed to update deal: ${updateError.message}`);
-          }
-
-          return {
-            success: true,
-            action: 'order_created',
-            shopifyOrderId: orderResult.orderId,
-            orderName: orderResult.orderName
-          };
-        } else {
-          console.error(`[CREATE MODE] Order creation failed: ${orderResult.error}`);
-          return {
-            success: false,
-            error: 'order_creation_failed',
-            message: orderResult.error
-          };
+          console.warn(`[CREATE MODE] Error fetching contact ${dealData.CONTACT_ID}:`, contactErr.message);
         }
       }
 
+      // Fallback default if still no email
+      if (!customerEmail) customerEmail = 'order@bfriendsclub.com';
+
+      const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
+        customerEmail,
+        contactData, // Pass contact details for address/billing
+        isStubOrder: false,
+        stubReason: null
+      });
+
+      if (orderResult.success) {
+        const createdOrderId = String(orderResult.orderId);
+
+        // Update deal with Shopify Order ID and Title
+        try {
+          let orderName = orderResult.orderName || `#${createdOrderId}`;
+          const updateFields = {
+            UF_CRM_1742556489: createdOrderId
+          };
+
+          // Update title with order name (Force replace)
+          updateFields.TITLE = orderName;
+
+          await callBitrix('/crm.deal.update.json', {
+            id: dealId,
+            fields: updateFields
+          });
+
+          console.log(JSON.stringify({
+            event: 'CREATE_MODE_ORDER_SUCCESS',
+            requestId,
+            dealId,
+            shopifyOrderId: createdOrderId,
+            orderName,
+            timestamp: new Date().toISOString()
+          }));
+        } catch (updateError) {
+          console.warn(`[CREATE MODE] Failed to update deal: ${updateError.message}`);
+        }
+
+        return {
+          success: true,
+          action: 'order_created',
+          shopifyOrderId: orderResult.orderId,
+          orderName: orderResult.orderName
+        };
+      } else {
+        console.error(`[CREATE MODE] Order creation failed: ${orderResult.error}`);
+        return {
+          success: false,
+          error: 'order_creation_failed',
+          message: orderResult.error
+        };
+      }
+    }
+
       // For REGULAR orders (when no Create Mode items), continue with standard order creation
       if (items.length === 0 && orderType === 'REGULAR') {
-        // Get product rows from deal (original logic for non-Category-4)
-        const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
-          id: dealId
-        });
+      // Get product rows from deal (original logic for non-Category-4)
+      const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
+        id: dealId
+      });
 
+      console.log(JSON.stringify({
+        event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_PRODUCT_ROWS_RESPONSE',
+        requestId,
+        dealId,
+        eventType: 'CREATE',
+        productRowsExists: !!(productRowsResp && productRowsResp.result),
+        productRowsIsArray: Array.isArray(productRowsResp?.result),
+        productRowsCount: productRowsResp?.result?.length || 0,
+        productRowsRespKeys: productRowsResp ? Object.keys(productRowsResp) : [],
+        timestamp: new Date().toISOString()
+      }));
+
+      if (!productRowsResp || !productRowsResp.result) {
         console.log(JSON.stringify({
-          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_PRODUCT_ROWS_RESPONSE',
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
           requestId,
           dealId,
           eventType: 'CREATE',
-          productRowsExists: !!(productRowsResp && productRowsResp.result),
-          productRowsIsArray: Array.isArray(productRowsResp?.result),
-          productRowsCount: productRowsResp?.result?.length || 0,
-          productRowsRespKeys: productRowsResp ? Object.keys(productRowsResp) : [],
+          skip_reason: 'no_product_rows_response',
+          productRowsRespExists: !!productRowsResp,
+          timestamp: new Date().toISOString()
+        }));
+      } else if (!Array.isArray(productRowsResp.result)) {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          skip_reason: 'product_rows_not_array',
+          productRowsType: typeof productRowsResp.result,
+          timestamp: new Date().toISOString()
+        }));
+      } else if (productRowsResp.result && Array.isArray(productRowsResp.result)) {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_CHECK',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          productRowsCount: productRowsResp.result.length,
           timestamp: new Date().toISOString()
         }));
 
-        if (!productRowsResp || !productRowsResp.result) {
-          console.log(JSON.stringify({
-            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
-            requestId,
-            dealId,
-            eventType: 'CREATE',
-            skip_reason: 'no_product_rows_response',
-            productRowsRespExists: !!productRowsResp,
-            timestamp: new Date().toISOString()
-          }));
-        } else if (!Array.isArray(productRowsResp.result)) {
-          console.log(JSON.stringify({
-            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
-            requestId,
-            dealId,
-            eventType: 'CREATE',
-            skip_reason: 'product_rows_not_array',
-            productRowsType: typeof productRowsResp.result,
-            timestamp: new Date().toISOString()
-          }));
-        } else if (productRowsResp.result && Array.isArray(productRowsResp.result)) {
-          console.log(JSON.stringify({
-            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_CHECK',
-            requestId,
-            dealId,
-            eventType: 'CREATE',
-            productRowsCount: productRowsResp.result.length,
-            timestamp: new Date().toISOString()
-          }));
+        // Convert Bitrix product rows to Shopify items
+        // Need to get SKU from Bitrix product by PRODUCT_ID
+        const items = [];
+        let isStubOrder = false;
+        let stubReason = null;
+        for (const row of productRowsResp.result) {
+          const productId = row.PRODUCT_ID;
+          if (!productId) continue;
 
-          // Convert Bitrix product rows to Shopify items
-          // Need to get SKU from Bitrix product by PRODUCT_ID
-          const items = [];
-          let isStubOrder = false;
-          let stubReason = null;
-          for (const row of productRowsResp.result) {
-            const productId = row.PRODUCT_ID;
-            if (!productId) continue;
-
-            // Get product details from Bitrix to get SKU
-            try {
-              const productResp = await callBitrix('/crm.product.get.json', {
-                id: productId
-              });
-
-              if (productResp.result) {
-                const product = productResp.result;
-                const code = product.CODE;
-                const xmlId = product.XML_ID; // XML_ID = variant_id in Shopify
-
-                // Priority: CODE (SKU) first, then XML_ID (variant_id) directly
-                if (code && code.trim() !== '') {
-                  // Use CODE as SKU - will look up variant_id by SKU
-                  items.push({
-                    sku: code.trim(),
-                    qty: row.QUANTITY || 1
-                  });
-                  console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using CODE as SKU: ${code.trim()}`);
-                } else if (xmlId && xmlId.toString().trim() !== '') {
-                  // Use XML_ID directly as variant_id (no SKU lookup needed)
-                  items.push({
-                    variantId: xmlId.toString().trim(),
-                    qty: row.QUANTITY || 1
-                  });
-                  console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using XML_ID as variantId directly: ${xmlId}`);
-                } else {
-                  console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE (SKU) or XML_ID (variant_id), skipping`);
-                }
-              }
-            } catch (productError) {
-              console.error(`[BITRIX TO SHOPIFY] Error getting product ${productId}:`, productError);
-            }
-          }
-
-          console.log(JSON.stringify({
-            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ITEMS_COLLECTED',
-            requestId,
-            dealId,
-            eventType: 'CREATE',
-            itemsCount: items.length,
-            items: items.map(i => ({
-              sku: i.sku || null,
-              variantId: i.variantId || null,
-              qty: i.qty
-            })),
-            itemsWithSku: items.filter(i => i.sku).length,
-            itemsWithVariantId: items.filter(i => i.variantId).length,
-            timestamp: new Date().toISOString()
-          }));
-
-          // ✅ Category 4 fallback: If no product rows, try CATALOG (Brand/Model/Size UF fields)
-          if (items.length === 0 && categoryId === '4') {
-            console.log(JSON.stringify({
-              event: 'CATEGORY_4_CATALOG_FALLBACK',
-              requestId,
-              dealId,
-              message: 'No product rows, trying CATALOG fallback with Brand/Model/Size fields',
-              timestamp: new Date().toISOString()
-            }));
-            const catalogItems = await resolveCatalogOrderItems(dealId, dealData, requestId);
-            if (catalogItems.length > 0) {
-              items.push(...catalogItems);
-              orderType = 'CATALOG';
-            }
-          }
-
-          // ✅ If Bitrix sent empty product rows (0 items), optionally add default product
-          if (items.length === 0 && productRowsResp.result.length === 0 && BITRIX_ALLOW_EMPTY_PRODUCT_LINES) {
-            items.push({
-              variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
-              qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
-            });
-            isStubOrder = true;
-            stubReason = 'empty_product_rows';
-            console.log(JSON.stringify({
-              event: 'BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
-              requestId,
-              dealId,
-              eventType: 'CREATE',
-              defaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
-              defaultQty: BITRIX_EMPTY_ORDER_DEFAULT_QTY,
-              reason: 'empty_product_rows',
-              timestamp: new Date().toISOString()
-            }));
-          }
-
-          // ✅ If product rows exist but we couldn't map any valid items, optionally add default product
-          if (items.length === 0 && productRowsResp.result.length > 0 && BITRIX_ALLOW_EMPTY_PRODUCT_LINES) {
-            items.push({
-              variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
-              qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
-            });
-            isStubOrder = true;
-            stubReason = 'no_mappable_items';
-            console.log(JSON.stringify({
-              event: 'BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
-              requestId,
-              dealId,
-              eventType: 'CREATE',
-              defaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
-              defaultQty: BITRIX_EMPTY_ORDER_DEFAULT_QTY,
-              reason: 'no_mappable_items',
-              timestamp: new Date().toISOString()
-            }));
-          }
-
-          if (items.length > 0) {
-            console.log(JSON.stringify({
-              event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ATTEMPT',
-              requestId,
-              dealId,
-              eventType: 'CREATE',
-              itemsCount: items.length,
-              items: items.map(i => ({ sku: i.sku, qty: i.qty })),
-              timestamp: new Date().toISOString()
-            }));
-
-            // Extract shipping address and delivery info from Bitrix deal
-            let shippingAddress = null;
-            let shippingLines = null;
-
-            // Parse shipping address from UF_CRM_1742037435676
-            const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
-            if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
-              const parsedAddress = parseBitrixAddressString(bitrixAddressField);
-              if (parsedAddress && Object.keys(parsedAddress).length > 0) {
-                // Try to get country code from country name if needed
-                if (parsedAddress.country && !parsedAddress.country_code) {
-                  try {
-                    const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
-                    const countriesResponse = await callShopifyAdmin('/countries.json');
-                    const countries = countriesResponse.countries || [];
-                    const countryMatch = countries.find(c =>
-                      c.name.toLowerCase() === parsedAddress.country.toLowerCase()
-                    );
-                    if (countryMatch) {
-                      parsedAddress.country_code = countryMatch.code;
-                      parsedAddress.country = countryMatch.name; // Use exact name from Shopify
-                    }
-                  } catch (countryError) {
-                    console.warn(`[BITRIX TO SHOPIFY] Failed to resolve country code: ${countryError.message}`);
-                  }
-                }
-                shippingAddress = parsedAddress;
-              }
-            }
-
-            // Extract delivery info (if available in deal fields)
-            // Default shipping line (0.00 to not change Total)
-            shippingLines = [{
-              title: 'Standard Shipping',
-              price: '0.00',
-              code: 'Free'
-            }];
-
-            // Create order in Shopify (stable per webhook request for traceability)
-            const correlationId = `bitrix:${dealId}:${requestId}`;
-            const customerEmail = await resolveCustomerEmailFromDeal(dealData, requestId, dealId, 'ORDER_CREATE_CREATE');
-            const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
-              shippingAddress,
-              shippingLines,
-              customerEmail,
-              isStubOrder,
-              stubReason,
-              stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null
+          // Get product details from Bitrix to get SKU
+          try {
+            const productResp = await callBitrix('/crm.product.get.json', {
+              id: productId
             });
 
-            if (orderResult.success) {
-              // Handle duplicate case
-              if (orderResult.wasDuplicate) {
-                console.log(JSON.stringify({
-                  event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE',
-                  requestId,
-                  dealId,
-                  eventType: 'CREATE',
-                  message: 'Order creation prevented - duplicate found',
-                  existingShopifyOrderId: orderResult.orderId,
-                  timestamp: new Date().toISOString()
-                }));
-                // Use existing order ID
-                existingShopifyOrderId = String(orderResult.orderId);
+            if (productResp.result) {
+              const product = productResp.result;
+              const code = product.CODE;
+              const xmlId = product.XML_ID; // XML_ID = variant_id in Shopify
+
+              // Priority: CODE (SKU) first, then XML_ID (variant_id) directly
+              if (code && code.trim() !== '') {
+                // Use CODE as SKU - will look up variant_id by SKU
+                items.push({
+                  sku: code.trim(),
+                  qty: row.QUANTITY || 1
+                });
+                console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using CODE as SKU: ${code.trim()}`);
+              } else if (xmlId && xmlId.toString().trim() !== '') {
+                // Use XML_ID directly as variant_id (no SKU lookup needed)
+                items.push({
+                  variantId: xmlId.toString().trim(),
+                  qty: row.QUANTITY || 1
+                });
+                console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using XML_ID as variantId directly: ${xmlId}`);
               } else {
-                // Save shopifyOrderId back to Bitrix deal
-                const createdOrderId = String(orderResult.orderId);
-
-                // ✅ CRITICAL: Re-check for duplicate immediately after creation (race condition protection)
-                await new Promise(resolve => setTimeout(resolve, 100));
-                const postCreateCheck = await findExistingOrderByDealId(dealId);
-                if (postCreateCheck && postCreateCheck !== createdOrderId) {
-                  console.log(JSON.stringify({
-                    event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE_AFTER_CREATE',
-                    requestId,
-                    dealId,
-                    eventType: 'CREATE',
-                    message: 'Duplicate detected immediately after creation',
-                    createdOrderId: createdOrderId,
-                    foundOrderId: postCreateCheck,
-                    timestamp: new Date().toISOString()
-                  }));
-                  // Use the first found order
-                  existingShopifyOrderId = postCreateCheck;
-                } else {
-                  existingShopifyOrderId = createdOrderId;
-                }
-
-                try {
-                  // Get current deal title to check if order number is already added
-                  const currentTitle = dealData.TITLE || '';
-                  let orderName = orderResult.orderName; // e.g., "#2491" or "Existing order 1234"
-
-                  // If order was duplicate, try to get real order name from Shopify
-                  if (orderResult.wasDuplicate && orderName && !orderName.startsWith('#')) {
-                    try {
-                      const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
-                      const existingOrder = await getOrder(existingShopifyOrderId);
-                      if (existingOrder && existingOrder.name) {
-                        orderName = existingOrder.name; // Get real order name like "#2491"
-                        console.log(JSON.stringify({
-                          event: 'BITRIX_ORDER_NAME_FETCHED',
-                          requestId,
-                          dealId,
-                          shopifyOrderId: existingShopifyOrderId,
-                          fetchedOrderName: orderName,
-                          reason: 'duplicate_order_real_name_fetch',
-                          timestamp: new Date().toISOString()
-                        }));
-                      }
-                    } catch (fetchError) {
-                      console.warn(`[BITRIX TO SHOPIFY] Failed to fetch order name for duplicate: ${fetchError.message}`);
-                    }
-                  }
-
-                  // Check if title already contains THIS specific order number (prevent duplicate updates)
-                  const orderNumberFromName = orderName ? orderName.replace('#', '') : null;
-                  const orderNumberPattern = orderNumberFromName ? new RegExp(`#?${orderNumberFromName}\\b`) : /#\d+/;
-                  const alreadyContainsThisOrderNumber = orderNumberFromName && orderNumberPattern.test(currentTitle);
-
-                  // Prepare update fields
-                  const updateFields = {
-                    UF_CRM_1742556489: existingShopifyOrderId // Shopify Order ID field
-                  };
-
-                  // Update TITLE only if:
-                  // 1. orderName is available and contains "#" (real Shopify order name format)
-                  // 2. This specific order number is not already in title
-                  // 3. orderName is not in format "Existing order X" or "Order X"
-                  const isValidOrderName = orderName &&
-                    orderName.trim() !== '' &&
-                    (orderName.startsWith('#') || /^#?\d+$/.test(orderName.replace('#', '')));
-                  const isNotPlaceholderName = !orderName.includes('Existing order') && !orderName.includes('Order ');
-
-                  if (!alreadyContainsThisOrderNumber && isValidOrderName && isNotPlaceholderName) {
-                    // Ensure orderName starts with "#"
-                    const formattedOrderName = orderName.startsWith('#') ? orderName : `#${orderName}`;
-
-                    // Remove "D_XXXX" pattern from title if present, then add order number
-                    // Example: "D_6704 #2494" -> "#2494" (remove "D_6704", keep "#2494")
-                    // Example: "D_6704" -> "#2494" (replace "D_6704" with "#2494")
-                    let updatedTitle = currentTitle;
-
-                    // Remove "D_XXXX" pattern (e.g., "D_6704")
-                    updatedTitle = updatedTitle.replace(/D_\d+\s*/g, '').trim();
-
-                    // Add order number
-                    updatedTitle = `${updatedTitle} ${formattedOrderName}`.trim();
-
-                    updateFields.TITLE = updatedTitle;
-
-                    console.log(JSON.stringify({
-                      event: 'BITRIX_DEAL_TITLE_UPDATE_PLANNED',
-                      requestId,
-                      dealId,
-                      currentTitle,
-                      updatedTitle,
-                      orderName: formattedOrderName,
-                      shopifyOrderId: existingShopifyOrderId,
-                      wasDuplicate: orderResult.wasDuplicate || false,
-                      timestamp: new Date().toISOString()
-                    }));
-                  } else {
-                    const skipReason = alreadyContainsThisOrderNumber
-                      ? 'order_number_already_in_title'
-                      : !isValidOrderName
-                        ? 'invalid_order_name_format'
-                        : !isNotPlaceholderName
-                          ? 'placeholder_order_name'
-                          : 'unknown';
-
-                    console.log(JSON.stringify({
-                      event: 'BITRIX_DEAL_TITLE_UPDATE_SKIPPED',
-                      requestId,
-                      dealId,
-                      reason: skipReason,
-                      currentTitle,
-                      orderName,
-                      shopifyOrderId: existingShopifyOrderId,
-                      alreadyContainsThisOrderNumber,
-                      isValidOrderName,
-                      isNotPlaceholderName,
-                      timestamp: new Date().toISOString()
-                    }));
-                  }
-
-                  await callBitrix('/crm.deal.update.json', {
-                    id: dealId,
-                    fields: updateFields
-                  });
-
-                  console.log(JSON.stringify({
-                    event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SUCCESS',
-                    requestId,
-                    dealId,
-                    eventType: 'CREATE',
-                    shopifyOrderId: existingShopifyOrderId,
-                    orderName: orderResult.orderName,
-                    wasDuplicate: orderResult.wasDuplicate || false,
-                    titleUpdated: !!updateFields.TITLE,
-                    lineItemsCount: orderResult.lineItems?.length || 0,
-                    tags: orderResult.tags || [],
-                    note: orderResult.note || '',
-                    timestamp: new Date().toISOString()
-                  }));
-
-                  // Update stored event with shopifyOrderId
-                  if (storedEvent) {
-                    storedEvent.shopifyOrderId = existingShopifyOrderId;
-                  }
-
-                  // ✅ SYNC PAYMENT STATUS (Fix: Ensure status is synced immediately after creation)
-                  try {
-                    await syncShopifyPaymentStatusFromBitrix(dealData, existingShopifyOrderId, requestId, dealId);
-                  } catch (paySyncErr) {
-                    console.error(`[BITRIX TO SHOPIFY] Failed to sync payment status after create:`, paySyncErr);
-                  }
-
-                  return {
-                    success: true,
-                    triggerMatch: true,
-                    shopifyOrderId: existingShopifyOrderId,
-                    orderName: orderResult.orderName,
-                    wasDuplicate: orderResult.wasDuplicate || false
-                  };
-                } catch (updateError) {
-                  console.error(`[BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
-                  return {
-                    success: true,
-                    triggerMatch: true,
-                    shopifyOrderId: existingShopifyOrderId || createdOrderId,
-                    orderCreated: true,
-                    dealUpdateFailed: true,
-                    wasDuplicate: orderResult.wasDuplicate || false
-                  };
-                }
+                console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE (SKU) or XML_ID (variant_id), skipping`);
               }
-            } else {
-              console.log(JSON.stringify({
-                event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ERROR',
-                requestId,
-                dealId,
-                eventType: 'CREATE',
-                error: orderResult.error,
-                message: orderResult.message,
-                timestamp: new Date().toISOString()
-              }));
-              return {
-                success: false,
-                triggerMatch: false,
-                skip_reason: 'order_create_failed',
-                error: orderResult.error
-              };
             }
-          } else {
-            console.log(JSON.stringify({
-              event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
-              requestId,
-              dealId,
-              eventType: 'CREATE',
-              skip_reason: 'no_valid_items',
-              productRowsCount: productRowsResp.result.length,
-              timestamp: new Date().toISOString()
-            }));
+          } catch (productError) {
+            console.error(`[BITRIX TO SHOPIFY] Error getting product ${productId}:`, productError);
           }
-        } else {
-          console.log(JSON.stringify({
-            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
-            requestId,
-            dealId,
-            eventType: 'CREATE',
-            skip_reason: 'no_product_rows',
-            timestamp: new Date().toISOString()
-          }));
         }
-      } // End: if (orderType === 'REGULAR')
 
-      // ═══════════════════════════════════════════════════════════════════════════
-      // CATALOG ORDER CREATION (Category 4 with resolved items)
-      // ═══════════════════════════════════════════════════════════════════════════
-      if (orderType === 'CATALOG' && items.length > 0) {
         console.log(JSON.stringify({
-          event: 'CATALOG_ORDER_CREATE_ATTEMPT',
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ITEMS_COLLECTED',
           requestId,
           dealId,
           eventType: 'CREATE',
           itemsCount: items.length,
-          items: items.map(i => ({ variantId: i.variantId, qty: i.qty })),
+          items: items.map(i => ({
+            sku: i.sku || null,
+            variantId: i.variantId || null,
+            qty: i.qty
+          })),
+          itemsWithSku: items.filter(i => i.sku).length,
+          itemsWithVariantId: items.filter(i => i.variantId).length,
           timestamp: new Date().toISOString()
         }));
 
-        // Extract shipping address from deal
-        let shippingAddress = null;
-        const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
-        if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
-          const parsedAddress = parseBitrixAddressString(bitrixAddressField);
-          if (parsedAddress && Object.keys(parsedAddress).length > 0) {
-            try {
-              const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
-              const countriesResponse = await callShopifyAdmin('/countries.json');
-              const countries = countriesResponse.countries || [];
-              const countryMatch = countries.find(c =>
-                c.name.toLowerCase() === parsedAddress.country.toLowerCase()
-              );
-              if (countryMatch) {
-                parsedAddress.country_code = countryMatch.code;
-                parsedAddress.country = countryMatch.name;
-              }
-            } catch (countryError) {
-              console.warn(`[CATALOG ORDER] Failed to resolve country code: ${countryError.message}`);
-            }
-            shippingAddress = parsedAddress;
+        // ✅ Category 4 fallback: If no product rows, try CATALOG (Brand/Model/Size UF fields)
+        if (items.length === 0 && categoryId === '4') {
+          console.log(JSON.stringify({
+            event: 'CATEGORY_4_CATALOG_FALLBACK',
+            requestId,
+            dealId,
+            message: 'No product rows, trying CATALOG fallback with Brand/Model/Size fields',
+            timestamp: new Date().toISOString()
+          }));
+          const catalogItems = await resolveCatalogOrderItems(dealId, dealData, requestId);
+          if (catalogItems.length > 0) {
+            items.push(...catalogItems);
+            orderType = 'CATALOG';
           }
         }
 
-        const shippingLines = [{ title: 'Standard Shipping', price: '0.00', code: 'Free' }];
-        const correlationId = `bitrix:${dealId}:${requestId}`;
-        const customerEmail = await resolveCustomerEmailFromDeal(dealData, requestId, dealId, 'ORDER_CREATE_CATALOG');
+        // ✅ If Bitrix sent empty product rows (0 items), optionally add default product
+        if (items.length === 0 && productRowsResp.result.length === 0 && BITRIX_ALLOW_EMPTY_PRODUCT_LINES) {
+          items.push({
+            variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
+            qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
+          });
+          isStubOrder = true;
+          stubReason = 'empty_product_rows';
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
+            requestId,
+            dealId,
+            eventType: 'CREATE',
+            defaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
+            defaultQty: BITRIX_EMPTY_ORDER_DEFAULT_QTY,
+            reason: 'empty_product_rows',
+            timestamp: new Date().toISOString()
+          }));
+        }
 
-        const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
-          shippingAddress,
-          shippingLines,
-          customerEmail,
-          isStubOrder: false,
-          stubReason: null
-        });
+        // ✅ If product rows exist but we couldn't map any valid items, optionally add default product
+        if (items.length === 0 && productRowsResp.result.length > 0 && BITRIX_ALLOW_EMPTY_PRODUCT_LINES) {
+          items.push({
+            variantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
+            qty: BITRIX_EMPTY_ORDER_DEFAULT_QTY
+          });
+          isStubOrder = true;
+          stubReason = 'no_mappable_items';
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_EMPTY_PRODUCT_LINES_DEFAULT_USED',
+            requestId,
+            dealId,
+            eventType: 'CREATE',
+            defaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
+            defaultQty: BITRIX_EMPTY_ORDER_DEFAULT_QTY,
+            reason: 'no_mappable_items',
+            timestamp: new Date().toISOString()
+          }));
+        }
 
-        if (orderResult.success) {
-          const createdOrderId = String(orderResult.orderId);
+        if (items.length > 0) {
+          console.log(JSON.stringify({
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ATTEMPT',
+            requestId,
+            dealId,
+            eventType: 'CREATE',
+            itemsCount: items.length,
+            items: items.map(i => ({ sku: i.sku, qty: i.qty })),
+            timestamp: new Date().toISOString()
+          }));
 
-          try {
-            const updateFields = {
-              UF_CRM_1742556489: createdOrderId
-            };
+          // Extract shipping address and delivery info from Bitrix deal
+          let shippingAddress = null;
+          let shippingLines = null;
 
-            if (orderResult.orderName && orderResult.orderName.startsWith('#')) {
-              updateFields.TITLE = orderResult.orderName;
+          // Parse shipping address from UF_CRM_1742037435676
+          const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
+          if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
+            const parsedAddress = parseBitrixAddressString(bitrixAddressField);
+            if (parsedAddress && Object.keys(parsedAddress).length > 0) {
+              // Try to get country code from country name if needed
+              if (parsedAddress.country && !parsedAddress.country_code) {
+                try {
+                  const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
+                  const countriesResponse = await callShopifyAdmin('/countries.json');
+                  const countries = countriesResponse.countries || [];
+                  const countryMatch = countries.find(c =>
+                    c.name.toLowerCase() === parsedAddress.country.toLowerCase()
+                  );
+                  if (countryMatch) {
+                    parsedAddress.country_code = countryMatch.code;
+                    parsedAddress.country = countryMatch.name; // Use exact name from Shopify
+                  }
+                } catch (countryError) {
+                  console.warn(`[BITRIX TO SHOPIFY] Failed to resolve country code: ${countryError.message}`);
+                }
+              }
+              shippingAddress = parsedAddress;
             }
+          }
 
-            await callBitrix('/crm.deal.update.json', { id: dealId, fields: updateFields });
+          // Extract delivery info (if available in deal fields)
+          // Default shipping line (0.00 to not change Total)
+          shippingLines = [{
+            title: 'Standard Shipping',
+            price: '0.00',
+            code: 'Free'
+          }];
 
+          // Create order in Shopify (stable per webhook request for traceability)
+          const correlationId = `bitrix:${dealId}:${requestId}`;
+          const customerEmail = await resolveCustomerEmailFromDeal(dealData, requestId, dealId, 'ORDER_CREATE_CREATE');
+          const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
+            shippingAddress,
+            shippingLines,
+            customerEmail,
+            isStubOrder,
+            stubReason,
+            stubDefaultVariantId: isStubOrder ? BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID : null
+          });
+
+          if (orderResult.success) {
+            // Handle duplicate case
+            if (orderResult.wasDuplicate) {
+              console.log(JSON.stringify({
+                event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE',
+                requestId,
+                dealId,
+                eventType: 'CREATE',
+                message: 'Order creation prevented - duplicate found',
+                existingShopifyOrderId: orderResult.orderId,
+                timestamp: new Date().toISOString()
+              }));
+              // Use existing order ID
+              existingShopifyOrderId = String(orderResult.orderId);
+            } else {
+              // Save shopifyOrderId back to Bitrix deal
+              const createdOrderId = String(orderResult.orderId);
+
+              // ✅ CRITICAL: Re-check for duplicate immediately after creation (race condition protection)
+              await new Promise(resolve => setTimeout(resolve, 100));
+              const postCreateCheck = await findExistingOrderByDealId(dealId);
+              if (postCreateCheck && postCreateCheck !== createdOrderId) {
+                console.log(JSON.stringify({
+                  event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_DUPLICATE_AFTER_CREATE',
+                  requestId,
+                  dealId,
+                  eventType: 'CREATE',
+                  message: 'Duplicate detected immediately after creation',
+                  createdOrderId: createdOrderId,
+                  foundOrderId: postCreateCheck,
+                  timestamp: new Date().toISOString()
+                }));
+                // Use the first found order
+                existingShopifyOrderId = postCreateCheck;
+              } else {
+                existingShopifyOrderId = createdOrderId;
+              }
+
+              try {
+                // Get current deal title to check if order number is already added
+                const currentTitle = dealData.TITLE || '';
+                let orderName = orderResult.orderName; // e.g., "#2491" or "Existing order 1234"
+
+                // If order was duplicate, try to get real order name from Shopify
+                if (orderResult.wasDuplicate && orderName && !orderName.startsWith('#')) {
+                  try {
+                    const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
+                    const existingOrder = await getOrder(existingShopifyOrderId);
+                    if (existingOrder && existingOrder.name) {
+                      orderName = existingOrder.name; // Get real order name like "#2491"
+                      console.log(JSON.stringify({
+                        event: 'BITRIX_ORDER_NAME_FETCHED',
+                        requestId,
+                        dealId,
+                        shopifyOrderId: existingShopifyOrderId,
+                        fetchedOrderName: orderName,
+                        reason: 'duplicate_order_real_name_fetch',
+                        timestamp: new Date().toISOString()
+                      }));
+                    }
+                  } catch (fetchError) {
+                    console.warn(`[BITRIX TO SHOPIFY] Failed to fetch order name for duplicate: ${fetchError.message}`);
+                  }
+                }
+
+                // Check if title already contains THIS specific order number (prevent duplicate updates)
+                const orderNumberFromName = orderName ? orderName.replace('#', '') : null;
+                const orderNumberPattern = orderNumberFromName ? new RegExp(`#?${orderNumberFromName}\\b`) : /#\d+/;
+                const alreadyContainsThisOrderNumber = orderNumberFromName && orderNumberPattern.test(currentTitle);
+
+                // Prepare update fields
+                const updateFields = {
+                  UF_CRM_1742556489: existingShopifyOrderId // Shopify Order ID field
+                };
+
+                // Update TITLE only if:
+                // 1. orderName is available and contains "#" (real Shopify order name format)
+                // 2. This specific order number is not already in title
+                // 3. orderName is not in format "Existing order X" or "Order X"
+                const isValidOrderName = orderName &&
+                  orderName.trim() !== '' &&
+                  (orderName.startsWith('#') || /^#?\d+$/.test(orderName.replace('#', '')));
+                const isNotPlaceholderName = !orderName.includes('Existing order') && !orderName.includes('Order ');
+
+                if (!alreadyContainsThisOrderNumber && isValidOrderName && isNotPlaceholderName) {
+                  // Ensure orderName starts with "#"
+                  const formattedOrderName = orderName.startsWith('#') ? orderName : `#${orderName}`;
+
+                  // Remove "D_XXXX" pattern from title if present, then add order number
+                  // Example: "D_6704 #2494" -> "#2494" (remove "D_6704", keep "#2494")
+                  // Example: "D_6704" -> "#2494" (replace "D_6704" with "#2494")
+                  let updatedTitle = currentTitle;
+
+                  // Remove "D_XXXX" pattern (e.g., "D_6704")
+                  updatedTitle = updatedTitle.replace(/D_\d+\s*/g, '').trim();
+
+                  // Add order number
+                  updatedTitle = `${updatedTitle} ${formattedOrderName}`.trim();
+
+                  updateFields.TITLE = updatedTitle;
+
+                  console.log(JSON.stringify({
+                    event: 'BITRIX_DEAL_TITLE_UPDATE_PLANNED',
+                    requestId,
+                    dealId,
+                    currentTitle,
+                    updatedTitle,
+                    orderName: formattedOrderName,
+                    shopifyOrderId: existingShopifyOrderId,
+                    wasDuplicate: orderResult.wasDuplicate || false,
+                    timestamp: new Date().toISOString()
+                  }));
+                } else {
+                  const skipReason = alreadyContainsThisOrderNumber
+                    ? 'order_number_already_in_title'
+                    : !isValidOrderName
+                      ? 'invalid_order_name_format'
+                      : !isNotPlaceholderName
+                        ? 'placeholder_order_name'
+                        : 'unknown';
+
+                  console.log(JSON.stringify({
+                    event: 'BITRIX_DEAL_TITLE_UPDATE_SKIPPED',
+                    requestId,
+                    dealId,
+                    reason: skipReason,
+                    currentTitle,
+                    orderName,
+                    shopifyOrderId: existingShopifyOrderId,
+                    alreadyContainsThisOrderNumber,
+                    isValidOrderName,
+                    isNotPlaceholderName,
+                    timestamp: new Date().toISOString()
+                  }));
+                }
+
+                await callBitrix('/crm.deal.update.json', {
+                  id: dealId,
+                  fields: updateFields
+                });
+
+                console.log(JSON.stringify({
+                  event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SUCCESS',
+                  requestId,
+                  dealId,
+                  eventType: 'CREATE',
+                  shopifyOrderId: existingShopifyOrderId,
+                  orderName: orderResult.orderName,
+                  wasDuplicate: orderResult.wasDuplicate || false,
+                  titleUpdated: !!updateFields.TITLE,
+                  lineItemsCount: orderResult.lineItems?.length || 0,
+                  tags: orderResult.tags || [],
+                  note: orderResult.note || '',
+                  timestamp: new Date().toISOString()
+                }));
+
+                // Update stored event with shopifyOrderId
+                if (storedEvent) {
+                  storedEvent.shopifyOrderId = existingShopifyOrderId;
+                }
+
+                // ✅ SYNC PAYMENT STATUS (Fix: Ensure status is synced immediately after creation)
+                try {
+                  await syncShopifyPaymentStatusFromBitrix(dealData, existingShopifyOrderId, requestId, dealId);
+                } catch (paySyncErr) {
+                  console.error(`[BITRIX TO SHOPIFY] Failed to sync payment status after create:`, paySyncErr);
+                }
+
+                return {
+                  success: true,
+                  triggerMatch: true,
+                  shopifyOrderId: existingShopifyOrderId,
+                  orderName: orderResult.orderName,
+                  wasDuplicate: orderResult.wasDuplicate || false
+                };
+              } catch (updateError) {
+                console.error(`[BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
+                return {
+                  success: true,
+                  triggerMatch: true,
+                  shopifyOrderId: existingShopifyOrderId || createdOrderId,
+                  orderCreated: true,
+                  dealUpdateFailed: true,
+                  wasDuplicate: orderResult.wasDuplicate || false
+                };
+              }
+            }
+          } else {
             console.log(JSON.stringify({
-              event: 'CATALOG_ORDER_CREATE_SUCCESS',
+              event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_ERROR',
               requestId,
               dealId,
               eventType: 'CREATE',
-              shopifyOrderId: createdOrderId,
-              orderName: orderResult.orderName,
+              error: orderResult.error,
+              message: orderResult.message,
               timestamp: new Date().toISOString()
             }));
-
-            // Sync payment status
-            try {
-              await syncShopifyPaymentStatusFromBitrix(dealData, createdOrderId, requestId, dealId);
-            } catch (paySyncErr) {
-              console.error(`[CATALOG ORDER] Failed to sync payment status:`, paySyncErr);
-            }
-
             return {
-              success: true,
-              triggerMatch: true,
-              shopifyOrderId: createdOrderId,
-              orderName: orderResult.orderName,
-              orderType: 'CATALOG'
-            };
-          } catch (updateError) {
-            console.error(`[CATALOG ORDER] Error updating deal:`, updateError);
-            return {
-              success: true,
-              triggerMatch: true,
-              shopifyOrderId: createdOrderId,
-              orderCreated: true,
-              dealUpdateFailed: true
+              success: false,
+              triggerMatch: false,
+              skip_reason: 'order_create_failed',
+              error: orderResult.error
             };
           }
         } else {
           console.log(JSON.stringify({
-            event: 'CATALOG_ORDER_CREATE_ERROR',
+            event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
             requestId,
             dealId,
             eventType: 'CREATE',
-            error: orderResult.error,
-            message: orderResult.message,
+            skip_reason: 'no_valid_items',
+            productRowsCount: productRowsResp.result.length,
             timestamp: new Date().toISOString()
           }));
-          return {
-            success: false,
-            triggerMatch: false,
-            skip_reason: 'catalog_order_create_failed',
-            error: orderResult.error
-          };
         }
+      } else {
+        console.log(JSON.stringify({
+          event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          skip_reason: 'no_product_rows',
+          timestamp: new Date().toISOString()
+        }));
       }
+    } // End: if (orderType === 'REGULAR')
 
-    } catch (orderCreateError) {
-      console.error(JSON.stringify({
-        event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_EXCEPTION',
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CATALOG ORDER CREATION (Category 4 with resolved items)
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (orderType === 'CATALOG' && items.length > 0) {
+      console.log(JSON.stringify({
+        event: 'CATALOG_ORDER_CREATE_ATTEMPT',
         requestId,
         dealId,
         eventType: 'CREATE',
-        error: 'ORDER_CREATE_EXCEPTION',
-        message: orderCreateError.message,
-        stack: orderCreateError.stack,
+        itemsCount: items.length,
+        items: items.map(i => ({ variantId: i.variantId, qty: i.qty })),
         timestamp: new Date().toISOString()
       }));
-      return {
-        success: false,
-        triggerMatch: false,
-        skip_reason: 'order_create_exception',
-        error: orderCreateError.message
-      };
+
+      // Extract shipping address from deal
+      let shippingAddress = null;
+      const bitrixAddressField = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676 || '';
+      if (bitrixAddressField && typeof bitrixAddressField === 'string' && bitrixAddressField.trim() !== '') {
+        const parsedAddress = parseBitrixAddressString(bitrixAddressField);
+        if (parsedAddress && Object.keys(parsedAddress).length > 0) {
+          try {
+            const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
+            const countriesResponse = await callShopifyAdmin('/countries.json');
+            const countries = countriesResponse.countries || [];
+            const countryMatch = countries.find(c =>
+              c.name.toLowerCase() === parsedAddress.country.toLowerCase()
+            );
+            if (countryMatch) {
+              parsedAddress.country_code = countryMatch.code;
+              parsedAddress.country = countryMatch.name;
+            }
+          } catch (countryError) {
+            console.warn(`[CATALOG ORDER] Failed to resolve country code: ${countryError.message}`);
+          }
+          shippingAddress = parsedAddress;
+        }
+      }
+
+      const shippingLines = [{ title: 'Standard Shipping', price: '0.00', code: 'Free' }];
+      const correlationId = `bitrix:${dealId}:${requestId}`;
+      const customerEmail = await resolveCustomerEmailFromDeal(dealData, requestId, dealId, 'ORDER_CREATE_CATALOG');
+
+      const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
+        shippingAddress,
+        shippingLines,
+        customerEmail,
+        isStubOrder: false,
+        stubReason: null
+      });
+
+      if (orderResult.success) {
+        const createdOrderId = String(orderResult.orderId);
+
+        try {
+          const updateFields = {
+            UF_CRM_1742556489: createdOrderId
+          };
+
+          if (orderResult.orderName && orderResult.orderName.startsWith('#')) {
+            updateFields.TITLE = orderResult.orderName;
+          }
+
+          await callBitrix('/crm.deal.update.json', { id: dealId, fields: updateFields });
+
+          console.log(JSON.stringify({
+            event: 'CATALOG_ORDER_CREATE_SUCCESS',
+            requestId,
+            dealId,
+            eventType: 'CREATE',
+            shopifyOrderId: createdOrderId,
+            orderName: orderResult.orderName,
+            timestamp: new Date().toISOString()
+          }));
+
+          // Sync payment status
+          try {
+            await syncShopifyPaymentStatusFromBitrix(dealData, createdOrderId, requestId, dealId);
+          } catch (paySyncErr) {
+            console.error(`[CATALOG ORDER] Failed to sync payment status:`, paySyncErr);
+          }
+
+          return {
+            success: true,
+            triggerMatch: true,
+            shopifyOrderId: createdOrderId,
+            orderName: orderResult.orderName,
+            orderType: 'CATALOG'
+          };
+        } catch (updateError) {
+          console.error(`[CATALOG ORDER] Error updating deal:`, updateError);
+          return {
+            success: true,
+            triggerMatch: true,
+            shopifyOrderId: createdOrderId,
+            orderCreated: true,
+            dealUpdateFailed: true
+          };
+        }
+      } else {
+        console.log(JSON.stringify({
+          event: 'CATALOG_ORDER_CREATE_ERROR',
+          requestId,
+          dealId,
+          eventType: 'CREATE',
+          error: orderResult.error,
+          message: orderResult.message,
+          timestamp: new Date().toISOString()
+        }));
+        return {
+          success: false,
+          triggerMatch: false,
+          skip_reason: 'catalog_order_create_failed',
+          error: orderResult.error
+        };
+      }
     }
-  } else {
-    console.log(JSON.stringify({
-      event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
+
+  } catch (orderCreateError) {
+    console.error(JSON.stringify({
+      event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_EXCEPTION',
       requestId,
       dealId,
       eventType: 'CREATE',
-      skip_reason: 'shopify_order_id_exists',
-      shopifyOrderId,
+      error: 'ORDER_CREATE_EXCEPTION',
+      message: orderCreateError.message,
+      stack: orderCreateError.stack,
       timestamp: new Date().toISOString()
     }));
+    return {
+      success: false,
+      triggerMatch: false,
+      skip_reason: 'order_create_exception',
+      error: orderCreateError.message
+    };
   }
+} else {
+  console.log(JSON.stringify({
+    event: 'BITRIX_TO_SHOPIFY_ORDER_CREATE_SKIP',
+    requestId,
+    dealId,
+    eventType: 'CREATE',
+    skip_reason: 'shopify_order_id_exists',
+    shopifyOrderId,
+    timestamp: new Date().toISOString()
+  }));
+}
 
-  // If no order creation was needed or attempted, return success
-  return { success: true, triggerMatch: false, skip_reason: 'no_action_needed' };
+// If no order creation was needed or attempted, return success
+return { success: true, triggerMatch: false, skip_reason: 'no_action_needed' };
 }
 
 /**
