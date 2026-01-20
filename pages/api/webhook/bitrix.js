@@ -636,9 +636,18 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
     const size = dealData.UF_CRM_1739793720585 || dealData.uf_crm_1739793720585 || '40';
     const color = dealData.UF_CRM_1739793651654 || dealData.uf_crm_1739793651654 || '';
 
-    // Get price from deal OPPORTUNITY or UF field
-    const priceRaw = dealData.OPPORTUNITY || dealData.opportunity || '100';
-    const price = parseFloat(priceRaw) || 100;
+    // Get price from dedicated UF field UF_CRM_1768869578330
+    const priceRaw = dealData.UF_CRM_1768869578330 || dealData.uf_crm_1768869578330 || '0';
+    const price = parseFloat(priceRaw) || 0;
+
+    if (price <= 0) {
+      console.error(`[PRODUCT CREATE MODE] Price is 0 or not set in UF_CRM_1768869578330`);
+      return {
+        success: false,
+        error: 'Price not set in UF_CRM_1768869578330',
+        reason: 'missing_price'
+      };
+    }
 
     // Build product title: Brand + Model (+ Color if present)
     let title = brand;
@@ -3641,9 +3650,25 @@ async function handleDealCreate(dealId, requestId) {
 
       let items = [];
 
+      // ✅ CREATE MODE: Use variant directly from product creation result
+      if (productCreateResult && productCreateResult.success && productCreateResult.variantId) {
+        items.push({
+          variantId: productCreateResult.variantId,
+          qty: 1
+        });
+        console.log(JSON.stringify({
+          event: 'CREATE_MODE_USING_DIRECT_VARIANT',
+          requestId,
+          dealId,
+          variantId: productCreateResult.variantId,
+          price: productCreateResult.price,
+          title: productCreateResult.title,
+          timestamp: new Date().toISOString()
+        }));
+      }
 
       // For REGULAR orders OR if CATALOG returned items, continue with order creation
-      if (orderType === 'REGULAR') {
+      if (items.length === 0 && orderType === 'REGULAR') {
         // Get product rows from deal (original logic for non-Category-4)
         const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
           id: dealId

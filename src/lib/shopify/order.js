@@ -351,6 +351,20 @@ export async function cancelOrderById(orderId, refund = false) {
 
     if (userErrors && userErrors.length > 0) {
       const errorMessages = userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
+
+      // Check if order is already cancelled - treat as success
+      if (errorMessages.includes('already been canceled') || errorMessages.includes('already cancelled')) {
+        console.log(`[CANCEL ORDER] ℹ️ Order ${orderId} is already cancelled, treating as success`);
+        return {
+          success: true,
+          orderId: String(orderId),
+          orderName: `Order ${orderId}`,
+          alreadyCancelled: true,
+          restocked: false,
+          refunded: false
+        };
+      }
+
       throw new Error(`Shopify orderCancel userErrors: ${errorMessages}`);
     }
 

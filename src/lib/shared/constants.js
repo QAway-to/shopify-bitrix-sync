@@ -91,6 +91,7 @@ export const BITRIX_DEAL_FIELDS = {
     PAYMENT_STATUS: 'UF_CRM_1739183959976',
     MW_ACTION: 'UF_MW_SHOPIFY_ACTION',
     CREATE_MODE: 'UF_CRM_1768864699586', // 0 = search existing, 1 = create new product
+    PRODUCT_PRICE: 'UF_CRM_1768869578330', // Price for product creation
 };
 
 // ============ PAYMENT STATUS ENUM ============
