@@ -20,6 +20,8 @@ import { findShopifyVariantByAttributes, createShopifyOrderForPreorder } from '.
 import { syncProductVariantOptimized } from '../../../src/lib/bitrix/products.js';
 import { isDeliveryStage, DELIVERY_STAGES } from '../../../src/lib/bitrix/stageMapping.js';
 import { resolveCatalogOrderItems, resolveRegularOrderItems } from '../../../src/lib/blocks/orderItems.js';
+import { findOrCreateShopifyProduct } from '../../../src/lib/shopify/productCreate.js';
+import { BITRIX_DEAL_FIELDS } from '../../../src/lib/shared/constants.js';
 
 // ✅ EXTRACTED BLOCK MODULES (available for isolated debugging)
 // These modules contain the same logic as inline code below.
@@ -608,6 +610,181 @@ function normalizePayload(action, rawPayload) {
 
     default:
       return null;
+  }
+}
+
+/**
+ * Handle Product Create Mode (UF_CRM_1768864699586 = 1)
+ * Creates product in Shopify → Bitrix → returns variant_id for order creation
+ * @param {string} dealId - Bitrix deal ID
+ * @param {Object} dealData - Full deal data from Bitrix
+ * @param {string} requestId - Request ID for logging
+ * @returns {Promise<Object>} Result with variant_id and product data
+ */
+async function handleProductCreateMode(dealId, dealData, requestId) {
+  console.log(JSON.stringify({
+    event: 'PRODUCT_CREATE_MODE_START',
+    requestId,
+    dealId,
+    timestamp: new Date().toISOString()
+  }));
+
+  try {
+    // Extract product data from deal UF fields
+    const brand = dealData.UF_CRM_1768251890190 || dealData.uf_crm_1768251890190 || 'BFC';
+    const model = dealData.UF_CRM_1739793668182 || dealData.uf_crm_1739793668182 || '';
+    const size = dealData.UF_CRM_1739793720585 || dealData.uf_crm_1739793720585 || '40';
+    const color = dealData.UF_CRM_1739793651654 || dealData.uf_crm_1739793651654 || '';
+
+    // Get price from deal OPPORTUNITY or UF field
+    const priceRaw = dealData.OPPORTUNITY || dealData.opportunity || '100';
+    const price = parseFloat(priceRaw) || 100;
+
+    // Build product title: Brand + Model (+ Color if present)
+    let title = brand;
+    if (model && model.trim() !== '') {
+      title += ` ${model}`;
+    }
+    if (color && color.trim() !== '') {
+      title += ` ${color}`;
+    }
+
+    // Generate SKU from brand + size
+    const sku = `${brand.replace(/\s+/g, '-').toUpperCase()}-${size}`;
+
+    console.log(JSON.stringify({
+      event: 'PRODUCT_CREATE_MODE_DATA',
+      requestId,
+      dealId,
+      title,
+      brand,
+      model,
+      size,
+      color,
+      price,
+      sku,
+      timestamp: new Date().toISOString()
+    }));
+
+    // Step 1: Find or Create product in Shopify
+    const shopifyResult = await findOrCreateShopifyProduct({
+      title,
+      vendor: brand,
+      size,
+      price,
+      sku,
+      description: `${title} - Size ${size}`,
+      productType: 'Shoes'
+    });
+
+    if (!shopifyResult.success) {
+      console.error(`[PRODUCT CREATE MODE] Failed to create product in Shopify: ${shopifyResult.error}`);
+      return {
+        success: false,
+        error: shopifyResult.error,
+        reason: 'shopify_product_create_failed'
+      };
+    }
+
+    const { variantId, productId, action } = shopifyResult;
+
+    console.log(JSON.stringify({
+      event: 'PRODUCT_CREATE_MODE_SHOPIFY_SUCCESS',
+      requestId,
+      dealId,
+      variantId,
+      productId,
+      action,
+      timestamp: new Date().toISOString()
+    }));
+
+    // Step 2: Create/Update product in Bitrix with XML_ID = variant_id
+    let bitrixProductId = null;
+    try {
+      // Check if product already exists in Bitrix by XML_ID
+      const existingProductResp = await callBitrix('/crm.product.list.json', {
+        filter: { 'XML_ID': variantId },
+        select: ['ID', 'NAME', 'CODE', 'XML_ID']
+      });
+
+      if (existingProductResp.result && existingProductResp.result.length > 0) {
+        bitrixProductId = existingProductResp.result[0].ID;
+        console.log(`[PRODUCT CREATE MODE] Bitrix product already exists: ID ${bitrixProductId}`);
+      } else {
+        // Create new product in Bitrix
+        const { getSectionIdBySku } = await import('../../../src/lib/shared/constants.js');
+        const sectionId = getSectionIdBySku(sku);
+
+        const createProductResp = await callBitrix('/crm.product.add.json', {
+          fields: {
+            NAME: `${title} - ${size}`,
+            CODE: sku,
+            XML_ID: variantId, // Link to Shopify variant
+            PRICE: price,
+            CURRENCY_ID: 'EUR',
+            SECTION_ID: sectionId,
+            ACTIVE: 'Y',
+            DESCRIPTION: `${title} - Size ${size}. Created from Bitrix Deal ${dealId}`
+          }
+        });
+
+        if (createProductResp.result) {
+          bitrixProductId = createProductResp.result;
+          console.log(`[PRODUCT CREATE MODE] ✅ Bitrix product created: ID ${bitrixProductId}`);
+        }
+      }
+    } catch (bitrixError) {
+      console.warn(`[PRODUCT CREATE MODE] Bitrix product creation failed (non-blocking): ${bitrixError.message}`);
+    }
+
+    // Step 3: Update deal's product rows with the new product
+    if (bitrixProductId) {
+      try {
+        await callBitrix('/crm.deal.productrows.set.json', {
+          id: dealId,
+          rows: [{
+            PRODUCT_ID: bitrixProductId,
+            PRODUCT_NAME: `${title} - ${size}`,
+            PRICE: price,
+            QUANTITY: 1
+          }]
+        });
+        console.log(`[PRODUCT CREATE MODE] ✅ Deal product rows updated with product ${bitrixProductId}`);
+      } catch (rowsError) {
+        console.warn(`[PRODUCT CREATE MODE] Failed to update deal product rows: ${rowsError.message}`);
+      }
+    }
+
+    console.log(JSON.stringify({
+      event: 'PRODUCT_CREATE_MODE_SUCCESS',
+      requestId,
+      dealId,
+      shopifyVariantId: variantId,
+      shopifyProductId: productId,
+      bitrixProductId,
+      action,
+      timestamp: new Date().toISOString()
+    }));
+
+    return {
+      success: true,
+      variantId,
+      productId,
+      bitrixProductId,
+      action,
+      title,
+      size,
+      price,
+      sku
+    };
+
+  } catch (error) {
+    console.error(`[PRODUCT CREATE MODE] Error: ${error.message}`);
+    return {
+      success: false,
+      error: error.message,
+      reason: 'product_create_mode_error'
+    };
   }
 }
 
@@ -3317,6 +3494,48 @@ async function handleDealCreate(dealId, requestId) {
   if (mwActionResult !== null) {
     // MW action was processed (either success or error)
     return mwActionResult;
+  }
+
+  // ✅ CHECK CREATE MODE (UF_CRM_1768864699586)
+  // 0 = search existing product (default, no change to existing logic)
+  // 1 = create new product in Shopify before order creation
+  const createModeRaw = dealData.UF_CRM_1768864699586 || dealData.uf_crm_1768864699586 || '0';
+  const createMode = String(createModeRaw).trim();
+
+  console.log(JSON.stringify({
+    event: 'CREATE_MODE_CHECK',
+    requestId,
+    dealId,
+    createMode,
+    timestamp: new Date().toISOString()
+  }));
+
+  let productCreateResult = null;
+  if (createMode === '1') {
+    console.log(`[BITRIX WEBHOOK] Create Mode = 1: Creating product in Shopify before order...`);
+    productCreateResult = await handleProductCreateMode(dealId, dealData, requestId);
+
+    if (!productCreateResult.success) {
+      console.error(`[BITRIX WEBHOOK] Product create mode failed: ${productCreateResult.error}`);
+      return {
+        success: false,
+        reason: 'product_create_mode_failed',
+        error: productCreateResult.error
+      };
+    }
+
+    console.log(`[BITRIX WEBHOOK] ✅ Product created: Shopify variant ${productCreateResult.variantId}, Bitrix product ${productCreateResult.bitrixProductId}`);
+
+    // Refresh deal data after product rows were updated
+    try {
+      const refreshedDealResp = await callBitrix('/crm.deal.get.json', { id: dealId });
+      if (refreshedDealResp.result) {
+        dealData = refreshedDealResp.result;
+        console.log(`[BITRIX WEBHOOK] Deal data refreshed after product creation`);
+      }
+    } catch (refreshError) {
+      console.warn(`[BITRIX WEBHOOK] Failed to refresh deal data: ${refreshError.message}`);
+    }
   }
 
   // ✅ ON-DEMAND SKU CREATION moved to orderMapper.js (Shopify-triggered flow)
