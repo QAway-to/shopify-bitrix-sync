@@ -738,7 +738,7 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
             PROPERTY_102: brand,
             PROPERTY_104: model,
             PROPERTY_106: color,
-            PROPERTY_98: getSizeEnumId(size) || size  // Size enum ID, fallback to string
+            PROPERTY_98: getSizeEnumId(size) || size  // Size Enum ID (fallback to string if not mapped)
           }
         });
 
