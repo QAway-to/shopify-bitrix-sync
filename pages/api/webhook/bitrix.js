@@ -733,7 +733,12 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
             CURRENCY_ID: 'EUR',
             SECTION_ID: sectionId,
             ACTIVE: 'Y',
-            DESCRIPTION: `${title} - Size ${size}. Created from Bitrix Deal ${dealId}`
+            DESCRIPTION: `${title} - Size ${size}. Created from Bitrix Deal ${dealId}`,
+            // Product properties
+            PROPERTY_102: brand,
+            PROPERTY_104: model,
+            PROPERTY_106: color,
+            PROPERTY_98: size  // Size as string, Bitrix may need enum ID
           }
         });
 
@@ -3665,9 +3670,77 @@ async function handleDealCreate(dealId, requestId) {
           title: productCreateResult.title,
           timestamp: new Date().toISOString()
         }));
+
+        // ✅ CREATE MODE: Immediately create order with this variant
+        console.log(JSON.stringify({
+          event: 'CREATE_MODE_ORDER_CREATION_START',
+          requestId,
+          dealId,
+          variantId: productCreateResult.variantId,
+          timestamp: new Date().toISOString()
+        }));
+
+        const correlationId = `CREATE_MODE:${dealId}:${Date.now()}`;
+
+        // Get customer email from deal
+        const customerEmail = dealData.UF_CRM_1741232139524 || dealData.uf_crm_1741232139524 || 'order@bfriendsclub.com';
+
+        const orderResult = await createOrderFromBitrix(items, dealId, correlationId, {
+          customerEmail,
+          isStubOrder: false,
+          stubReason: null
+        });
+
+        if (orderResult.success) {
+          const createdOrderId = String(orderResult.orderId);
+
+          // Update deal with Shopify Order ID and Title
+          try {
+            let orderName = orderResult.orderName || `#${createdOrderId}`;
+            const updateFields = {
+              UF_CRM_1742556489: createdOrderId
+            };
+
+            // Update title with order name
+            const currentTitle = dealData.TITLE || '';
+            if (!currentTitle.includes(orderName) && !currentTitle.includes('#')) {
+              updateFields.TITLE = `${orderName} ${currentTitle}`.trim();
+            }
+
+            await callBitrix('/crm.deal.update.json', {
+              id: dealId,
+              fields: updateFields
+            });
+
+            console.log(JSON.stringify({
+              event: 'CREATE_MODE_ORDER_SUCCESS',
+              requestId,
+              dealId,
+              shopifyOrderId: createdOrderId,
+              orderName,
+              timestamp: new Date().toISOString()
+            }));
+          } catch (updateError) {
+            console.warn(`[CREATE MODE] Failed to update deal: ${updateError.message}`);
+          }
+
+          return {
+            success: true,
+            action: 'order_created',
+            shopifyOrderId: orderResult.orderId,
+            orderName: orderResult.orderName
+          };
+        } else {
+          console.error(`[CREATE MODE] Order creation failed: ${orderResult.error}`);
+          return {
+            success: false,
+            error: 'order_creation_failed',
+            message: orderResult.error
+          };
+        }
       }
 
-      // For REGULAR orders OR if CATALOG returned items, continue with order creation
+      // For REGULAR orders (when no Create Mode items), continue with standard order creation
       if (items.length === 0 && orderType === 'REGULAR') {
         // Get product rows from deal (original logic for non-Category-4)
         const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
