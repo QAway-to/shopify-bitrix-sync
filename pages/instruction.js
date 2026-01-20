@@ -70,6 +70,20 @@ export default function InstructionPage() {
             <p><strong>Action in Bitrix:</strong> Create a Deal and manually enter <strong>Brand</strong>, <strong>Model</strong>, and <strong>Size</strong> to define the product.</p>
             <p><strong>Tip:</strong> You can copy the <em>full product title</em> (including the size) into the <strong>Model</strong> field (e.g., <code>Ilo KL grey Suede Barefoot Mens Sneakers - 42</code>). The system will correctly parse it.</p>
             <p><strong>Result in Shopify:</strong> The system searches for a matching product by these attributes. If found, it creates an order for that item.</p>
+
+            <hr style={{ margin: '20px 0', border: '0', borderTop: '1px solid #eee' }} />
+
+            <h4>3. Custom Order (Different Product)</h4>
+            <p>
+              <img
+                src="/instructions/custom_preorder.png"
+                alt="New Custom Product Creation"
+                style={{ width: '50%', maxWidth: '100%', border: '1px solid #ddd', borderRadius: '4px' }}
+              />
+            </p>
+            <p><strong>Action in Bitrix:</strong> Create a Deal and select/click <strong>"New custom product"</strong>.</p>
+            <p><strong>Fill fields:</strong> Unit price, Brand, Model, Color, Size.</p>
+            <p><strong>Result in Shopify:</strong> A new product is created in Shopify with these details, and a "Pending" order is created for it.</p>
           </SectionCard>
 
           {/* SCENARIO 2: FULL CONTROL SYNC */}
