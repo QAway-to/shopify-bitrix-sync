@@ -3704,6 +3704,8 @@ async function handleDealCreate(dealId, requestId) {
 
               // Bitrix fields: ADDRESS, ADDRESS_2, ADDRESS_CITY, ADDRESS_POSTAL_CODE, ADDRESS_REGION, ADDRESS_COUNTRY
               // Note: Bitrix sometimes puts region in ADDRESS_PROVINCE instead of ADDRESS_REGION
+              // Bitrix fields: ADDRESS, ADDRESS_2, ADDRESS_CITY, ADDRESS_POSTAL_CODE, ADDRESS_REGION, ADDRESS_COUNTRY
+              // Note: Bitrix sometimes puts region in ADDRESS_PROVINCE instead of ADDRESS_REGION
               contactData.address = {
                 address1: contact.ADDRESS || '',
                 address2: contact.ADDRESS_2 || '',
@@ -3712,6 +3714,33 @@ async function handleDealCreate(dealId, requestId) {
                 province: contact.ADDRESS_REGION || contact.ADDRESS_PROVINCE || '',
                 country: contact.ADDRESS_COUNTRY || ''
               };
+
+              // FALLBACK: If Contact address is empty, try to parse the "Update Address Field" from Deal
+              // Logic copied from Update field as requested
+              const isContactAddressEmpty = !contactData.address.address1 && !contactData.address.city;
+              // Support both casing just in case, though usually uppercase keys in this context
+              const updateAddressString = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676;
+
+              if (isContactAddressEmpty && updateAddressString) {
+                console.log(`[CREATE MODE] Contact address empty. Parsing fallback field UF_CRM_1742037435676: "${updateAddressString}"`);
+                try {
+                  // Dynamic import to allow using the logic from a different module
+                  const { parseBitrixAddressString } = await import('../../../src/lib/blocks/addressUpdate.js');
+                  const parsed = parseBitrixAddressString(updateAddressString);
+
+                  if (parsed) {
+                    console.log(`[CREATE MODE] Successfully parsed fallback address using Update logic:`, JSON.stringify(parsed));
+                    contactData.address.address1 = parsed.address1 || contactData.address.address1;
+                    contactData.address.city = parsed.city || contactData.address.city;
+                    contactData.address.zip = parsed.zip || contactData.address.zip;
+                    contactData.address.country = parsed.country || contactData.address.country;
+                    contactData.address.province = parsed.province || contactData.address.province;
+                  }
+                } catch (parseErr) {
+                  console.warn(`[CREATE MODE] Failed to parse fallback address: ${parseErr.message}`);
+                }
+              }
+
               console.log(`[CREATE MODE] Found address in contact: ${contactData.address.city}, ${contactData.address.country}, ${contactData.address.province}`);
 
               // Try to resolve Country Name to Code if > 2 chars
