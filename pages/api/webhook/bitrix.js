@@ -3701,6 +3701,20 @@ async function handleDealCreate(dealId, requestId) {
                 contactData.email = customerEmail;
                 console.log(`[CREATE MODE] Found email in contact: ${customerEmail}`);
               }
+
+              // Extract Address from Bitrix Contact
+              // Bitrix fields: ADDRESS, ADDRESS_2, ADDRESS_CITY, ADDRESS_POSTAL_CODE, ADDRESS_REGION, ADDRESS_COUNTRY
+              if (contact.ADDRESS || contact.ADDRESS_CITY) {
+                contactData.address = {
+                  address1: contact.ADDRESS || '',
+                  address2: contact.ADDRESS_2 || '',
+                  city: contact.ADDRESS_CITY || '',
+                  zip: contact.ADDRESS_POSTAL_CODE || '',
+                  province: contact.ADDRESS_REGION || '', // Bitrix calls it REGION/PROVINCE
+                  country: contact.ADDRESS_COUNTRY || ''
+                };
+                console.log(`[CREATE MODE] Found address in contact: ${contact.ADDRESS_CITY}, ${contact.ADDRESS}`);
+              }
             }
           } catch (contactErr) {
             console.warn(`[CREATE MODE] Error fetching contact ${dealData.CONTACT_ID}:`, contactErr.message);

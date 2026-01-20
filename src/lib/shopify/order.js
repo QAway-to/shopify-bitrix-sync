@@ -769,8 +769,19 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       addressObj.address2 = contact.address.address2 || '';
       addressObj.city = contact.address.city || '';
       addressObj.zip = contact.address.zip || '';
-      addressObj.provinceCode = contact.address.province || '';
-      addressObj.countryCode = contact.address.country || '';
+      // Validate Province Code (must be 2 chars usually)
+      if (contact.address.province && contact.address.province.length === 2) {
+        addressObj.provinceCode = contact.address.province.toUpperCase();
+      } else if (contact.address.province) {
+        console.warn(`[CREATE ORDER] Skipping invalid Province Code: "${contact.address.province}" (must be 2 chars)`);
+      }
+
+      // Validate Country Code (must be 2 chars ISO)
+      if (contact.address.country && contact.address.country.length === 2) {
+        addressObj.countryCode = contact.address.country.toUpperCase();
+      } else if (contact.address.country) {
+        console.warn(`[CREATE ORDER] Skipping invalid Country Code: "${contact.address.country}" (must be 2 chars ISO)`);
+      }
     }
 
     order_input.shippingAddress = addressObj;
