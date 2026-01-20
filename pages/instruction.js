@@ -83,7 +83,11 @@ export default function InstructionPage() {
             </p>
             <p><strong>Action in Bitrix:</strong> Create a Deal and select/click <strong>"New custom product"</strong>.</p>
             <p><strong>Fill fields:</strong> Unit price, Brand, Model, Color, Size.</p>
-            <p><strong>Result in Shopify:</strong> A new product is created in Shopify with these details, and a "Pending" order is created for it.</p>
+            <p><strong>Result:</strong> Single action creates & links:</p>
+            <ul>
+              <li><strong>Products:</strong> Bitrix Product + Shopify Product</li>
+              <li><strong>Orders:</strong> Bitrix Deal + Shopify Order</li>
+            </ul>
           </SectionCard>
 
           {/* SCENARIO 2: FULL CONTROL SYNC */}
