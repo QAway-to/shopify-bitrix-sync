@@ -18,7 +18,7 @@ const SIZE_ENUM_MAP = {
   "50": 354, "51": 356, "52": 358, "53": 360, "54": 362
 };
 
-function getSizeEnumId(sizeText) {
+export function getSizeEnumId(sizeText) {
   if (!sizeText) return null;
   const clean = String(sizeText).trim();
   return SIZE_ENUM_MAP[clean] || null;

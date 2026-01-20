@@ -17,7 +17,7 @@ import { extractDealId, extractAuthToken, getPayloadKeys } from '../../../src/li
 import { payloadHash, cleanEmptyFields } from '../../../src/lib/utils/hash.js';
 import { getBitrixExpectedAuthToken } from '../../../src/lib/bitrix/client.js';
 import { findShopifyVariantByAttributes, createShopifyOrderForPreorder } from '../../../src/lib/shopify/adminClient.js';
-import { syncProductVariantOptimized } from '../../../src/lib/bitrix/products.js';
+import { syncProductVariantOptimized, getSizeEnumId } from '../../../src/lib/bitrix/products.js';
 import { isDeliveryStage, DELIVERY_STAGES } from '../../../src/lib/bitrix/stageMapping.js';
 import { resolveCatalogOrderItems, resolveRegularOrderItems } from '../../../src/lib/blocks/orderItems.js';
 import { findOrCreateShopifyProduct } from '../../../src/lib/shopify/productCreate.js';
@@ -738,7 +738,7 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
             PROPERTY_102: brand,
             PROPERTY_104: model,
             PROPERTY_106: color,
-            PROPERTY_98: size  // Size as string, Bitrix may need enum ID
+            PROPERTY_98: getSizeEnumId(size) || size  // Size enum ID, fallback to string
           }
         });
 

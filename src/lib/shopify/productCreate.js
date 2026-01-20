@@ -86,8 +86,8 @@ export async function addVariantToProduct(productId, size, price, sku = null) {
             variant: {
                 option1: String(size),
                 price: String(price),
-                inventory_management: 'shopify',
-                inventory_policy: 'deny'
+                inventory_management: null,
+                inventory_policy: 'continue'
             }
         };
 
@@ -167,8 +167,8 @@ export async function createShopifyProduct({
                     {
                         option1: String(size),
                         price: String(price),
-                        inventory_management: 'shopify',
-                        inventory_policy: 'deny'
+                        inventory_management: null,
+                        inventory_policy: 'continue'
                     }
                 ]
             }
