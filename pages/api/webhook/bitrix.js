@@ -3702,17 +3702,17 @@ async function handleDealCreate(dealId, requestId) {
                 console.log(`[CREATE MODE] Found email in contact: ${customerEmail}`);
               }
 
-              // Extract Address from Bitrix Contact
               // Bitrix fields: ADDRESS, ADDRESS_2, ADDRESS_CITY, ADDRESS_POSTAL_CODE, ADDRESS_REGION, ADDRESS_COUNTRY
+              // Note: Bitrix sometimes puts region in ADDRESS_PROVINCE instead of ADDRESS_REGION
               contactData.address = {
                 address1: contact.ADDRESS || '',
                 address2: contact.ADDRESS_2 || '',
                 city: contact.ADDRESS_CITY || '',
                 zip: contact.ADDRESS_POSTAL_CODE || '',
-                province: contact.ADDRESS_REGION || '', // Bitrix calls it REGION/PROVINCE
+                province: contact.ADDRESS_REGION || contact.ADDRESS_PROVINCE || '',
                 country: contact.ADDRESS_COUNTRY || ''
               };
-              console.log(`[CREATE MODE] Found address in contact: ${contactData.address.city}, ${contactData.address.country}`);
+              console.log(`[CREATE MODE] Found address in contact: ${contactData.address.city}, ${contactData.address.country}, ${contactData.address.province}`);
 
               // Try to resolve Country Name to Code if > 2 chars
               if (contactData.address.country && contactData.address.country.length > 2) {
@@ -3722,6 +3722,7 @@ async function handleDealCreate(dealId, requestId) {
                   // Fetch countries (TODO: Cache this?)
                   const countriesResponse = await callShopifyAdmin('/countries.json');
                   const countries = countriesResponse.countries || [];
+
                   const countryMatch = countries.find(c =>
                     c.name.toLowerCase() === contactData.address.country.toLowerCase() ||
                     (c.code && c.code.toLowerCase() === contactData.address.country.toLowerCase())
@@ -3731,7 +3732,7 @@ async function handleDealCreate(dealId, requestId) {
                     console.log(`[CREATE MODE] Resolved country "${contactData.address.country}" -> "${countryMatch.code}"`);
                     contactData.address.country = countryMatch.code; // Set to ISO 2-char code
                   } else {
-                    console.warn(`[CREATE MODE] Could not resolve country "${contactData.address.country}" to a Shopify country code.`);
+                    console.warn(`[CREATE MODE] Could not resolve country "${contactData.address.country}" to a Shopify country code. Available countries: ${countries.map(c => c.name).join(', ')}`);
                   }
                 } catch (countryErr) {
                   console.warn(`[CREATE MODE] Error resolving country code: ${countryErr.message}`);

@@ -773,20 +773,22 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       if (contact.address.province && contact.address.province.length === 2) {
         addressObj.provinceCode = contact.address.province.toUpperCase();
       } else if (contact.address.province) {
-        console.warn(`[CREATE ORDER] Skipping invalid Province Code: "${contact.address.province}" (must be 2 chars)`);
+        // Fallback: Use province name if code invalid (Shopify might accept 'province' in some contexts, or just log it)
+        console.warn(`[CREATE ORDER] Province "${contact.address.province}" is not 2 chars. Skipping provinceCode.`);
+        // Note: GraphQL MailingAddressInput mainly uses provinceCode. We can't easily force full name if code is required.
       }
 
       // Validate Country Code (must be 2 chars ISO)
       if (contact.address.country && contact.address.country.length === 2) {
         addressObj.countryCode = contact.address.country.toUpperCase();
       } else if (contact.address.country) {
-        console.warn(`[CREATE ORDER] Skipping invalid Country Code: "${contact.address.country}" (must be 2 chars ISO)`);
+        console.warn(`[CREATE ORDER] Country "${contact.address.country}" is not 2 chars ISO. Skipping countryCode.`);
       }
     }
 
     order_input.shippingAddress = addressObj;
     order_input.billingAddress = addressObj;
-    console.log(`[CREATE ORDER FROM BITRIX] ✅ Using contact data for address: ${addressObj.firstName} ${addressObj.lastName}, ${addressObj.city || 'N/A'}`);
+    console.log(`[CREATE ORDER FROM BITRIX] ✅ Contact Address Object:`, JSON.stringify(addressObj, null, 2));
   }
 
   // NOTE: shippingLines is NOT supported in GraphQL orderCreate mutation
