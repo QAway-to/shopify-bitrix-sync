@@ -59,7 +59,7 @@ export default function InstructionPage() {
 
             <hr style={{ margin: '20px 0', border: '0', borderTop: '1px solid #eee' }} />
 
-            <h4>2. Catalog Order (New/Custom Product)</h4>
+            <h4>2. Catalog Order (New Product)</h4>
             <p>
               <img
                 src="/instructions/catalog_order.png"
