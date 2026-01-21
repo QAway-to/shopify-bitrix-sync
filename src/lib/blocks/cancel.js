@@ -103,6 +103,19 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         console.warn(`[CANCEL BLOCK] ⚠️ Order ${shopifyOrderId} is already FULFILLED. Skipping orderCancel part.`);
                     }
 
+                    // ✅ FIX: Check if order is ALREADY CANCELLED to prevent loop
+                    // If Bitrix sends "LOSE" update -> we try to cancel -> if already cancelled, we MUST stop here
+                    // otherwise we might update tags/notes which triggers Shopify webhook -> Bitrix update -> Loop
+                    if (shopifyOrder.cancelled_at) {
+                        console.log(`[CANCEL BLOCK] ℹ️ Order ${shopifyOrderId} is ALREADY CANCELLED (at ${shopifyOrder.cancelled_at}). Skipping logic to prevent loop.`);
+                        return {
+                            handled: true,
+                            success: true,
+                            action: 'already_cancelled_loop_prevention',
+                            shopifyOrderId
+                        };
+                    }
+
                     // STEP 0.5: RECONCILIATION REFUND (If items were removed previously)
                     try {
                         const totalReceived = parseFloat(shopifyOrder.total_received_set?.shop_money?.amount || shopifyOrder.total_price_set?.shop_money?.amount || shopifyOrder.total_price || '0');

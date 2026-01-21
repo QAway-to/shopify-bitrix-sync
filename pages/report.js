@@ -80,49 +80,6 @@ export default function ReportPage() {
               <li>Move deal to LOSE → verify order cancellation in Shopify</li>
             </ol>
           </SectionCard>
-
-          <SectionCard title="12. Delivery tracking number sync (Bitrix → Shopify)">
-            <ul>
-              <li>
-                <strong>Issue:</strong> Tracking numbers entered in Bitrix are not transferred to Shopify. As a result,
-                Shopify does not send automatic tracking emails to customers.
-              </li>
-              <li>
-                <strong>Fix:</strong> Tracking numbers now sync automatically from Bitrix to Shopify.
-              </li>
-            </ul>
-
-            <hr style={{ margin: '20px 0', border: '0', borderTop: '2px solid #fbbf24' }} />
-
-            <h4>How it works:</h4>
-            <ul>
-              <li>
-                <strong>Trigger:</strong> When a deal is moved to the <strong>"Delivery"</strong> stage in Bitrix, the system
-                automatically creates a fulfillment in Shopify.
-              </li>
-              <li>
-                <strong>Data Transfer:</strong> The tracking number from Bitrix field <code>UF_CRM_1741776378819</code> is
-                passed to Shopify.
-              </li>
-              <li>
-                <strong>Notification:</strong> Shopify sends an automatic <em>"Your order has been shipped"</em> email to the
-                customer <u>with</u> the tracking number.
-              </li>
-            </ul>
-
-            <h4 style={{ marginTop: '20px' }}>Supported pipelines:</h4>
-            <ul>
-              <li>
-                <strong>Category 2 (Stock - Site):</strong> Stage <code>C2:EXECUTING</code>
-              </li>
-              <li>
-                <strong>Category 4 (Pre-order - Shop):</strong> Stage <code>C4:2</code>
-              </li>
-              <li>
-                <strong>Category 8 (Pre-order - Site):</strong> Stage <code>C8:2</code>
-              </li>
-            </ul>
-          </SectionCard>
         </div>
       </DocsLayout>
     </>
