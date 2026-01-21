@@ -260,7 +260,7 @@ export async function findOrCreateShopifyProduct({
 
     // Step 3: Create new product with variant
     console.log(`[PRODUCT CREATE] Product not found, creating new...`);
-    return await createShopifyProduct({
+    const createResult = await createShopifyProduct({
         title,
         vendor,
         size,
@@ -270,6 +270,97 @@ export async function findOrCreateShopifyProduct({
         productType,
         imageUrl
     });
+
+    // ✅ POS-Only Visibility Logic
+    if (createResult.success && createResult.productId) {
+        try {
+            await manageProductPublications(createResult.productId);
+        } catch (pubError) {
+            console.warn(`[PRODUCT CREATE] ⚠️ Failed to set POS-only visibility: ${pubError.message}`);
+        }
+    }
+
+    return createResult;
+}
+
+/**
+ * Manage product publications: Unpublish from "Online Store", Publish to "Point of Sale"
+ * @param {string} productId - Shopify Product ID (numeric string)
+ */
+async function manageProductPublications(productId) {
+    const { callShopifyGraphQL } = await import('./adminClient.js');
+
+    console.log(`[PRODUCT CREATE] 🙈 Setting visibility for product ${productId} (POS only)...`);
+
+    // 1. Get Publications (Sales Channels)
+    // We need to find the IDs for "Online Store" and "Point of Sale"
+    const pubsQuery = `
+      query {
+        publications(first: 20) {
+          edges {
+            node {
+              id
+              name
+              catalog {
+                title
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const pubsData = await callShopifyGraphQL(pubsQuery);
+    const publications = pubsData.publications?.edges?.map(e => e.node) || [];
+
+    const onlineStore = publications.find(p => p.name === 'Online Store' || p.catalog?.title === 'Online Store');
+    const pos = publications.find(p => p.name === 'Point of Sale' || p.catalog?.title === 'Point of Sale');
+
+    const productGid = `gid://shopify/Product/${productId}`;
+
+    // 2. Unpublish from Online Store
+    if (onlineStore) {
+        const unpublishMutation = `
+          mutation publishableUnpublish($id: ID!, $input: [PublicationInput!]!) {
+            publishableUnpublish(id: $id, input: $input) {
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `;
+
+        await callShopifyGraphQL(unpublishMutation, {
+            id: productGid,
+            input: [{ publicationId: onlineStore.id }]
+        });
+        console.log(`[PRODUCT CREATE] 🙈 Unpublished ${productId} from Online Store (${onlineStore.id})`);
+    } else {
+        console.warn(`[PRODUCT CREATE] ⚠️ "Online Store" channel not found.`);
+    }
+
+    // 3. Publish to Point of Sale (Ensure it's visible)
+    if (pos) {
+        const publishMutation = `
+          mutation publishablePublish($id: ID!, $input: [PublicationInput!]!) {
+            publishablePublish(id: $id, input: $input) {
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+        `;
+
+        await callShopifyGraphQL(publishMutation, {
+            id: productGid,
+            input: [{ publicationId: pos.id }]
+        });
+        console.log(`[PRODUCT CREATE] 👁️ Published ${productId} to Point of Sale (${pos.id})`);
+    } else {
+        console.warn(`[PRODUCT CREATE] ⚠️ "Point of Sale" channel not found.`);
+    }
 }
 
 export default {
