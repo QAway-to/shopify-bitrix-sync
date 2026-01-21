@@ -1114,10 +1114,16 @@ async function handleOrderUpdated(order) {
   }
 
   // Check Shipping Address
-  if (fields.UF_CRM_1742037435676 !== undefined && normalize(deal.UF_CRM_1742037435676) !== normalize(fields.UF_CRM_1742037435676)) {
-    fieldsToUpdate.UF_CRM_1742037435676 = fields.UF_CRM_1742037435676;
-    console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: Shipping Address "${deal.UF_CRM_1742037435676}" -> "${fields.UF_CRM_1742037435676}"`);
-    tempHasChanges = true;
+  if (fields.UF_CRM_1742037435676 !== undefined) {
+    // ✅ FIX: Strip Bitrix technical suffix (e.g., "|;|2736") before comparing
+    const currentBitrixAddr = normalize(deal.UF_CRM_1742037435676).split('|;|')[0].trim();
+    const newShopifyAddr = normalize(fields.UF_CRM_1742037435676).trim();
+
+    if (currentBitrixAddr !== newShopifyAddr) {
+      fieldsToUpdate.UF_CRM_1742037435676 = fields.UF_CRM_1742037435676;
+      console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: Shipping Address "${currentBitrixAddr}" (raw: ${deal.UF_CRM_1742037435676}) -> "${newShopifyAddr}"`);
+      tempHasChanges = true;
+    }
   }
 
   // Check Contact ID
