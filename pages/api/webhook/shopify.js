@@ -1065,10 +1065,18 @@ async function handleOrderUpdated(order) {
   }
 
   // Check STAGE_ID
-  if (normalize(deal.STAGE_ID) !== normalize(fields.STAGE_ID)) {
-    fieldsToUpdate.STAGE_ID = fields.STAGE_ID;
-    console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: STAGE_ID "${deal.STAGE_ID}" -> "${fields.STAGE_ID}"`);
-    tempHasChanges = true;
+  if (deal.STAGE_ID !== undefined) {
+    // ✅ FIX: Strip Bitrix category prefix (e.g., "C2:NEW" -> "NEW") before comparing
+    // Bitrix often returns "Category:Stage" format, while mapper returns just "Stage"
+    const normalizeStage = (val) => String(val || '').replace(/^C\d+:/, '').trim();
+    const currentBitrixStage = normalizeStage(deal.STAGE_ID);
+    const newStage = normalize(fields.STAGE_ID).trim();
+
+    if (currentBitrixStage !== newStage) {
+      fieldsToUpdate.STAGE_ID = fields.STAGE_ID;
+      console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: STAGE_ID "${currentBitrixStage}" (raw: ${deal.STAGE_ID}) -> "${newStage}"`);
+      tempHasChanges = true;
+    }
   }
 
   // Check Payment Status
