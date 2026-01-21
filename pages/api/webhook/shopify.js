@@ -1065,16 +1065,19 @@ async function handleOrderUpdated(order) {
   }
 
   // Check STAGE_ID
+  // Check STAGE_ID
   if (deal.STAGE_ID !== undefined) {
     // ✅ FIX: Strip Bitrix category prefix (e.g., "C2:NEW" -> "NEW") before comparing
     // Bitrix often returns "Category:Stage" format, while mapper returns just "Stage"
+    // ALSO: Sometimes fields.STAGE_ID has the prefix forced (e.g. cancelled orders), so we must strip both sides.
     const normalizeStage = (val) => String(val || '').replace(/^C\d+:/, '').trim();
+
     const currentBitrixStage = normalizeStage(deal.STAGE_ID);
-    const newStage = normalize(fields.STAGE_ID).trim();
+    const newStage = normalizeStage(fields.STAGE_ID); // Normalize both sides!
 
     if (currentBitrixStage !== newStage) {
       fieldsToUpdate.STAGE_ID = fields.STAGE_ID;
-      console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: STAGE_ID "${currentBitrixStage}" (raw: ${deal.STAGE_ID}) -> "${newStage}"`);
+      console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: STAGE_ID "${currentBitrixStage}" (raw: ${deal.STAGE_ID}) -> "${newStage}" (raw: ${fields.STAGE_ID})`);
       tempHasChanges = true;
     }
   }
