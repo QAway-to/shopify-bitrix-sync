@@ -45,7 +45,7 @@ export default function InstructionPage() {
               When taking a pre-order in the shop (Category ID: 4), you can select an existing product or define a new one.
             </p>
 
-            <h4>1. Regular Order (Product exists)</h4>
+            <h4>1. Regular Deal (Product exists)</h4>
             <p>
               <img
                 src="/instructions/regular_order.png"
@@ -59,7 +59,7 @@ export default function InstructionPage() {
 
             <hr style={{ margin: '20px 0', border: '0', borderTop: '1px solid #eee' }} />
 
-            <h4>2. Catalog Order (New Product)</h4>
+            <h4>2. Catalog Deal (New Product)</h4>
             <p>
               <img
                 src="/instructions/catalog_order.png"
@@ -73,7 +73,7 @@ export default function InstructionPage() {
 
             <hr style={{ margin: '20px 0', border: '0', borderTop: '1px solid #eee' }} />
 
-            <h4>3. Custom Order (Different Product)</h4>
+            <h4>3. Custom Deal (Different Product)</h4>
             <p>
               <img
                 src="/instructions/custom_preorder.png"
