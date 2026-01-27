@@ -34,6 +34,34 @@ export async function findContactByEmail(webhookUrl, email) {
 }
 
 /**
+ * Find contact by phone
+ * @param {string} webhookUrl - Bitrix webhook URL
+ * @param {string} phone - Contact phone
+ * @returns {Promise<number|null>} Contact ID or null if not found
+ */
+export async function findContactByPhone(webhookUrl, phone) {
+  if (!phone) {
+    return null;
+  }
+
+  try {
+    const result = await callBitrixAPI(webhookUrl, 'crm.contact.list', {
+      filter: { PHONE: phone },
+      select: ['ID', 'NAME', 'LAST_NAME', 'PHONE']
+    });
+
+    if (result.result && result.result.length > 0) {
+      return parseInt(result.result[0].ID);
+    }
+
+    return null;
+  } catch (error) {
+    console.error('[BITRIX CONTACT] Error finding contact by phone:', error);
+    return null;
+  }
+}
+
+/**
  * Create contact in Bitrix24
  * @param {string} webhookUrl - Bitrix webhook URL
  * @param {Object} contactData - Contact data
@@ -90,35 +118,54 @@ export async function createContact(webhookUrl, contactData) {
  */
 export async function upsertBitrixContact(webhookUrl, shopifyOrder) {
   // Get email from order
-  const email = shopifyOrder.customer?.email || 
-                shopifyOrder.email || 
-                shopifyOrder.billing_address?.email || 
-                null;
+  const email = shopifyOrder.customer?.email ||
+    shopifyOrder.email ||
+    shopifyOrder.billing_address?.email ||
+    null;
 
-  if (!email) {
-    console.log('[BITRIX CONTACT] No email found in order, skipping contact creation');
+  // Get phone from order (fallback identifier)
+  const phone = shopifyOrder.customer?.phone ||
+    shopifyOrder.billing_address?.phone ||
+    shopifyOrder.shipping_address?.phone ||
+    null;
+
+  // Need at least one identifier
+  if (!email && !phone) {
+    console.log('[BITRIX CONTACT] No email or phone found in order, skipping contact creation');
     return null;
   }
 
-  // Try to find existing contact
-  let contactId = await findContactByEmail(webhookUrl, email);
+  let contactId = null;
 
-  if (contactId) {
-    console.log(`[BITRIX CONTACT] Found existing contact with ID: ${contactId}`);
-    return contactId;
+  // Strategy 1: Try to find by email first (preferred)
+  if (email) {
+    contactId = await findContactByEmail(webhookUrl, email);
+    if (contactId) {
+      console.log(`[BITRIX CONTACT] Found existing contact by email: ${contactId}`);
+      return contactId;
+    }
   }
 
-  // Create new contact
+  // Strategy 2: Fallback to phone search
+  if (!contactId && phone) {
+    contactId = await findContactByPhone(webhookUrl, phone);
+    if (contactId) {
+      console.log(`[BITRIX CONTACT] Found existing contact by phone: ${contactId}`);
+      return contactId;
+    }
+  }
+
+  // Create new contact (with whatever data we have)
   const customer = shopifyOrder.customer || {};
   const billingAddress = shopifyOrder.billing_address || {};
   const shippingAddress = shopifyOrder.shipping_address || {};
   const address = shippingAddress.address1 ? shippingAddress : billingAddress;
 
   const contactData = {
-    firstName: customer.first_name || billingAddress.first_name || '',
-    lastName: customer.last_name || billingAddress.last_name || '',
-    email: email,
-    phone: customer.phone || billingAddress.phone || null,
+    firstName: customer.first_name || billingAddress.first_name || shippingAddress.first_name || '',
+    lastName: customer.last_name || billingAddress.last_name || shippingAddress.last_name || '',
+    email: email, // May be null
+    phone: phone, // May be null
     address: address.address1 ? {
       address1: address.address1,
       address2: address.address2,
@@ -129,6 +176,7 @@ export async function upsertBitrixContact(webhookUrl, shopifyOrder) {
     } : null
   };
 
+  console.log(`[BITRIX CONTACT] Creating new contact with: email=${email || 'N/A'}, phone=${phone || 'N/A'}`);
   contactId = await createContact(webhookUrl, contactData);
 
   if (contactId) {
