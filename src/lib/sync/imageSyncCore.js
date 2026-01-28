@@ -25,20 +25,20 @@ async function fetchProductsWithoutImages(progressCallback) {
     while (true) {
         const resp = await callBitrix('crm.product.list', {
             filter: {
-                'PREVIEW_PICTURE': ''  // Empty = no image
+                'ACTIVE': 'Y' // Only active products
             },
             select: ['ID', 'NAME', 'XML_ID', 'CODE', 'PREVIEW_PICTURE'],
             start
         });
 
         if (resp?.result) {
-            products.push(...resp.result);
+            // Client-side filter: only add if PREVIEW_PICTURE is null/empty
+            const missingImages = resp.result.filter(p => !p.PREVIEW_PICTURE);
+            products.push(...missingImages);
         }
 
         if (resp?.next !== undefined && resp.next !== null) {
             start = resp.next;
-            // Safety break for very large datasets to process in chunks? 
-            // For now, fetch all.
         } else {
             break;
         }
