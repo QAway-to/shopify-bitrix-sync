@@ -304,7 +304,7 @@ export async function findProductIdByVariantId(variant_id) {
   try {
     console.log(`[MAPPING UTILS] 🔍 Searching in Bitrix API for variant_id: ${variantIdStr}`);
     const response = await callBitrix('crm.product.list', {
-      filter: { XML_ID: variantIdStr },
+      filter: { XML_ID: variantIdStr, ACTIVE: 'Y' },
       select: ['ID', 'NAME', 'CODE', 'XML_ID']
     });
 
@@ -379,7 +379,7 @@ export async function findProductIdBySku(sku) {
   try {
     console.log(`[MAPPING UTILS] 🔍 Searching in Bitrix API for SKU: ${sku}`);
     const response = await callBitrix('crm.product.list', {
-      filter: { CODE: sku },
+      filter: { CODE: sku, ACTIVE: 'Y' },
       select: ['ID', 'NAME', 'CODE', 'XML_ID']
     });
 

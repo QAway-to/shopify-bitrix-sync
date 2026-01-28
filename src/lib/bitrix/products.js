@@ -132,7 +132,7 @@ export async function findProductByVariantId(variant_id) {
 
   try {
     const response = await callBitrix('crm.product.list', {
-      filter: { XML_ID: String(variant_id) },
+      filter: { XML_ID: String(variant_id), ACTIVE: 'Y' },
       select: ['ID', 'NAME', 'CODE', 'XML_ID']
     });
 
@@ -156,7 +156,7 @@ export async function findProductByVariantId(variant_id) {
 export async function findProductBySku(sku) {
   try {
     const response = await callBitrix('crm.product.list', {
-      filter: { CODE: sku },
+      filter: { CODE: sku, ACTIVE: 'Y' },
       select: ['ID', 'NAME', 'CODE', 'XML_ID']
     });
 
