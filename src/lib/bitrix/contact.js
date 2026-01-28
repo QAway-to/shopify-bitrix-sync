@@ -84,17 +84,30 @@ export async function createContact(webhookUrl, contactData) {
       fields.PHONE = [{ VALUE: contactData.phone, VALUE_TYPE: 'WORK' }];
     }
 
-    // Add address if available
+    // Add address if available - must be a STRING, not object!
     if (contactData.address) {
       const addr = contactData.address;
-      fields.ADDRESS = {
-        ADDRESS_1: addr.address1 || '',
-        ADDRESS_2: addr.address2 || '',
-        CITY: addr.city || '',
-        POSTAL_CODE: addr.zip || '',
-        COUNTRY: addr.country || '',
-        PROVINCE: addr.province || ''
-      };
+      // Build address string: "Street, ZIP City Province, Country"
+      const addressParts = [];
+      if (addr.address1) addressParts.push(addr.address1);
+      if (addr.address2) addressParts.push(addr.address2);
+
+      const cityParts = [];
+      if (addr.zip) cityParts.push(addr.zip);
+      if (addr.city) cityParts.push(addr.city);
+      if (addr.province) cityParts.push(addr.province);
+
+      let addressString = addressParts.join(', ');
+      if (cityParts.length > 0) {
+        addressString += (addressString ? ', ' : '') + cityParts.join(' ');
+      }
+      if (addr.country) {
+        addressString += (addressString ? ', ' : '') + addr.country;
+      }
+
+      if (addressString.trim()) {
+        fields.ADDRESS = addressString;
+      }
     }
 
     const result = await callBitrixAPI(webhookUrl, 'crm.contact.add', { fields });
