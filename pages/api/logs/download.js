@@ -48,6 +48,18 @@ export default async function handler(req, res) {
       logs.push('');
     }
 
+    // === IMAGE SYNC PROGRESS SECTION ===
+    try {
+      const { imageProgressAdapter } = await import('../../../src/lib/adapters/sync/imageProgressAdapter.js');
+      const imageSyncLogs = imageProgressAdapter.getFormattedLogs();
+      logs.push(imageSyncLogs);
+      logs.push('');
+    } catch (imgError) {
+      logs.push('IMAGE SYNC PROGRESS: Error loading sync progress');
+      logs.push(`  ${imgError.message}`);
+      logs.push('');
+    }
+
     // Get recent events
     logs.push('='.repeat(80));
     logs.push('RECENT WEBHOOK OPERATIONS');
