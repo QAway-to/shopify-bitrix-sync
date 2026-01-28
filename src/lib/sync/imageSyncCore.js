@@ -232,6 +232,14 @@ export async function runImageSync(options = {}) {
                 }));
             }
 
+            // Helpful debug for skipped items - log first few in batch if skipped
+            const skippedInBatch = batch.filter(p => !imageMap[String(p.XML_ID)]);
+            if (skippedInBatch.length > 0 && results.totals.skipped < 20) {
+                skippedInBatch.slice(0, 5).forEach(p => {
+                    console.log(`[IMAGE SYNC] ⚠️ Skipped ${p.CODE || p.NAME} (ID:${p.ID}, XML_ID:${p.XML_ID}): No image found in Shopify`);
+                });
+            }
+
             // Progress update per batch
             progressCallback?.({
                 type: 'batch_complete',
