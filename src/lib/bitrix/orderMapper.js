@@ -437,8 +437,18 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     stageId = 'C2:PREPARATION';
     console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ PARTIAL REFUND: financial_status="${order.financial_status}", hasActiveItems=${hasActiveItems} → FORCING Stage "C2:PREPARATION"`);
   } else {
-    stageId = financialStatusToStageId(order.financial_status || '', categoryId);
-    console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Stage "${stageId}" for category ${categoryId}`);
+    // ✅ PRE-ORDER SPECIAL LOGIC: If pre-order (Cat 4 or 8) is PAID, move to WON
+    // Pre-orders that are fully paid should go directly to Success
+    const isPreorderCategory = categoryId === BITRIX_CONFIG.CATEGORY_SHOP_PREORDER || categoryId === BITRIX_CONFIG.CATEGORY_PREORDER;
+    const isPaid = (order.financial_status || '').toLowerCase() === 'paid';
+
+    if (isPreorderCategory && isPaid) {
+      stageId = 'WON';
+      console.log(`[ORDER MAPPER] ✅ PRE-ORDER PAID: Category ${categoryId} + financial_status="paid" → Stage "WON" (Success)`);
+    } else {
+      stageId = financialStatusToStageId(order.financial_status || '', categoryId);
+      console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Stage "${stageId}" for category ${categoryId}`);
+    }
   }
 
   // Map financial status to payment status field
