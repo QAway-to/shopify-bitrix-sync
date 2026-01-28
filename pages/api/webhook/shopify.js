@@ -1065,28 +1065,30 @@ async function handleOrderUpdated(order) {
     tempHasChanges = true;
   }
 
-  // Check CATEGORY_ID (funnel) - important for pre-order tag changes
-  // If pre-order tag is added/removed, the deal should move to the correct funnel
+  // ⚠️ NOTE: CATEGORY_ID cannot be changed via crm.deal.update API in Bitrix!
+  // Deals remain in their original funnel. To move, you need to recreate the deal.
+  // We log this but DO NOT attempt to update CATEGORY_ID to prevent infinite loops.
   if (fields.CATEGORY_ID !== undefined && Number(deal.CATEGORY_ID) !== Number(fields.CATEGORY_ID)) {
-    fieldsToUpdate.CATEGORY_ID = fields.CATEGORY_ID;
-    console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: CATEGORY_ID (funnel) ${deal.CATEGORY_ID} -> ${fields.CATEGORY_ID}`);
-    tempHasChanges = true;
+    console.log(`[SHOPIFY WEBHOOK] ⚠️ CATEGORY_ID mismatch detected: Deal is in ${deal.CATEGORY_ID}, order suggests ${fields.CATEGORY_ID}. Bitrix does NOT allow changing CATEGORY_ID via update. Deal stays in original funnel.`);
+    // DO NOT add to fieldsToUpdate - this would cause infinite loops!
   }
 
-  // Check STAGE_ID
-  // Check STAGE_ID
+  // Check STAGE_ID - IMPORTANT: Use the deal's CURRENT category for stage prefix!
+  // If deal is in Category 2, we must use C2:xxx stages, not C8:xxx
   if (deal.STAGE_ID !== undefined) {
-    // ✅ FIX: Strip Bitrix category prefix (e.g., "C2:NEW" -> "NEW") before comparing
-    // Bitrix often returns "Category:Stage" format, while mapper returns just "Stage"
-    // ALSO: Sometimes fields.STAGE_ID has the prefix forced (e.g. cancelled orders), so we must strip both sides.
+    // Strip Bitrix category prefix for comparison
     const normalizeStage = (val) => String(val || '').replace(/^C\d+:/, '').trim();
 
     const currentBitrixStage = normalizeStage(deal.STAGE_ID);
-    const newStage = normalizeStage(fields.STAGE_ID); // Normalize both sides!
+    const newStage = normalizeStage(fields.STAGE_ID);
 
     if (currentBitrixStage !== newStage) {
-      fieldsToUpdate.STAGE_ID = fields.STAGE_ID;
-      console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: STAGE_ID "${currentBitrixStage}" (raw: ${deal.STAGE_ID}) -> "${newStage}" (raw: ${fields.STAGE_ID})`);
+      // Use the deal's CURRENT category for stage prefix, NOT the calculated one!
+      const currentCategoryId = Number(deal.CATEGORY_ID);
+      const correctedStageId = currentCategoryId > 0 ? `C${currentCategoryId}:${newStage}` : newStage;
+
+      fieldsToUpdate.STAGE_ID = correctedStageId;
+      console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: STAGE_ID "${currentBitrixStage}" (raw: ${deal.STAGE_ID}) -> "${newStage}" (corrected to: ${correctedStageId})`);
       tempHasChanges = true;
     }
   }
