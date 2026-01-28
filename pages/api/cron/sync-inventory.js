@@ -10,6 +10,8 @@
 
 import { runInventorySync, SECTION_NAMES } from '../../../src/lib/sync/inventorySyncCore.js';
 import { syncProgressAdapter } from '../../../src/lib/adapters/sync/progressAdapter.js';
+import { runImageSync } from '../../../src/lib/sync/imageSyncCore.js';
+import { imageProgressAdapter } from '../../../src/lib/adapters/sync/imageProgressAdapter.js';
 
 // Sync configuration
 const ALL_SECTIONS = [36, 38, 40, 42];
@@ -134,26 +136,71 @@ async function executeSync(source = 'manual', sectionIds = ALL_SECTIONS) {
             progressCallback: (update) => {
                 if (update.type === 'section_start') {
                     console.log(`[INVENTORY SYNC] ${update.message}`);
+                    syncProgressAdapter.updateProgress({
+                        type: update.type,
+                        sectionId: update.sectionId,
+                        message: update.message
+                    });
                 } else if (update.type === 'section_complete') {
                     console.log(`[INVENTORY SYNC] ✅ Section ${update.sectionName} complete`);
+                    // completeSection already calls updateProgress internally
                     syncProgressAdapter.completeSection(update.sectionId, update.result);
                 } else if (update.type === 'sync_complete') {
                     console.log(`[INVENTORY SYNC] 🏁 ${update.message}`);
+                    syncProgressAdapter.updateProgress({
+                        type: update.type,
+                        sectionId: update.sectionId,
+                        message: update.message
+                    });
                 } else if (update.type === 'sync_error') {
                     console.error(`[INVENTORY SYNC] ❌ ${update.message}`);
+                    syncProgressAdapter.updateProgress({
+                        type: update.type,
+                        sectionId: update.sectionId,
+                        message: update.message
+                    });
                 }
-
-                syncProgressAdapter.updateProgress({
-                    type: update.type,
-                    sectionId: update.sectionId,
-                    message: update.message
-                });
             }
         });
 
         syncProgressAdapter.endRun(results);
 
         console.log(`[INVENTORY SYNC] ✅ Sync complete. Created: ${results.totals.created}, Updated: ${results.totals.updated}, Errors: ${results.totals.errors}`);
+
+        // ============ AUTO-TRIGGER IMAGE SYNC ============
+        console.log('[INVENTORY SYNC] 🔗 Auto-triggering Image Sync...');
+        try {
+            const imageRequestId = `auto-img-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            console.log(`[IMAGE SYNC] 🚀 Starting auto-sync, requestId: ${imageRequestId}`);
+
+            imageProgressAdapter.startRun(imageRequestId);
+
+            const imgResults = await runImageSync({
+                progressCallback: (update) => {
+                    if (update.type === 'info') {
+                        console.log(`[IMAGE SYNC] ℹ️ ${update.message}`);
+                    } else if (update.type === 'batch_complete') {
+                        console.log(`[IMAGE SYNC] 📊 Progress: ${update.processed}/${update.total} (Uploaded: ${update.uploaded})`);
+                        imageProgressAdapter.updateProgress(update);
+                    } else if (update.type === 'complete') {
+                        console.log(`[IMAGE SYNC] 🏁 ${update.message}`);
+                    } else if (update.type === 'error') {
+                        console.error(`[IMAGE SYNC] ❌ ${update.message}`);
+                        imageProgressAdapter.updateProgress(update);
+                    }
+                }
+            });
+
+            imageProgressAdapter.endRun(imgResults);
+            console.log(`[IMAGE SYNC] ✅ Auto-sync complete. Uploaded: ${imgResults.totals.uploaded}, Skipped: ${imgResults.totals.skipped}`);
+
+            // Merge results for return (optional, but good for debug)
+            results.imageSync = imgResults;
+
+        } catch (imgError) {
+            console.error('[IMAGE SYNC] ❌ Auto-sync failed:', imgError);
+            imageProgressAdapter.endRun({ success: false, error: imgError.message, totals: {} });
+        }
 
         return { success: true, requestId, results };
 
