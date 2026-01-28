@@ -443,8 +443,9 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     const isPaid = (order.financial_status || '').toLowerCase() === 'paid';
 
     if (isPreorderCategory && isPaid) {
-      stageId = 'WON';
-      console.log(`[ORDER MAPPER] ✅ PRE-ORDER PAID: Category ${categoryId} + financial_status="paid" → Stage "WON" (Success)`);
+      // Use category-prefixed WON stage (C4:WON for shop, C8:WON for site)
+      stageId = `C${categoryId}:WON`;
+      console.log(`[ORDER MAPPER] ✅ PRE-ORDER PAID: Category ${categoryId} + financial_status="paid" → Stage "${stageId}" (Success)`);
     } else {
       stageId = financialStatusToStageId(order.financial_status || '', categoryId);
       console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Stage "${stageId}" for category ${categoryId}`);
