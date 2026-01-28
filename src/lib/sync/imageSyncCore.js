@@ -110,10 +110,12 @@ async function getShopifyImagesBulk(variantIds) {
             // Try variant-specific image
             if (variant.image_id && product.images) {
                 const specificImg = product.images.find(img => img.id === variant.image_id);
-                if (specificImg) imgSrc = specificImg.src;
+                if (specificImg) {
+                    imgSrc = specificImg.src;
+                }
             }
 
-            // Fallback to main product image
+            // Fallback to main product image if no variant image or variant image not found inside product.images
             if (!imgSrc) {
                 imgSrc = product.image?.src || product.images?.[0]?.src;
             }
@@ -197,10 +199,6 @@ export async function runImageSync(options = {}) {
             const imageMap = await getShopifyImagesBulk(variantIds);
 
             // 2. Upload in parallel (with concurrency limit managed by batch size)
-            // Bitrix API can handle the batch parallel requests if not too aggressive.
-            // For 50 items, we might want to throttle uploads slightly or use Promise.all for chunks.
-            // Let's do Promise.all for the whole batch (50 concurrent uploads might be okay for standard plans, 
-            // but safer to do sub-batches of 5 for uploads to avoid 503s).
 
             const UPLOAD_CONCURRENCY = 5;
             for (let j = 0; j < batch.length; j += UPLOAD_CONCURRENCY) {
