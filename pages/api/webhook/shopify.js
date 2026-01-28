@@ -1065,6 +1065,14 @@ async function handleOrderUpdated(order) {
     tempHasChanges = true;
   }
 
+  // Check CATEGORY_ID (funnel) - important for pre-order tag changes
+  // If pre-order tag is added/removed, the deal should move to the correct funnel
+  if (fields.CATEGORY_ID !== undefined && Number(deal.CATEGORY_ID) !== Number(fields.CATEGORY_ID)) {
+    fieldsToUpdate.CATEGORY_ID = fields.CATEGORY_ID;
+    console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: CATEGORY_ID (funnel) ${deal.CATEGORY_ID} -> ${fields.CATEGORY_ID}`);
+    tempHasChanges = true;
+  }
+
   // Check STAGE_ID
   // Check STAGE_ID
   if (deal.STAGE_ID !== undefined) {
