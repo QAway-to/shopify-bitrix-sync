@@ -124,6 +124,57 @@ export async function createContact(webhookUrl, contactData) {
 }
 
 /**
+ * Update contact address in Bitrix24
+ * @param {string} webhookUrl - Bitrix webhook URL
+ * @param {number} contactId - Contact ID to update
+ * @param {Object} addressData - Address data object
+ * @returns {Promise<boolean>} Success status
+ */
+export async function updateContactAddress(webhookUrl, contactId, addressData) {
+  if (!contactId || !addressData) return false;
+
+  try {
+    // Build address string (same format as createContact)
+    const addressParts = [];
+    if (addressData.address1) addressParts.push(addressData.address1);
+    if (addressData.address2) addressParts.push(addressData.address2);
+
+    const cityParts = [];
+    if (addressData.zip) cityParts.push(addressData.zip);
+    if (addressData.city) cityParts.push(addressData.city);
+    if (addressData.province) cityParts.push(addressData.province);
+
+    let addressString = addressParts.join(', ');
+    if (cityParts.length > 0) {
+      addressString += (addressString ? ', ' : '') + cityParts.join(' ');
+    }
+    if (addressData.country) {
+      addressString += (addressString ? ', ' : '') + addressData.country;
+    }
+
+    if (!addressString.trim()) {
+      console.log(`[BITRIX CONTACT] No address to update for contact ${contactId}`);
+      return false;
+    }
+
+    const result = await callBitrixAPI(webhookUrl, 'crm.contact.update', {
+      id: contactId,
+      fields: { ADDRESS: addressString }
+    });
+
+    if (result.result) {
+      console.log(`[BITRIX CONTACT] ✅ Updated address for contact ${contactId}: "${addressString}"`);
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error(`[BITRIX CONTACT] Error updating contact address:`, error);
+    return false;
+  }
+}
+
+/**
  * Upsert contact - find by email or create new
  * @param {string} webhookUrl - Bitrix webhook URL
  * @param {Object} shopifyOrder - Shopify order object
@@ -150,11 +201,20 @@ export async function upsertBitrixContact(webhookUrl, shopifyOrder) {
 
   let contactId = null;
 
+  // Prepare address data for potential update
+  const billingAddress = shopifyOrder.billing_address || {};
+  const shippingAddress = shopifyOrder.shipping_address || {};
+  const addressData = shippingAddress.address1 ? shippingAddress : (billingAddress.address1 ? billingAddress : null);
+
   // Strategy 1: Try to find by email first (preferred)
   if (email) {
     contactId = await findContactByEmail(webhookUrl, email);
     if (contactId) {
       console.log(`[BITRIX CONTACT] Found existing contact by email: ${contactId}`);
+      // Update address if available (fixes "Array" issue for old contacts)
+      if (addressData) {
+        await updateContactAddress(webhookUrl, contactId, addressData);
+      }
       return contactId;
     }
   }
@@ -164,14 +224,16 @@ export async function upsertBitrixContact(webhookUrl, shopifyOrder) {
     contactId = await findContactByPhone(webhookUrl, phone);
     if (contactId) {
       console.log(`[BITRIX CONTACT] Found existing contact by phone: ${contactId}`);
+      // Update address if available
+      if (addressData) {
+        await updateContactAddress(webhookUrl, contactId, addressData);
+      }
       return contactId;
     }
   }
 
   // Create new contact (with whatever data we have)
   const customer = shopifyOrder.customer || {};
-  const billingAddress = shopifyOrder.billing_address || {};
-  const shippingAddress = shopifyOrder.shipping_address || {};
   const address = shippingAddress.address1 ? shippingAddress : billingAddress;
 
   const contactData = {
