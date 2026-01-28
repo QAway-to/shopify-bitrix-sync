@@ -590,7 +590,8 @@ async function handleOrderCreated(order) {
   }
 
   // ✅ ADDRESS SYNC: Include shipping address in deal on CREATE
-  if (order?.shipping_address) {
+  console.log(`[SHOPIFY WEBHOOK] 📍 Address debug: shipping_address type=${typeof order?.shipping_address}, value=`, JSON.stringify(order?.shipping_address || null));
+  if (order?.shipping_address && typeof order.shipping_address === 'object' && !Array.isArray(order.shipping_address)) {
     const addr = order.shipping_address;
     // Build Bitrix address string format: "Street, ZIP City Region, Country"
     const addressParts = [];
@@ -1001,7 +1002,7 @@ async function handleOrderUpdated(order) {
   const fulfillmentStatus = order?.fulfillment_status || '';
   const isFulfilled = fulfillmentStatus === 'fulfilled';
 
-  if (!isFulfilled && order?.shipping_address) {
+  if (!isFulfilled && order?.shipping_address && typeof order.shipping_address === 'object' && !Array.isArray(order.shipping_address)) {
     const addr = order.shipping_address;
     // Build Bitrix address string format: "Street, ZIP City Region, Country"
     const addressParts = [];
