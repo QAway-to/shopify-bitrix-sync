@@ -269,7 +269,9 @@ async function getShopifyProductMetadata(variantId) {
       vendor: product.vendor || '',
       product_type: product.product_type || '',
       size: sizeVal,
-      color: colorVal
+      color: colorVal,
+      inventory_quantity: targetVariant.inventory_quantity,
+      inventory_policy: targetVariant.inventory_policy
     };
 
   } catch (e) {
@@ -367,6 +369,28 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_SHOP_PREORDER : BITRIX_CONFIG.CATEGORY_SHOP_STOCK;
   } else {
     categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
+
+    // ✅ NEW CHECK: Inventory-based pre-order detection (Site only)
+    // If ANY item has inventory_quantity <= 0, consider it a pre-order (Category 8)
+    // even if tags are missing.
+    try {
+      if (order.line_items && Array.isArray(order.line_items)) {
+        for (const item of order.line_items) {
+          if (item.variant_id) {
+            const meta = await getShopifyProductMetadata(item.variant_id);
+            // If inventory is 0 or less, it's a pre-order (unless it's the very last item sold, but strictly <=0 usually implies pre-order flow or overselling)
+            // User requested: "quantity <= 0" -> Pre-order (site)
+            if (meta && meta.inventory_quantity <= 0) {
+              console.log(`[ORDER MAPPER] 📉 Inventory check: Item ${item.sku} has qty ${meta.inventory_quantity}. Marking as PRE-ORDER (Site).`);
+              categoryId = BITRIX_CONFIG.CATEGORY_PREORDER; // Force Category 8
+              break; // One pre-order item is enough to move the whole deal
+            }
+          }
+        }
+      }
+    } catch (invError) {
+      console.error(`[ORDER MAPPER] ⚠️ Error checking inventory for pre-order logic:`, invError);
+    }
   }
 
   console.log(`[ORDER MAPPER] Category determined: ${categoryId} (Source: ${isPOS ? 'POS' : 'Site'}, Type: ${hasPreorderTag ? 'Pre-order' : 'Stock'}) based on source_name: "${sourceName}", tags:`, orderTags);
