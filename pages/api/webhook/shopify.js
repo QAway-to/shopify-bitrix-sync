@@ -6,6 +6,7 @@ import { callBitrix, getBitrixWebhookBase, classifyBitrixError } from '../../../
 import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
 import { upsertBitrixContact } from '../../../src/lib/bitrix/contact.js';
 import { BITRIX_CONFIG } from '../../../src/lib/bitrix/config.js';
+import { isLoseStage } from '../../../src/lib/bitrix/stageMapping.js';
 import { getProvenanceMarker, setProvenanceMarker } from '../../../src/lib/shopify/metafields.js';
 
 // Configure body parser to accept raw JSON
@@ -1547,6 +1548,34 @@ export default async function handler(req, res) {
             provenance: provenanceValue
           });
         } else if (lastSource === 'bitrix' && isCancelledOrRefunded) {
+          // ✅ FIX: Break loop for refunded orders
+          // If the deal is ALREADY in a LOSE stage, we don't need to update it again.
+          // This prevents the shopify -> bitrix -> shopify -> bitrix loop.
+          try {
+            console.log(`[SHOPIFY WEBHOOK] 🔍 Checking if Loop Guard bypass is necessary for cancelled/refunded order...`);
+            const listResp = await callBitrix('/crm.deal.list.json', {
+              filter: { 'UF_CRM_1742556489': shopifyOrderId },
+              select: ['ID', 'STAGE_ID']
+            });
+            const deal = listResp.result?.[0];
+            if (deal && deal.STAGE_ID && isLoseStage(deal.STAGE_ID)) {
+              const skipReason = `Loop Guard: Order is cancelled/refunded, but Bitrix deal ${deal.ID} is ALREADY in LOSE stage (${deal.STAGE_ID}). Breaking loop.`;
+              console.log(`[SHOPIFY WEBHOOK] 🛑 ${skipReason}`);
+
+              // Return 200 to stop retry/loop
+              return res.status(200).json({
+                success: true,
+                skipped: true,
+                reason: skipReason,
+                orderId: order?.id,
+                provenance: provenanceValue
+              });
+            }
+          } catch (checkErr) {
+            console.warn(`[SHOPIFY WEBHOOK] ⚠️ Failed to check deal status for loop break:`, checkErr);
+            // Continue to force update if check fails (safety fallback)
+          }
+
           console.log(`[SHOPIFY WEBHOOK] ✅ PROVENANCE LOOP GUARD BYPASSED: Order ${order?.name || order?.id} is cancelled/refunded, must sync LOSE stage to Bitrix`);
         }
       }
