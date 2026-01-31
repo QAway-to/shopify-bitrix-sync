@@ -1060,10 +1060,19 @@ async function handleOrderUpdated(order) {
   }
 
   // Check OPPORTUNITY (as number)
+  // ✅ FIX: Skip OPPORTUNITY updates for deals ALREADY in LOSE stage
+  // Bitrix silently ignores OPPORTUNITY changes for LOSE deals, causing infinite loop
+  const currentStageNormalized = String(deal.STAGE_ID || '').replace(/^C\d+:/, '').trim();
+  const isCurrentlyLose = currentStageNormalized === 'LOSE';
+
   if (Number(deal.OPPORTUNITY || 0) !== Number(fields.OPPORTUNITY || 0)) {
-    fieldsToUpdate.OPPORTUNITY = fields.OPPORTUNITY;
-    console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: OPPORTUNITY ${deal.OPPORTUNITY} -> ${fields.OPPORTUNITY}`);
-    tempHasChanges = true;
+    if (isCurrentlyLose) {
+      console.log(`[SHOPIFY WEBHOOK] 🛑 SKIP: OPPORTUNITY change (${deal.OPPORTUNITY} -> ${fields.OPPORTUNITY}) skipped because deal is in LOSE stage. Bitrix blocks OPPORTUNITY updates for LOSE deals.`);
+    } else {
+      fieldsToUpdate.OPPORTUNITY = fields.OPPORTUNITY;
+      console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: OPPORTUNITY ${deal.OPPORTUNITY} -> ${fields.OPPORTUNITY}`);
+      tempHasChanges = true;
+    }
   }
 
   // ⚠️ NOTE: CATEGORY_ID cannot be changed via crm.deal.update API in Bitrix!
