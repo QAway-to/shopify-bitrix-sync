@@ -26,7 +26,7 @@ export const BITRIX_CONFIG = {
   },
 
   // Product ID for shipping (from working script)
-  SHIPPING_PRODUCT_ID: 3000, // Real shipping product ID
+  SHIPPING_PRODUCT_ID: 11640, // ACS delivery product ID
 
   // SKU to Product ID mapping
   // TODO: Replace with actual product IDs from Bitrix24

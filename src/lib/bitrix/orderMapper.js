@@ -739,7 +739,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     // Get shipping product ID to avoid confusion
     const shippingProductId = BITRIX_CONFIG.SHIPPING_PRODUCT_ID > 0
       ? BITRIX_CONFIG.SHIPPING_PRODUCT_ID
-      : 3000; // Default shipping product ID
+      : 11640; // ACS delivery product ID
 
     for (const item of order.line_items) {
       // ✅ FIX: Handle pre-order items correctly
@@ -1213,12 +1213,12 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     // Use PRODUCT_ID for shipping (matching working script)
     const shippingProductId = BITRIX_CONFIG.SHIPPING_PRODUCT_ID > 0
       ? BITRIX_CONFIG.SHIPPING_PRODUCT_ID
-      : 3000; // Default shipping product ID from working script
+      : 11640; // ACS delivery product ID
 
     const shippingName = shippingLineTitle || 'Shipping';
 
     productRows.push({
-      PRODUCT_ID: shippingProductId, // Use shipping product ID (3000 from working script)
+      PRODUCT_ID: shippingProductId, // ACS delivery product ID
       PRODUCT_NAME: shippingName, // Explicit name for visibility
       PRICE: actualShippingPrice,
       QUANTITY: 1,

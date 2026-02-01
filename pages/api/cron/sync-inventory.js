@@ -12,6 +12,7 @@ import { runInventorySync, SECTION_NAMES } from '../../../src/lib/sync/inventory
 import { syncProgressAdapter } from '../../../src/lib/adapters/sync/progressAdapter.js';
 import { runImageSync } from '../../../src/lib/sync/imageSyncCore.js';
 import { imageProgressAdapter } from '../../../src/lib/adapters/sync/imageProgressAdapter.js';
+import { runDealStockSync } from '../../../src/lib/sync/dealStockSyncCore.js';
 
 // Sync configuration
 const ALL_SECTIONS = [36, 38, 40, 42];
@@ -200,6 +201,28 @@ async function executeSync(source = 'manual', sectionIds = ALL_SECTIONS) {
         } catch (imgError) {
             console.error('[IMAGE SYNC] ❌ Auto-sync failed:', imgError);
             imageProgressAdapter.endRun({ success: false, error: imgError.message, totals: {} });
+        }
+
+        // ============ AUTO-TRIGGER DEAL STOCK SYNC ============
+        console.log('[INVENTORY SYNC] 🔗 Auto-triggering Deal Stock Sync...');
+        try {
+            const dealStockResults = await runDealStockSync({
+                progressCallback: (update) => {
+                    if (update.type === 'info' || update.type === 'complete') {
+                        console.log(`[DEAL STOCK SYNC] ${update.message}`);
+                    } else if (update.type === 'stock_added') {
+                        console.log(`[DEAL STOCK SYNC] 📦 ${update.message}`);
+                    } else if (update.type === 'error') {
+                        console.error(`[DEAL STOCK SYNC] ❌ ${update.message}`);
+                    }
+                }
+            });
+
+            console.log(`[DEAL STOCK SYNC] ✅ Complete. OK: ${dealStockResults.stockOk}, Added: ${dealStockResults.stockAdded}, Failed: ${dealStockResults.stockFailed}`);
+            results.dealStockSync = dealStockResults;
+
+        } catch (dealStockError) {
+            console.error('[DEAL STOCK SYNC] ❌ Auto-sync failed:', dealStockError);
         }
 
         return { success: true, requestId, results };
