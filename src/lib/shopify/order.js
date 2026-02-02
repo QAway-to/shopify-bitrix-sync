@@ -890,7 +890,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
         email: customerEmail || 'hold@bfcshoes.local',
         taxes_included: true,
         financial_status: 'pending', // ✅ KEY FIX: Forces Pending instead of Void/Null
-        inventory_behaviour: 'decrement_obeying_policy',
+        inventory_behaviour: 'decrement_ignoring_policy',
         send_receipt: false,
         send_fulfillment_receipt: false,
         ...(final_shipping_address ? { shipping_address: final_shipping_address } : {}),
