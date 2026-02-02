@@ -182,14 +182,15 @@ export async function resolveRegularOrderItems(dealId, requestId) {
                 const code = product.CODE;
                 const xmlId = product.XML_ID;
 
-                if (code && code.trim() !== '') {
-                    items.push({ sku: code.trim(), qty: row.QUANTITY || 1 });
-                    console.log(`[REGULAR ORDER] Product ${productId}: SKU=${code.trim()}`);
-                } else if (xmlId && xmlId.toString().trim() !== '') {
+                // ✅ Priority: XML_ID (variant_id) first, then CODE (SKU) as fallback
+                if (xmlId && xmlId.toString().trim() !== '') {
                     items.push({ variantId: xmlId.toString().trim(), qty: row.QUANTITY || 1 });
                     console.log(`[REGULAR ORDER] Product ${productId}: variantId=${xmlId}`);
+                } else if (code && code.trim() !== '') {
+                    items.push({ sku: code.trim(), qty: row.QUANTITY || 1 });
+                    console.log(`[REGULAR ORDER] Product ${productId}: SKU=${code.trim()} (fallback)`);
                 } else {
-                    console.warn(`[REGULAR ORDER] Product ${productId} has no SKU/XML_ID, skipping`);
+                    console.warn(`[REGULAR ORDER] Product ${productId} has no XML_ID/SKU, skipping`);
                 }
             }
         } catch (productError) {
