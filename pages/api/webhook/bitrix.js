@@ -2843,13 +2843,52 @@ async function handleDealUpdate(dealId, requestId) {
         requestId,
         dealId,
         categoryId,
-        orderType: String(categoryId) === '4' ? 'CATALOG' : 'REGULAR',
+        orderType: String(categoryId) === '4' ? 'REGULAR_OR_CATALOG' : 'REGULAR',
         timestamp: new Date().toISOString()
       }));
 
+      let orderType = 'REGULAR';
+
       if (String(categoryId) === '4') {
-        // CATALOG ORDER: Use Brand/Model/Size UF fields
-        items = await resolveCatalogOrderItems(dealId, dealData, requestId);
+        // ✅ Category 4: First try Product Rows, then fallback to Brand/Model/Size UF fields
+        items = await resolveRegularOrderItems(dealId, requestId);
+
+        if (items.length > 0) {
+          console.log(JSON.stringify({
+            event: 'CATEGORY_4_PRODUCT_ROWS_FOUND',
+            requestId,
+            dealId,
+            itemsCount: items.length,
+            message: 'Using product rows for Category 4 order',
+            timestamp: new Date().toISOString()
+          }));
+        } else {
+          // Fallback to CATALOG (Brand/Model/Size UF fields)
+          console.log(JSON.stringify({
+            event: 'CATEGORY_4_CATALOG_FALLBACK',
+            requestId,
+            dealId,
+            message: 'No product rows found, trying Brand/Model/Size UF fields',
+            timestamp: new Date().toISOString()
+          }));
+          items = await resolveCatalogOrderItems(dealId, dealData, requestId);
+          if (items.length > 0) {
+            orderType = 'CATALOG';
+          }
+        }
+
+        // ✅ RACE CONDITION GUARD: If no items found, skip order creation
+        // Next UPDATE webhook will handle it after product data is populated
+        if (items.length === 0) {
+          console.log(JSON.stringify({
+            event: 'CATEGORY_4_NO_ITEMS_SKIP',
+            requestId,
+            dealId,
+            message: 'No product rows or UF fields found, skipping order creation (race condition guard)',
+            timestamp: new Date().toISOString()
+          }));
+          // Don't throw error, just skip - next webhook will process
+        }
       } else {
         // REGULAR ORDER: Use Product Rows
         items = await resolveRegularOrderItems(dealId, requestId);
