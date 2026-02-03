@@ -732,6 +732,22 @@ async function handleOrderCreated(order) {
     console.log(`[SHOPIFY WEBHOOK] ✅ TITLE verification passed: "${verifiedDeal.TITLE}"`);
   }
 
+  // ✅ CRITICAL FIX: Force Payment Status Update if Bitrix Automation overwrote it
+  // Bitrix automation often resets UF_CRM_1739183959976 to "58" (Unpaid) after deal creation
+  // We need to force it back to the correct value from Shopify
+  if (dealFields.UF_CRM_1739183959976) {
+    try {
+      console.log(`[SHOPIFY WEBHOOK] 🔧 Forcing Payment Status (UF_CRM_1739183959976) to "${dealFields.UF_CRM_1739183959976}" for deal ${dealId}...`);
+      await callBitrix('/crm.deal.update.json', {
+        id: dealId,
+        fields: { UF_CRM_1739183959976: dealFields.UF_CRM_1739183959976 }
+      });
+      console.log(`[SHOPIFY WEBHOOK] ✅ Payment Status forced update successful: "${dealFields.UF_CRM_1739183959976}"`);
+    } catch (paymentErr) {
+      console.error(`[SHOPIFY WEBHOOK] ❌ Failed to force Payment Status update:`, paymentErr);
+    }
+  }
+
   // ✅ Store successful operation
   try {
     successAdapter.storeOperation({
