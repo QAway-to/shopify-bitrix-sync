@@ -48,20 +48,30 @@ async function resolveBitrixContactForDeal(dealId, correlationId) {
 
     const contactResp = await callBitrix('/crm.contact.get.json', { id: contactId });
     const contact = contactResp?.result || null;
-
     if (contact) {
-      // Email
+      // Email (with phone fallback)
       const emailRaw = contact.EMAIL;
       const emailValue = Array.isArray(emailRaw) ? emailRaw?.[0]?.VALUE : (emailRaw?.VALUE || emailRaw);
-      result.email = emailValue && String(emailValue).trim() !== '' ? String(emailValue).trim() : BITRIX_FALLBACK_CUSTOMER_EMAIL;
+
+      // Phone
+      const phoneRaw = contact.PHONE;
+      const phoneValue = Array.isArray(phoneRaw) ? phoneRaw?.[0]?.VALUE : (phoneRaw?.VALUE || phoneRaw || '');
+      result.phone = phoneValue;
 
       // Name
       result.firstName = contact.NAME || '';
       result.lastName = contact.LAST_NAME || '';
 
-      // Phone
-      const phoneRaw = contact.PHONE;
-      result.phone = Array.isArray(phoneRaw) ? phoneRaw?.[0]?.VALUE : (phoneRaw?.VALUE || phoneRaw || '');
+      // ✅ Email resolution: try email first, then phone as fallback
+      if (emailValue && String(emailValue).trim() !== '') {
+        result.email = String(emailValue).trim();
+      } else if (phoneValue && String(phoneValue).trim() !== '') {
+        // Use phone as email identifier (Shopify can match customers by this)
+        const cleanPhone = String(phoneValue).trim().replace(/\s+/g, '');
+        result.email = `${cleanPhone}@phone.local`;
+      } else {
+        result.email = BITRIX_FALLBACK_CUSTOMER_EMAIL;
+      }
 
       // Address
       const addrRaw = contact.ADDRESS || null;
