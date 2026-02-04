@@ -35,7 +35,7 @@ import { BITRIX_DEAL_FIELDS } from '../../../src/lib/shared/constants.js';
 
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
-const BITRIX_FALLBACK_CUSTOMER_EMAIL = String(process.env.BITRIX_FALLBACK_CUSTOMER_EMAIL || 'hold@bfcshoes.local');
+const BITRIX_FALLBACK_CUSTOMER_EMAIL = String(process.env.BITRIX_FALLBACK_CUSTOMER_EMAIL || 'admin@fbfcshoes.com');
 
 async function resolveCustomerEmailFromDeal(dealData, requestId, dealId, context) {
   const contactIdRaw = dealData?.CONTACT_ID || dealData?.contact_id || null;

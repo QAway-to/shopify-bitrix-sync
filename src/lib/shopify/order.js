@@ -746,7 +746,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
     tags: tags,
     note: note,
     // Email is optional for drafts / internal orders, but we try to use real Bitrix contact email if available
-    email: customerEmail || 'hold@bfcshoes.local',
+    email: customerEmail || 'admin@fbfcshoes.com',
     taxesIncluded: true // Tax is already included in price (to prevent +19% on top)
   };
 
@@ -887,7 +887,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
         line_items: lineItemsRest,
         tags: tags.join(', '),
         note,
-        email: customerEmail || 'hold@bfcshoes.local',
+        email: customerEmail || 'admin@fbfcshoes.com',
         taxes_included: true,
         financial_status: 'pending', // ✅ KEY FIX: Forces Pending instead of Void/Null
         inventory_behaviour: 'decrement_ignoring_policy',
