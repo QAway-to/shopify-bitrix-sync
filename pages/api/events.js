@@ -1,5 +1,9 @@
 // Get all Shopify events
 import { shopifyAdapter } from '../../src/lib/adapters/shopify/index.js';
+import { sanitizeData } from '../../src/lib/utils/sanitize.js';
+
+// ✅ Demo mode: mask sensitive data in API responses
+const isDemoMode = process.env.DEMO_MODE === 'true';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -10,11 +14,15 @@ export default async function handler(req, res) {
   try {
     // ✅ Return ALL events without deduplication so UI can show full history
     const events = shopifyAdapter.getAllEvents(true); // includeAll = true
-    
+
+    // ✅ Apply demo mode masking at API level (hides data from DevTools too)
+    const sanitizedEvents = sanitizeData(events, isDemoMode);
+
     return res.status(200).json({
       success: true,
-      events: events,
-      count: events.length
+      events: sanitizedEvents,
+      count: events.length,
+      demoMode: isDemoMode
     });
   } catch (error) {
     console.error('Get events error:', error);
