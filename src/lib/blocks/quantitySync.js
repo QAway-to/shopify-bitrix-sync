@@ -88,7 +88,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId) {
         // Get line items from Shopify
         const shopifyLineItems = shopifyOrder.line_items || [];
 
-        // Build map of SKU -> quantity from Bitrix
+        // Build map: key = variant_id or sku, value = {quantity, variantId, sku}
         const bitrixQuantities = new Map();
         for (const row of bitrixRows) {
             const productId = row.PRODUCT_ID;
@@ -96,11 +96,26 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId) {
                 try {
                     const productResp = await callBitrix('/crm.product.get.json', { id: productId });
                     if (productResp.result) {
+                        // ✅ Priority: XML_ID (variant_id) first, then CODE/SKU as fallback
+                        const xmlId = productResp.result.XML_ID || productResp.result.xml_id || null;
                         const sku = productResp.result.CODE || productResp.result.code ||
-                            productResp.result.SKU || productResp.result.sku;
-                        if (sku && sku.trim() !== '') {
+                            productResp.result.SKU || productResp.result.sku || null;
+
+                        // Determine variant_id: XML_ID if it looks like a number, otherwise null
+                        const variantId = xmlId && /^\d+$/.test(String(xmlId).trim()) ? String(xmlId).trim() : null;
+
+                        // Key for map: use variant_id if available, otherwise sku
+                        const key = variantId || (sku && sku.trim() !== '' ? sku.trim() : null);
+
+                        if (key) {
                             const quantity = parseFloat(row.QUANTITY || row.quantity || 0);
-                            bitrixQuantities.set(sku.trim(), quantity);
+                            bitrixQuantities.set(key, {
+                                quantity,
+                                variantId: variantId,
+                                sku: sku ? sku.trim() : null
+                            });
+                        } else {
+                            console.warn(`[SYNC QUANTITIES] Product ${productId} has no variant_id (XML_ID) or SKU`);
                         }
                     }
                 } catch (productError) {
@@ -112,18 +127,41 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId) {
         // Compare with Shopify and find differences
         const quantityChanges = [];
 
-        // Check existing Shopify items
+        // Check existing Shopify items - match by variant_id first, then sku
         for (const lineItem of shopifyLineItems) {
-            const rawSku = lineItem.sku;
-            if (!rawSku || String(rawSku).trim() === '') continue;
+            const shopifyVariantId = lineItem.variant_id ? String(lineItem.variant_id) : null;
+            const shopifySku = lineItem.sku ? String(lineItem.sku).trim() : null;
 
-            const sku = String(rawSku).trim();
-            const bitrixQty = bitrixQuantities.has(sku) ? bitrixQuantities.get(sku) : 0;
+            if (!shopifyVariantId && !shopifySku) continue;
+
+            // Find matching Bitrix item by variant_id first, then by sku
+            let matchedEntry = null;
+            let matchKey = null;
+
+            // Try variant_id match first
+            if (shopifyVariantId && bitrixQuantities.has(shopifyVariantId)) {
+                matchedEntry = bitrixQuantities.get(shopifyVariantId);
+                matchKey = shopifyVariantId;
+            }
+            // Fallback to sku match
+            if (!matchedEntry && shopifySku) {
+                for (const [key, entry] of bitrixQuantities.entries()) {
+                    if (entry.sku && entry.sku === shopifySku) {
+                        matchedEntry = entry;
+                        matchKey = key;
+                        break;
+                    }
+                }
+            }
+
+            const bitrixQty = matchedEntry ? matchedEntry.quantity : 0;
             const shopifyQty = parseFloat(lineItem.quantity || 0);
 
             if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
                 quantityChanges.push({
-                    sku,
+                    key: matchKey || shopifyVariantId || shopifySku,
+                    variantId: matchedEntry?.variantId || shopifyVariantId,
+                    sku: matchedEntry?.sku || shopifySku,
                     bitrixQty,
                     shopifyQty,
                     newQty: bitrixQty
@@ -132,14 +170,23 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId) {
         }
 
         // Check for new items in Bitrix that don't exist in Shopify
-        for (const [sku, bitrixQty] of bitrixQuantities.entries()) {
-            const existsInShopify = shopifyLineItems.some(li => String(li?.sku || '').trim() === sku);
-            if (!existsInShopify && bitrixQty > 0) {
+        for (const [key, entry] of bitrixQuantities.entries()) {
+            // Check if exists in Shopify by variant_id or sku
+            const existsInShopify = shopifyLineItems.some(li => {
+                const liVariantId = li.variant_id ? String(li.variant_id) : null;
+                const liSku = li.sku ? String(li.sku).trim() : null;
+                return (entry.variantId && liVariantId === entry.variantId) ||
+                    (entry.sku && liSku === entry.sku);
+            });
+
+            if (!existsInShopify && entry.quantity > 0) {
                 quantityChanges.push({
-                    sku,
-                    bitrixQty,
+                    key,
+                    variantId: entry.variantId,
+                    sku: entry.sku,
+                    bitrixQty: entry.quantity,
                     shopifyQty: 0,
-                    newQty: bitrixQty,
+                    newQty: entry.quantity,
                     isNew: true
                 });
             }
@@ -173,20 +220,27 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId) {
         for (const change of quantityChanges) {
             try {
                 if (change.isNew) {
-                    const addResult = await addPositionToOrder(shopifyOrderId, change.sku, change.newQty);
+                    // ✅ Use variantId first (direct lookup), fallback to sku (certificates)
+                    const identifier = change.variantId || change.sku;
+                    const addResult = await addPositionToOrder(shopifyOrderId, identifier, change.newQty);
                     if (addResult.success) {
                         hasChanges = true;
                         console.log(JSON.stringify({
                             event: 'QUANTITY_SYNC_ADD_SUCCESS',
                             requestId, dealId, shopifyOrderId,
-                            sku: change.sku, quantity: change.newQty,
+                            variantId: change.variantId,
+                            sku: change.sku,
+                            quantity: change.newQty,
                             timestamp: new Date().toISOString()
                         }));
                     } else {
                         console.log(JSON.stringify({
                             event: 'QUANTITY_SYNC_ADD_ERROR',
                             requestId, dealId, shopifyOrderId,
-                            sku: change.sku, error: addResult.error,
+                            variantId: change.variantId,
+                            sku: change.sku,
+                            error: addResult.error,
+                            message: addResult.message,
                             timestamp: new Date().toISOString()
                         }));
                     }
