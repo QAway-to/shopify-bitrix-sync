@@ -766,39 +766,19 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       : 11648; // ACS delivery product ID
 
     for (const item of order.line_items) {
-      // ✅ FIX: Handle pre-order items correctly
-      // - For regular orders: current_quantity reflects active (after refunds)
-      // - For pre-orders: current_quantity = 0 (not yet received) but quantity > 0
       const originalQuantity = Number(item.quantity ?? 0);
       let currentQuantity = Number(item.__resolved_current_quantity ?? item.current_quantity ?? item.quantity ?? 0);
 
-      // Skip only if BOTH are 0 (truly refunded/removed)
-      // If quantity > 0 but current_quantity = 0:
-      // - If fulfilled: treat as sold (use original quantity)
-      // - If NOT fulfilled: treat as removed/refunded before fulfillment (use 0)
-      const isFulfilled = item.fulfillment_status === 'fulfilled';
-
       let effectiveQuantity = currentQuantity;
-      if (currentQuantity === 0) {
-        if (isFulfilled) {
-          // It was sold and fulfilled, so we keep it in the deal
-          effectiveQuantity = originalQuantity;
-        } else if (originalQuantity > 0) {
-          // It was ordered but now current=0 and NOT fulfilled -> Removed from order
-          // Treat as 0 to exclude from deal
-          effectiveQuantity = 0;
-          console.log(`[ORDER MAPPER] 🗑️ Item ${item.id} (SKU: ${item.sku}) marked as REMOVED (unfulfilled, current_qty=0)`);
-        }
-      }
 
       if (effectiveQuantity <= 0) {
-        console.log(`[ORDER MAPPER] ⏭️ Skipping item ${item.id} (SKU: ${item.sku || 'N/A'}) - both quantity and current_quantity are 0 (fully refunded)`);
+        console.log(`[ORDER MAPPER] ⏭️ Skipping item ${item.id} (SKU: ${item.sku || 'N/A'}) - current_quantity is 0 (refunded/removed)`);
         continue;
       }
 
       // Log pre-order detection
       if (currentQuantity === 0 && originalQuantity > 0) {
-        console.log(`[ORDER MAPPER] 📦 PRE-ORDER DETECTED: item ${item.id} (SKU: ${item.sku || 'N/A'}) - current_quantity=0, quantity=${originalQuantity}`);
+        console.log(`[ORDER MAPPER] 📦 PRE-ORDER / REFUNDED ITEM DETECTED: item ${item.id} (SKU: ${item.sku || 'N/A'}) - current_quantity=0, quantity=${originalQuantity}`);
       }
 
       // CRITICAL: line_items are ALWAYS products, NEVER shipping
