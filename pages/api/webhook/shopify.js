@@ -1259,6 +1259,27 @@ async function handleOrderUpdated(order) {
     rowsChanged = true;
   }
 
+  // ✅ CRITICAL LOOP BREAKER: If deal is already LOSE with OPPORTUNITY=0 and order is cancelled/refunded,
+  // we have NOTHING to change. Skip provenance marker (which writes to Shopify metafields and
+  // triggers another webhook) and all further updates. This prevents infinite loop.
+  const dealAlreadyLose = isLoseStage(deal.STAGE_ID);
+  const dealAlreadyZero = Number(deal.OPPORTUNITY || 0) === 0;
+  if (isLost && dealAlreadyLose && dealAlreadyZero && !tempHasChanges) {
+    console.log(`[SHOPIFY WEBHOOK] 🛑 LOOP BREAKER: Deal ${dealId} is already LOSE (${deal.STAGE_ID}) with OPPORTUNITY=0. Order is ${isCancelled ? 'cancelled' : 'refunded'}. Nothing to update. STOPPING.`);
+    // Store success and return
+    try {
+      successAdapter.storeOperation({
+        type: 'UPDATE',
+        dealId: String(dealId),
+        shopifyOrderId: String(shopifyOrderId),
+        shopifyOrderName: order?.name,
+        verified: true,
+        dealData: { TITLE: deal.TITLE, OPPORTUNITY: deal.OPPORTUNITY, STAGE_ID: deal.STAGE_ID, CATEGORY_ID: deal.CATEGORY_ID },
+      });
+    } catch (e) { /* ignore */ }
+    return res.status(200).json({ success: true, message: 'Deal already in LOSE with OPPORTUNITY=0, no update needed' });
+  }
+
   // Set provenance marker BEFORE deal update if ANYTHING is changing
   if (tempHasChanges || rowsChanged) {
     try {
@@ -1312,11 +1333,13 @@ async function handleOrderUpdated(order) {
     console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify deal after update:`, verifyError);
   }
 
-  // ✅ PROACTIVE CHECK: Detect if deal has shipped products (WON stage)
-  // If order is refunded/cancelled AND deal is in WON stage, we CANNOT use crm.deal.productrows.set
-  // because Bitrix blocks deletion of shipped products. Instead, update each row individually.
+  // ✅ PROACTIVE CHECK: Detect if deal has shipped products (WON or LOSE stage after refund)
+  // If order is refunded/cancelled AND deal is in WON stage → apply 100% discount on each row
+  // If order is refunded/cancelled AND deal is already LOSE → skip row updates entirely (already processed)
+  // We CANNOT use crm.deal.productrows.set because Bitrix blocks deletion of shipped products.
   const dealIsWon = isWonStage(deal.STAGE_ID);
   const needsIndividualRowUpdate = isLost && dealIsWon;
+  const skipRowsForShippedLose = isLost && dealAlreadyLose;
 
   if (needsIndividualRowUpdate) {
     console.log(`[SHOPIFY WEBHOOK] 🔄 SHIPPED PRODUCT HANDLER: Order is ${isFullRefund ? 'fully refunded' : 'cancelled'} AND deal ${dealId} is in WON stage (${deal.STAGE_ID}).`);
@@ -1379,6 +1402,9 @@ async function handleOrderUpdated(order) {
       console.error(`[SHOPIFY WEBHOOK] ❌ Failed to fetch existing product rows for deal ${dealId}: ${fetchRowsError.message}`);
       // No retry — log and continue
     }
+  } else if (skipRowsForShippedLose) {
+    // Deal is already LOSE and had shipped products — don't attempt crm.deal.productrows.set
+    console.log(`[SHOPIFY WEBHOOK] 🛑 Skipping product rows update: Deal ${dealId} is in LOSE stage with shipped products. 100% discount was already applied.`);
   } else if (rowsChanged) {
     // ✅ NORMAL PATH: Use crm.deal.productrows.set (no shipped products)
     if (productRows.length > 0) {
