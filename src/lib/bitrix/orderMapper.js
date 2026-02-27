@@ -483,15 +483,26 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ FULL REFUND: financial_status="${order.financial_status}" → FORCING Stage "LOSE"`);
   } else if (isPartialRefund) {
     // ✅ FIX: Dynamic stage ID based on category to prevent loop for POS (Cat 0)
-    if (categoryId > 0) {
-      stageId = `C${categoryId}:PREPARATION`;
+    // Also if it's already fulfilled, move to WON / SUCCESS
+    const isFulfilled = (order.fulfillment_status || '').toLowerCase() === 'fulfilled';
+
+    if (isFulfilled) {
+      if (categoryId > 0) {
+        stageId = `C${categoryId}:WON`;
+      } else {
+        stageId = 'WON';
+      }
     } else {
-      // For Category 0 (Stock Shop), usually no 'PREPARATION' stage, or it matches 'NEW'.
-      // Safe fallback to 'NEW' or 'PREPARATION' (unprefixed) if it exists.
-      // Given 'partially_refunded' usually implies manual check, 'NEW' is safe.
-      stageId = 'NEW';
+      if (categoryId > 0) {
+        stageId = `C${categoryId}:PREPARATION`;
+      } else {
+        // For Category 0 (Stock Shop), usually no 'PREPARATION' stage, or it matches 'NEW'.
+        // Safe fallback to 'NEW' or 'PREPARATION' (unprefixed) if it exists.
+        // Given 'partially_refunded' usually implies manual check, 'NEW' is safe.
+        stageId = 'NEW';
+      }
     }
-    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ PARTIAL REFUND: financial_status="${order.financial_status}", hasActiveItems=${hasActiveItems} → FORCING Stage "${stageId}"`);
+    console.log(`[ORDER MAPPER] ⚠️⚠️⚠️ PARTIAL REFUND: financial_status="${order.financial_status}", hasActiveItems=${hasActiveItems}, isFulfilled=${isFulfilled} → FORCING Stage "${stageId}"`);
   } else {
     // ✅ PRE-ORDER SPECIAL LOGIC: If pre-order (Cat 4 or 8) is PAID, move to WON
     // Pre-orders that are fully paid should go directly to Success
