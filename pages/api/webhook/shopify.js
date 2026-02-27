@@ -1042,49 +1042,55 @@ async function handleOrderUpdated(order) {
     fields.UF_CRM_1739183268662 = mappedFields.UF_CRM_1739183268662; // Order type
   }
 
-  // ✅ ADDRESS SYNC: Shopify → Bitrix (only for UNFULFILLED orders)
-  // Once order is fulfilled, address shouldn't change
+  // ✅ ADDRESS SYNC + CONTACT SYNC: Skip for cancelled/refunded orders!
+  // When order is cancelled or fully refunded, we only update stage/opportunity/payment.
+  // Customer data (address, contact) should NOT be overwritten — it may have been
+  // manually entered in Bitrix (e.g. pre-orders).
   const fulfillmentStatus = order?.fulfillment_status || '';
   const isFulfilled = fulfillmentStatus === 'fulfilled';
 
-  if (!isFulfilled && order?.shipping_address && typeof order.shipping_address === 'object' && !Array.isArray(order.shipping_address)) {
-    const addr = order.shipping_address;
-    // Build Bitrix address string format: "Street, ZIP City Region, Country"
-    const addressParts = [];
-    if (addr.address1) addressParts.push(addr.address1);
-    if (addr.address2) addressParts.push(addr.address2);
+  if (isLost) {
+    console.log(`[SHOPIFY WEBHOOK] 🛑 SKIP ADDRESS & CONTACT SYNC: Order is ${isCancelled ? 'cancelled' : 'fully refunded'}. Preserving existing Bitrix customer data.`);
+  } else {
+    // ADDRESS SYNC: Shopify → Bitrix (only for UNFULFILLED, non-cancelled orders)
+    if (!isFulfilled && order?.shipping_address && typeof order.shipping_address === 'object' && !Array.isArray(order.shipping_address)) {
+      const addr = order.shipping_address;
+      const addressParts = [];
+      if (addr.address1) addressParts.push(addr.address1);
+      if (addr.address2) addressParts.push(addr.address2);
 
-    const cityParts = [];
-    if (addr.zip) cityParts.push(addr.zip);
-    if (addr.city) cityParts.push(addr.city);
-    if (addr.province) cityParts.push(addr.province);
+      const cityParts = [];
+      if (addr.zip) cityParts.push(addr.zip);
+      if (addr.city) cityParts.push(addr.city);
+      if (addr.province) cityParts.push(addr.province);
 
-    let bitrixAddress = addressParts.join(', ');
-    if (cityParts.length > 0) {
-      bitrixAddress += (bitrixAddress ? ', ' : '') + cityParts.join(' ');
-    }
-    if (addr.country) {
-      bitrixAddress += (bitrixAddress ? ', ' : '') + addr.country;
+      let bitrixAddress = addressParts.join(', ');
+      if (cityParts.length > 0) {
+        bitrixAddress += (bitrixAddress ? ', ' : '') + cityParts.join(' ');
+      }
+      if (addr.country) {
+        bitrixAddress += (bitrixAddress ? ', ' : '') + addr.country;
+      }
+
+      if (bitrixAddress.trim()) {
+        fields.UF_CRM_1742037435676 = bitrixAddress;
+        console.log(`[SHOPIFY WEBHOOK] 📍 Address synced to Bitrix: "${bitrixAddress}"`);
+      }
+    } else if (isFulfilled) {
+      console.log(`[SHOPIFY WEBHOOK] 📍 Address sync skipped (order is ${fulfillmentStatus})`);
     }
 
-    if (bitrixAddress.trim()) {
-      fields.UF_CRM_1742037435676 = bitrixAddress;
-      console.log(`[SHOPIFY WEBHOOK] 📍 Address synced to Bitrix: "${bitrixAddress}"`);
+    // CONTACT SYNC: Ensure Deal is linked to the correct Contact
+    try {
+      const webhookUrl = getBitrixWebhookBase();
+      const contactId = await upsertBitrixContact(webhookUrl, order);
+      if (contactId) {
+        fields.CONTACT_ID = contactId;
+        console.log(`[SHOPIFY WEBHOOK] 👤 Linked Contact ID ${contactId} to Deal ${dealId}`);
+      }
+    } catch (contactError) {
+      console.warn(`[SHOPIFY WEBHOOK] ⚠️ Failed to sync Contact during update: ${contactError.message}`);
     }
-  } else if (isFulfilled) {
-    console.log(`[SHOPIFY WEBHOOK] 📍 Address sync skipped (order is ${fulfillmentStatus})`);
-  }
-
-  // ✅ CONTACT SYNC: Ensure Deal is linked to the correct Contact (updates if email changed)
-  try {
-    const webhookUrl = getBitrixWebhookBase();
-    const contactId = await upsertBitrixContact(webhookUrl, order);
-    if (contactId) {
-      fields.CONTACT_ID = contactId;
-      console.log(`[SHOPIFY WEBHOOK] 👤 Linked Contact ID ${contactId} to Deal ${dealId}`);
-    }
-  } catch (contactError) {
-    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Failed to sync Contact during update: ${contactError.message}`);
   }
 
   // Note: CATEGORY_ID is immutable after creation, so we don't update it
