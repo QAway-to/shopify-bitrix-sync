@@ -873,14 +873,16 @@ async function handleOrderUpdated(order) {
 
   const isCancelled = isCancelledByStatus || isCancelledByField || isCancelledByReason || isCancelledByEmpty;
 
-  // ✅ SIMPLIFIED: Full refund - refunded → always LOSE (matching backup repository)
-  // BUT: if cancelled (especially by cancelled_at), it takes priority (cancelled > refunded)
-  const isFullRefund = !isCancelled && statusLower === 'refunded';
+  // ✅ Full refund: financial_status=refunded AND no active items → LOSE
+  // If there are active items (exchange/size change), it's NOT a full refund
+  // BUT: if cancelled (especially by cancelled_at), it takes priority
+  const isFullRefund = !isCancelled && statusLower === 'refunded' && !hasActiveItems;
 
-  // ✅ PARTIAL REFUND: partially_refunded + has active items → PREPARATION (our improvement)
-  // BUT: if cancelled (especially by cancelled_at), it takes priority (cancelled > partial refund)
-  // ✅ CRITICAL: If order is empty (0 amount, no active items), it's NOT a partial refund, it's a cancellation
-  const isPartialRefund = !isCancelled && statusLower === 'partially_refunded' && hasActiveItems && !isOrderEmpty;
+  // ✅ PARTIAL REFUND / EXCHANGE: partially_refunded OR refunded with active items → PREPARATION
+  // Covers: partial refund, size exchange, adding new item after refund
+  // BUT: if cancelled, it takes priority (cancelled > partial refund)
+  const isPartialRefund = !isCancelled && !isFullRefund && hasActiveItems && !isOrderEmpty &&
+    (statusLower === 'partially_refunded' || (statusLower === 'refunded' && hasActiveItems));
 
   // ✅ Simplified: cancelled OR full refund → LOSE
   const isLost = isCancelled || isFullRefund;
@@ -1263,6 +1265,8 @@ async function handleOrderUpdated(order) {
   // we have NOTHING to change. Skip provenance marker (which writes to Shopify metafields and
   // triggers another webhook) and all further updates. This prevents infinite loop.
   const dealAlreadyLose = isLoseStage(deal.STAGE_ID);
+  const dealIsWon = isWonStage(deal.STAGE_ID);
+  const hasShippedProducts = dealIsWon || dealAlreadyLose;
   const dealAlreadyZero = Number(deal.OPPORTUNITY || 0) === 0;
   if (isLost && dealAlreadyLose && dealAlreadyZero && !tempHasChanges) {
     console.log(`[SHOPIFY WEBHOOK] 🛑 LOOP BREAKER: Deal ${dealId} is already LOSE (${deal.STAGE_ID}) with OPPORTUNITY=0. Order is ${isCancelled ? 'cancelled' : 'refunded'}. Nothing to update. STOPPING.`);
@@ -1277,11 +1281,16 @@ async function handleOrderUpdated(order) {
         dealData: { TITLE: deal.TITLE, OPPORTUNITY: deal.OPPORTUNITY, STAGE_ID: deal.STAGE_ID, CATEGORY_ID: deal.CATEGORY_ID },
       });
     } catch (e) { /* ignore */ }
-    return res.status(200).json({ success: true, message: 'Deal already in LOSE with OPPORTUNITY=0, no update needed' });
+    return;
   }
 
-  // Set provenance marker BEFORE deal update if ANYTHING is changing
-  if (tempHasChanges || rowsChanged) {
+  // Set provenance marker BEFORE deal update if deal fields are changing.
+  // ⚠️ CRITICAL: Do NOT set marker for row-only changes on shipped products!
+  // setProvenanceMarker writes Shopify metafield → triggers new webhook → infinite loop.
+  // Individual row updates (crm.item.productrow.update/add) don't need the marker
+  // because they don't go through the Bitrix webhook loop guard path.
+  const needsProvenanceMarker = tempHasChanges || (rowsChanged && !hasShippedProducts);
+  if (needsProvenanceMarker) {
     try {
       const correlationId = `shopify-webhook-${Date.now()}`;
       if (shopifyOrderId) {
@@ -1291,6 +1300,8 @@ async function handleOrderUpdated(order) {
     } catch (pmErr) {
       console.warn(`[SHOPIFY WEBHOOK] ⚠️ Failed to set provenance marker: ${pmErr.message}`);
     }
+  } else if (rowsChanged && hasShippedProducts) {
+    console.log(`[SHOPIFY WEBHOOK] ⏭️ Skipping provenance marker: shipped product row update (individual ops, no marker needed)`);
   }
 
   if (tempHasChanges) {
@@ -1334,10 +1345,7 @@ async function handleOrderUpdated(order) {
   }
 
   // ✅ SHIPPED PRODUCT DETECTION
-  // Any deal that was/is in WON or LOSE stage has shipped products that CANNOT be deleted.
-  // We must use individual row operations (update/add) instead of crm.deal.productrows.set.
-  const dealIsWon = isWonStage(deal.STAGE_ID);
-  const hasShippedProducts = dealIsWon || dealAlreadyLose;
+  // ✅ SHIPPED PRODUCT DETECTION (dealIsWon, hasShippedProducts defined above)
   const needsFullDiscount = isLost && dealIsWon; // Full refund/cancel on a WON deal
 
   if (needsFullDiscount) {

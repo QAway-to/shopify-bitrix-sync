@@ -456,14 +456,16 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   // ✅ CRITICAL: cancelled_at has HIGHEST PRIORITY - if it's set, order is cancelled regardless of financial_status
   const isCancelled = isCancelledByField || isCancelledByStatus || isCancelledByReason || isCancelledByEmpty;
 
-  // ✅ SIMPLIFIED: Full refund - refunded → always LOSE (matching backup repository)
+  // ✅ Full refund: financial_status=refunded AND no active items → LOSE
+  // If there are active items (exchange/size change), it's NOT a full refund
   // BUT: if cancelled, it takes priority (cancelled > refunded)
-  // No check for active items or amounts - just financial_status
-  const isFullRefund = !isCancelled && financialStatus === 'refunded';
+  const isFullRefund = !isCancelled && financialStatus === 'refunded' && !hasActiveItems;
 
-  // ✅ PARTIAL REFUND: partially_refunded + has active items → PREPARATION (our improvement)
+  // ✅ PARTIAL REFUND / EXCHANGE: partially_refunded OR refunded with active items → PREPARATION
+  // Covers: partial refund, size exchange, adding new item after refund
   // BUT: if cancelled, it takes priority (cancelled > partial refund)
-  const isPartialRefund = !isCancelled && financialStatus === 'partially_refunded' && hasActiveItems;
+  const isPartialRefund = !isCancelled && !isFullRefund && hasActiveItems &&
+    (financialStatus === 'partially_refunded' || (financialStatus === 'refunded' && hasActiveItems));
 
   // ✅ Simplified: cancelled OR full refund → LOSE
   const isLost = isCancelled || isFullRefund;
