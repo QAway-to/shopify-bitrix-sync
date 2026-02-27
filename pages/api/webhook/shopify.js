@@ -1333,19 +1333,20 @@ async function handleOrderUpdated(order) {
     console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify deal after update:`, verifyError);
   }
 
-  // ✅ PROACTIVE CHECK: Detect if deal has shipped products (WON or LOSE stage after refund)
-  // If order is refunded/cancelled AND deal is in WON stage → apply 100% discount on each row
-  // If order is refunded/cancelled AND deal is already LOSE → skip row updates entirely (already processed)
-  // We CANNOT use crm.deal.productrows.set because Bitrix blocks deletion of shipped products.
+  // ✅ SHIPPED PRODUCT DETECTION
+  // Any deal that was/is in WON or LOSE stage has shipped products that CANNOT be deleted.
+  // We must use individual row operations (update/add) instead of crm.deal.productrows.set.
   const dealIsWon = isWonStage(deal.STAGE_ID);
-  const needsIndividualRowUpdate = isLost && dealIsWon;
-  const skipRowsForShippedLose = isLost && dealAlreadyLose;
+  const hasShippedProducts = dealIsWon || dealAlreadyLose;
+  const needsFullDiscount = isLost && dealIsWon; // Full refund/cancel on a WON deal
 
-  if (needsIndividualRowUpdate) {
+  if (needsFullDiscount) {
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // CASE 1: Full refund/cancel on WON deal → 100% discount on ALL rows
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     console.log(`[SHOPIFY WEBHOOK] 🔄 SHIPPED PRODUCT HANDLER: Order is ${isFullRefund ? 'fully refunded' : 'cancelled'} AND deal ${dealId} is in WON stage (${deal.STAGE_ID}).`);
-    console.log(`[SHOPIFY WEBHOOK] 🔄 Using crm.item.productrow.update (individual updates) instead of crm.deal.productrows.set to avoid "Cannot delete shipped product" error.`);
+    console.log(`[SHOPIFY WEBHOOK] 🔄 Using crm.item.productrow.update (individual updates) to apply 100% discount.`);
 
-    // Fetch existing product rows from the deal
     try {
       const existingRowsResp = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
       const existingRows = existingRowsResp.result || [];
@@ -1356,57 +1357,179 @@ async function handleOrderUpdated(order) {
 
         for (const row of existingRows) {
           const rowId = row.ID || row.id;
-          if (!rowId) {
-            console.warn(`[SHOPIFY WEBHOOK] ⚠️ Skipping row without ID:`, row);
-            continue;
-          }
+          if (!rowId) continue;
 
           try {
-            // Apply 100% discount to zero out the price (one attempt, no retry)
             await callBitrix('/crm.item.productrow.update.json', {
               id: rowId,
               fields: {
                 price: 0,
-                discountTypeId: 2,   // Percentage discount
-                discountRate: 100,   // 100% discount
+                discountTypeId: 2,
+                discountRate: 100,
                 discountSum: Number(row.PRICE_BRUTTO || row.PRICE || 0),
               }
             });
             updatedCount++;
-            console.log(`[SHOPIFY WEBHOOK] ✅ Row ${rowId} (PRODUCT_ID=${row.PRODUCT_ID}): price set to 0 (100% discount)`);
-          } catch (rowUpdateError) {
+            console.log(`[SHOPIFY WEBHOOK] ✅ Row ${rowId} (PRODUCT_ID=${row.PRODUCT_ID}): 100% discount applied`);
+          } catch (err) {
             failedCount++;
-            console.error(`[SHOPIFY WEBHOOK] ❌ Row ${rowId} update failed (no retry): ${rowUpdateError.message}`);
-            // No retry — log and continue to next row
+            console.error(`[SHOPIFY WEBHOOK] ❌ Row ${rowId} update failed (no retry): ${err.message}`);
           }
         }
 
-        console.log(`[SHOPIFY WEBHOOK] 🔄 Individual row update complete: ${updatedCount} updated, ${failedCount} failed out of ${existingRows.length} rows.`);
+        console.log(`[SHOPIFY WEBHOOK] 🔄 Discount complete: ${updatedCount}/${existingRows.length} updated, ${failedCount} failed.`);
 
-        // Update OPPORTUNITY to 0 since all items are now 0-price
         if (updatedCount > 0) {
           try {
-            await callBitrix('/crm.deal.update.json', {
-              id: dealId,
-              fields: { OPPORTUNITY: 0 }
-            });
+            await callBitrix('/crm.deal.update.json', { id: dealId, fields: { OPPORTUNITY: 0 } });
             console.log(`[SHOPIFY WEBHOOK] ✅ OPPORTUNITY updated to 0 for deal ${dealId}`);
           } catch (oppError) {
-            console.error(`[SHOPIFY WEBHOOK] ❌ Failed to update OPPORTUNITY to 0: ${oppError.message}`);
+            console.error(`[SHOPIFY WEBHOOK] ❌ Failed to update OPPORTUNITY: ${oppError.message}`);
           }
         }
       } else {
-        console.log(`[SHOPIFY WEBHOOK] ℹ️ No existing product rows found for deal ${dealId}. Nothing to update.`);
+        console.log(`[SHOPIFY WEBHOOK] ℹ️ No existing product rows found for deal ${dealId}.`);
       }
-    } catch (fetchRowsError) {
-      console.error(`[SHOPIFY WEBHOOK] ❌ Failed to fetch existing product rows for deal ${dealId}: ${fetchRowsError.message}`);
-      // No retry — log and continue
+    } catch (fetchErr) {
+      console.error(`[SHOPIFY WEBHOOK] ❌ Failed to fetch product rows for deal ${dealId}: ${fetchErr.message}`);
     }
-  } else if (skipRowsForShippedLose) {
-    // Deal is already LOSE and had shipped products — don't attempt crm.deal.productrows.set
-    console.log(`[SHOPIFY WEBHOOK] 🛑 Skipping product rows update: Deal ${dealId} is in LOSE stage with shipped products. 100% discount was already applied.`);
+  } else if (hasShippedProducts && rowsChanged) {
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // CASE 2: Deal has shipped products + rows changed (partial refund, exchange, size change)
+    // Use individual row operations: update existing, add new, discount refunded
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    console.log(`[SHOPIFY WEBHOOK] 🔄 SHIPPED PRODUCT HANDLER: Deal ${dealId} has shipped products (stage: ${deal.STAGE_ID}). Using individual row operations.`);
+
+    try {
+      const existingRowsResp = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
+      const existingRows = existingRowsResp.result || [];
+      console.log(`[SHOPIFY WEBHOOK] 📦 Existing Bitrix rows: ${existingRows.length}, New mapper rows: ${productRows.length}`);
+
+      // Build a map of existing rows by PRODUCT_ID for matching
+      const existingByProductId = new Map();
+      for (const row of existingRows) {
+        const pid = String(row.PRODUCT_ID || '');
+        if (pid && pid !== '0') {
+          existingByProductId.set(pid, row);
+        }
+      }
+
+      // Build a set of new PRODUCT_IDs for comparison
+      const newProductIds = new Set();
+      for (const row of productRows) {
+        const pid = String(row.PRODUCT_ID || '');
+        if (pid && pid !== '0') {
+          newProductIds.add(pid);
+        }
+      }
+
+      let updatedCount = 0;
+      let addedCount = 0;
+      let discountedCount = 0;
+      let failedCount = 0;
+
+      // 1. Update existing rows or apply 100% discount (refunded items)
+      for (const existRow of existingRows) {
+        const rowId = existRow.ID || existRow.id;
+        if (!rowId) continue;
+
+        const existPid = String(existRow.PRODUCT_ID || '');
+        const matchingNewRow = productRows.find(r => String(r.PRODUCT_ID || '') === existPid);
+
+        if (matchingNewRow) {
+          // Existing row has a matching new row → update price/qty
+          try {
+            await callBitrix('/crm.item.productrow.update.json', {
+              id: rowId,
+              fields: {
+                price: matchingNewRow.PRICE || 0,
+                quantity: matchingNewRow.QUANTITY || 1,
+                discountTypeId: matchingNewRow.DISCOUNT_TYPE_ID || 1,
+                discountRate: matchingNewRow.DISCOUNT_RATE || 0,
+                discountSum: matchingNewRow.DISCOUNT_SUM || 0,
+                taxRate: matchingNewRow.TAX_RATE || 0,
+                taxIncluded: matchingNewRow.TAX_INCLUDED || 'Y',
+              }
+            });
+            updatedCount++;
+            console.log(`[SHOPIFY WEBHOOK] ✅ Row ${rowId} (PRODUCT_ID=${existPid}): updated price=${matchingNewRow.PRICE}, qty=${matchingNewRow.QUANTITY}`);
+          } catch (err) {
+            failedCount++;
+            console.error(`[SHOPIFY WEBHOOK] ❌ Row ${rowId} update failed: ${err.message}`);
+          }
+        } else {
+          // Existing row NOT in new rows → refunded/removed item → 100% discount
+          const currentPrice = Number(existRow.PRICE_BRUTTO || existRow.PRICE || 0);
+          if (currentPrice > 0) {
+            try {
+              await callBitrix('/crm.item.productrow.update.json', {
+                id: rowId,
+                fields: {
+                  price: 0,
+                  discountTypeId: 2,
+                  discountRate: 100,
+                  discountSum: currentPrice,
+                }
+              });
+              discountedCount++;
+              console.log(`[SHOPIFY WEBHOOK] ✅ Row ${rowId} (PRODUCT_ID=${existPid}): 100% discount (refunded)`);
+            } catch (err) {
+              failedCount++;
+              console.error(`[SHOPIFY WEBHOOK] ❌ Row ${rowId} discount failed: ${err.message}`);
+            }
+          } else {
+            console.log(`[SHOPIFY WEBHOOK] ℹ️ Row ${rowId} (PRODUCT_ID=${existPid}): already at price 0, skipping`);
+          }
+        }
+      }
+
+      // 2. Add new rows that don't have matching existing rows
+      for (const newRow of productRows) {
+        const newPid = String(newRow.PRODUCT_ID || '');
+        if (existingByProductId.has(newPid)) continue; // Already handled above
+
+        try {
+          await callBitrix('/crm.item.productrow.add.json', {
+            fields: {
+              ownerId: dealId,
+              ownerType: 'D',
+              productId: newRow.PRODUCT_ID || 0,
+              productName: newRow.PRODUCT_NAME || '',
+              price: newRow.PRICE || 0,
+              quantity: newRow.QUANTITY || 1,
+              discountTypeId: newRow.DISCOUNT_TYPE_ID || 1,
+              discountRate: newRow.DISCOUNT_RATE || 0,
+              discountSum: newRow.DISCOUNT_SUM || 0,
+              taxRate: newRow.TAX_RATE || 0,
+              taxIncluded: newRow.TAX_INCLUDED || 'Y',
+              measureCode: newRow.MEASURE_CODE || 1,
+            }
+          });
+          addedCount++;
+          console.log(`[SHOPIFY WEBHOOK] ✅ New row added: PRODUCT_ID=${newPid}, price=${newRow.PRICE}, qty=${newRow.QUANTITY}`);
+        } catch (err) {
+          failedCount++;
+          console.error(`[SHOPIFY WEBHOOK] ❌ Failed to add row PRODUCT_ID=${newPid}: ${err.message}`);
+        }
+      }
+
+      console.log(`[SHOPIFY WEBHOOK] 🔄 Individual row sync complete: ${updatedCount} updated, ${discountedCount} discounted, ${addedCount} added, ${failedCount} failed.`);
+
+      // 3. Update OPPORTUNITY to correct total
+      const newOpportunity = mappedFields.OPPORTUNITY || 0;
+      try {
+        await callBitrix('/crm.deal.update.json', { id: dealId, fields: { OPPORTUNITY: newOpportunity } });
+        console.log(`[SHOPIFY WEBHOOK] ✅ OPPORTUNITY updated to ${newOpportunity} for deal ${dealId}`);
+      } catch (oppErr) {
+        console.error(`[SHOPIFY WEBHOOK] ❌ Failed to update OPPORTUNITY: ${oppErr.message}`);
+      }
+    } catch (fetchErr) {
+      console.error(`[SHOPIFY WEBHOOK] ❌ Failed to fetch product rows for individual sync: ${fetchErr.message}`);
+    }
   } else if (rowsChanged) {
-    // ✅ NORMAL PATH: Use crm.deal.productrows.set (no shipped products)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // CASE 3: Normal path — no shipped products, safe to use crm.deal.productrows.set
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     if (productRows.length > 0) {
       try {
         console.log(`[SHOPIFY WEBHOOK] ⚡ Updating ${productRows.length} product rows for deal ${dealId} via crm.deal.productrows.set.json`);
@@ -1430,25 +1553,15 @@ async function handleOrderUpdated(order) {
         }
       } catch (productRowsError) {
         console.error(`[SHOPIFY WEBHOOK] ❌ Failed to update product rows for deal ${dealId}:`, productRowsError);
-        console.error(`[SHOPIFY WEBHOOK] Error details:`, {
-          message: productRowsError.message,
-          dealId: dealId,
-          dealIdType: typeof dealId,
-          productRowsCount: productRows.length
-        });
       }
     } else {
-      // If no product rows (e.g., all items removed/refunded), try to clear rows
-      console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to update (all items may be refunded/removed). Attempting to clear product rows in Bitrix.`);
+      // All items removed — try to clear rows
+      console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to update. Attempting to clear product rows in Bitrix.`);
       try {
-        await callBitrix('/crm.deal.productrows.set.json', {
-          id: dealId,
-          rows: [],
-        });
-        console.log(`[SHOPIFY WEBHOOK] ✅ Product rows cleared for deal ${dealId} (no active items)`);
+        await callBitrix('/crm.deal.productrows.set.json', { id: dealId, rows: [] });
+        console.log(`[SHOPIFY WEBHOOK] ✅ Product rows cleared for deal ${dealId}`);
       } catch (clearError) {
         console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to clear product rows (may be shipped): ${clearError.message}`);
-        // No retry — this is expected for shipped products
       }
     }
   } else {
