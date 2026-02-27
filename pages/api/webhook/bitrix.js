@@ -1955,8 +1955,26 @@ async function handleDealUpdate(dealId, requestId) {
       const isLose = checkLose(stageId);
 
       if (!isLose) {
-        const { handleQuantitySync } = await import('../../../src/lib/blocks/quantitySync.js');
-        await handleQuantitySync(shopifyOrderId, dealId, requestId);
+        // ✅ LOOP GUARD: Check Provenance
+        let skipQuantitySync = false;
+        try {
+          const { getProvenanceMarker } = await import('../../../src/lib/shopify/metafields.js');
+          const lastWrite = await getProvenanceMarker(shopifyOrderId);
+          if (lastWrite && lastWrite.exists && lastWrite.value && lastWrite.value.source === 'shopify') {
+            const timeDiff = Date.now() - new Date(lastWrite.value.ts).getTime();
+            if (timeDiff < 60000) { // 60 seconds debounce for loop guard
+              console.warn(`[BITRIX WEBHOOK] 🛑 LOOP GUARD: Skipping quantity sync, last write was from Shopify ${Math.round(timeDiff / 1000)}s ago.`);
+              skipQuantitySync = true;
+            }
+          }
+        } catch (pmError) {
+          console.error(`[BITRIX WEBHOOK] Failed to read provenance marker:`, pmError.message);
+        }
+
+        if (!skipQuantitySync) {
+          const { handleQuantitySync } = await import('../../../src/lib/blocks/quantitySync.js');
+          await handleQuantitySync(shopifyOrderId, dealId, requestId);
+        }
       } else {
         console.log(`[BITRIX WEBHOOK] Quantity sync skipped in LOSE stage (${stageId}) to allow refund logic.`);
       }
@@ -1965,10 +1983,10 @@ async function handleDealUpdate(dealId, requestId) {
     }
   }
 
-  // ✅ STEP A: Check if deal is cancelled (LOSE stage) and cancel order in Shopify
-  // Check if stage ends with :LOSE or is exactly LOSE (handles both C6:LOSE and LOSE formats)
-  // 🔄 REFACTORED: Now uses src/lib/blocks/cancel.js for enhanced Refund support
-
+  // ✅ STEP A: Cancel/Refund logic from Bitrix -> Shopify is now DISABLED
+  // User request: All refund/return logic mastered in Shopify and pushed to Bitrix.
+  // Bitrix deals will passively adapt to Shopify refunds.
+  /*
   const { handleCancel, isLoseStage } = await import('../../../src/lib/blocks/cancel.js');
 
   if (isLoseStage(stageId)) {
@@ -1992,6 +2010,7 @@ async function handleDealUpdate(dealId, requestId) {
       }
     }
   }
+  */
 
 
 

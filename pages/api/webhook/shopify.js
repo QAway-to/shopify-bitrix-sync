@@ -1181,57 +1181,6 @@ async function handleOrderUpdated(order) {
     tempHasChanges = true;
   }
 
-  if (tempHasChanges) {
-    console.log(`[SHOPIFY WEBHOOK] ⚡ Updating deal ${dealId} with changed fields:`, Object.keys(fieldsToUpdate));
-    try {
-      const updateResponse = await callBitrix('/crm.deal.update.json', {
-        id: dealId,
-        fields: fieldsToUpdate,
-      });
-
-      console.log(`[SHOPIFY WEBHOOK] ✅ Bitrix API response:`, JSON.stringify(updateResponse, null, 2));
-
-      if (updateResponse && updateResponse.error) {
-        console.error(`[SHOPIFY WEBHOOK] ❌ Bitrix API ERROR:`, updateResponse.error);
-        console.error(`[SHOPIFY WEBHOOK] ❌ Error details:`, updateResponse.error_description);
-      } else {
-        console.log(`[SHOPIFY WEBHOOK] ✅ Deal ${dealId} updated successfully`);
-
-        // Set provenance marker ONLY if we actually updated something
-        try {
-          const correlationId = `shopify-webhook-${Date.now()}`;
-          if (shopifyOrderId) {
-            await setProvenanceMarker(shopifyOrderId, correlationId, 'deal_update_from_shopify', null, 'shopify');
-            console.log(`[SHOPIFY WEBHOOK] ✅ Provenance marker set (source: shopify) for order ${shopifyOrderId}`);
-          }
-        } catch (pmErr) {
-          console.warn(`[SHOPIFY WEBHOOK] ⚠️ Failed to set provenance marker: ${pmErr.message}`);
-        }
-      }
-    } catch (error) {
-      console.error(`[SHOPIFY WEBHOOK] ❌ Error updating deal ${dealId}:`, error);
-      console.warn(`[SHOPIFY WEBHOOK] ⚠️ Continuing to update product rows despite deal update error`);
-    }
-  } else {
-    console.log(`[SHOPIFY WEBHOOK] 💤 No differences detected between Shopify order and Bitrix deal. Skipping update to prevent loops.`);
-  }
-
-  // Verify updated deal (only if update succeeded)
-  let verifiedDeal = null;
-  try {
-    verifiedDeal = await verifyDeal(dealId);
-    if (verifiedDeal) {
-      console.log(`[SHOPIFY WEBHOOK] ✅ Deal verified after update:`, {
-        ID: verifiedDeal.ID,
-        TITLE: verifiedDeal.TITLE,
-        OPPORTUNITY: verifiedDeal.OPPORTUNITY,
-        STAGE_ID: verifiedDeal.STAGE_ID
-      });
-    }
-  } catch (verifyError) {
-    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify deal after update:`, verifyError);
-  }
-
   // 4. ✅ CONDITIONAL UPDATE: Product rows (including shipping)
   // ✅ Use productRows from mapShopifyOrderToBitrixDeal
   const productRows = mappedProductRows || [];
@@ -1308,6 +1257,59 @@ async function handleOrderUpdated(order) {
   } catch (err) {
     console.warn(`[SHOPIFY WEBHOOK] ⚠️ Failed to fetch existing product rows for comparison, forcing update:`, err);
     rowsChanged = true;
+  }
+
+  // Set provenance marker BEFORE deal update if ANYTHING is changing
+  if (tempHasChanges || rowsChanged) {
+    try {
+      const correlationId = `shopify-webhook-${Date.now()}`;
+      if (shopifyOrderId) {
+        await setProvenanceMarker(shopifyOrderId, correlationId, 'deal_update_from_shopify', null, 'shopify');
+        console.log(`[SHOPIFY WEBHOOK] ✅ Provenance marker set (source: shopify) for order ${shopifyOrderId} before Bitrix updates (Deal changes: ${tempHasChanges}, Row changes: ${rowsChanged})`);
+      }
+    } catch (pmErr) {
+      console.warn(`[SHOPIFY WEBHOOK] ⚠️ Failed to set provenance marker: ${pmErr.message}`);
+    }
+  }
+
+  if (tempHasChanges) {
+    console.log(`[SHOPIFY WEBHOOK] ⚡ Updating deal ${dealId} with changed fields:`, Object.keys(fieldsToUpdate));
+    try {
+      const updateResponse = await callBitrix('/crm.deal.update.json', {
+        id: dealId,
+        fields: fieldsToUpdate,
+      });
+
+      console.log(`[SHOPIFY WEBHOOK] ✅ Bitrix API response:`, JSON.stringify(updateResponse, null, 2));
+
+      if (updateResponse && updateResponse.error) {
+        console.error(`[SHOPIFY WEBHOOK] ❌ Bitrix API ERROR:`, updateResponse.error);
+        console.error(`[SHOPIFY WEBHOOK] ❌ Error details:`, updateResponse.error_description);
+      } else {
+        console.log(`[SHOPIFY WEBHOOK] ✅ Deal ${dealId} updated successfully`);
+      }
+    } catch (error) {
+      console.error(`[SHOPIFY WEBHOOK] ❌ Error updating deal ${dealId}:`, error);
+      console.warn(`[SHOPIFY WEBHOOK] ⚠️ Continuing to update product rows despite deal update error`);
+    }
+  } else {
+    console.log(`[SHOPIFY WEBHOOK] 💤 No differences detected between Shopify order and Bitrix deal fields. Skipping deal update.`);
+  }
+
+  // Verify updated deal (only if update succeeded)
+  let verifiedDeal = null;
+  try {
+    verifiedDeal = await verifyDeal(dealId);
+    if (verifiedDeal) {
+      console.log(`[SHOPIFY WEBHOOK] ✅ Deal verified after update:`, {
+        ID: verifiedDeal.ID,
+        TITLE: verifiedDeal.TITLE,
+        OPPORTUNITY: verifiedDeal.OPPORTUNITY,
+        STAGE_ID: verifiedDeal.STAGE_ID
+      });
+    }
+  } catch (verifyError) {
+    console.warn(`[SHOPIFY WEBHOOK] ⚠️ Could not verify deal after update:`, verifyError);
   }
 
   // ✅ Update product rows ONLY if changed
