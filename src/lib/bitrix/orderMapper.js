@@ -298,7 +298,31 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   let totalPrice = 0;
   if (order.line_items && Array.isArray(order.line_items)) {
     for (const item of order.line_items) {
-      const currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
+      // Calculate manual refund quantity just in case current_quantity is unreliable
+      let manualRefundQty = 0;
+      if (order.refunds && Array.isArray(order.refunds)) {
+        for (const refund of order.refunds) {
+          if (refund.refund_line_items && Array.isArray(refund.refund_line_items)) {
+            for (const rLi of refund.refund_line_items) {
+              if (String(rLi.line_item_id) === String(item.id)) {
+                manualRefundQty += Number(rLi.quantity || 0);
+              }
+            }
+          }
+        }
+      }
+
+      let currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
+
+      // Fallback: If financial status is refunded or partially refunded
+      // and current_quantity doesn't seem to reflect the manual refunds, apply it.
+      if (manualRefundQty > 0 && currentQuantity === Number(item.quantity)) {
+        currentQuantity = Math.max(0, currentQuantity - manualRefundQty);
+      }
+
+      // Store the corrected quantity directly on the item so the product rows mapper can use it later
+      item.__resolved_current_quantity = currentQuantity;
+
       if (currentQuantity > 0) {
         const itemPrice = Number(item.price || 0);
         const itemTotal = itemPrice * currentQuantity;
@@ -407,7 +431,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
 
   // ✅ Check if order has active items (current_quantity > 0) - only for partial refund detection
   const hasActiveItems = order.line_items && order.line_items.some(item => {
-    const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
+    const currentQty = Number(item.__resolved_current_quantity ?? item.current_quantity ?? item.quantity ?? 0);
     return currentQty > 0;
   });
 
@@ -613,7 +637,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   if (order.line_items && Array.isArray(order.line_items) && order.line_items.length > 0) {
     // ✅ FILTER: Only process active items (current_quantity > 0) for UF-fields
     const activeLineItems = order.line_items.filter(item => {
-      const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
+      const currentQty = Number(item.__resolved_current_quantity ?? item.current_quantity ?? item.quantity ?? 0);
       return currentQty > 0;
     });
     const lineItems = activeLineItems;
@@ -746,7 +770,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       // - For regular orders: current_quantity reflects active (after refunds)
       // - For pre-orders: current_quantity = 0 (not yet received) but quantity > 0
       const originalQuantity = Number(item.quantity ?? 0);
-      const currentQuantity = Number(item.current_quantity ?? item.quantity ?? 0);
+      let currentQuantity = Number(item.__resolved_current_quantity ?? item.current_quantity ?? item.quantity ?? 0);
 
       // Skip only if BOTH are 0 (truly refunded/removed)
       // If quantity > 0 but current_quantity = 0:
