@@ -62,13 +62,10 @@ async function resolveBitrixContactForDeal(dealId, correlationId) {
       result.firstName = contact.NAME || '';
       result.lastName = contact.LAST_NAME || '';
 
-      // ✅ Email resolution: try email first, then phone as fallback
+      // ✅ Email resolution: use email if present, otherwise use fallback admin email.
+      // Phone is passed separately in result.phone — do NOT use it as email.
       if (emailValue && String(emailValue).trim() !== '') {
         result.email = String(emailValue).trim();
-      } else if (phoneValue && String(phoneValue).trim() !== '') {
-        // Use phone as email identifier (Shopify can match customers by this)
-        const cleanPhone = String(phoneValue).trim().replace(/\s+/g, '');
-        result.email = `${cleanPhone}@phone.local`;
       } else {
         result.email = BITRIX_FALLBACK_CUSTOMER_EMAIL;
       }

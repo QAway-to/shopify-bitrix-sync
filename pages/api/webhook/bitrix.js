@@ -76,34 +76,15 @@ async function resolveCustomerEmailFromDeal(dealData, requestId, dealId, context
       return email;
     }
 
-    // ✅ FALLBACK: If no email, try to use phone number
-    const phoneRaw = contact?.PHONE;
-    const phoneValue = Array.isArray(phoneRaw) ? phoneRaw?.[0]?.VALUE : (phoneRaw?.VALUE || phoneRaw);
-    const phone = phoneValue && String(phoneValue).trim() !== '' ? String(phoneValue).trim().replace(/\s+/g, '') : null;
 
-    if (phone) {
-      // Use phone as email identifier (Shopify allows this for customer matching)
-      const phoneAsEmail = `${phone}@phone.local`;
-      console.log(JSON.stringify({
-        event: 'BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
-        requestId,
-        dealId,
-        context,
-        source: 'contact_phone_fallback',
-        contactId,
-        phone,
-        email: phoneAsEmail,
-        timestamp: new Date().toISOString()
-      }));
-      return phoneAsEmail;
-    }
-
+    // ✅ FALLBACK: If no email, use default admin email.
+    // Phone is passed separately in the phone field — do NOT use it as email.
     console.log(JSON.stringify({
       event: 'BITRIX_TO_SHOPIFY_CUSTOMER_EMAIL_RESOLVED',
       requestId,
       dealId,
       context,
-      source: 'fallback_contact_has_no_email_or_phone',
+      source: 'fallback_contact_has_no_email',
       contactId,
       email: BITRIX_FALLBACK_CUSTOMER_EMAIL,
       timestamp: new Date().toISOString()
