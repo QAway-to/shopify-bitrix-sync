@@ -201,6 +201,58 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
     // CASE 2: Pending -> Paid (GraphQL Mutation)
     console.log(`[PAYMENT DEBUG 777] Checking conditions: finalDesired='${finalDesired}', current='${current}', check=${finalDesired === 'paid' && current !== 'paid'}`);
     if (finalDesired === 'paid' && current !== 'paid') {
+      // ✅ GUARD 1: Don't re-mark as paid if order is already refunded/cancelled (race condition protection)
+      // When Shopify refund fires → handleOrderUpdated updates Bitrix → Bitrix webhook fires back here.
+      // Without this guard, we'd try to mark a refunded order as paid again.
+      const refundedStatuses = ['refunded', 'partially_refunded', 'voided'];
+      if (refundedStatuses.includes(current)) {
+        console.log(JSON.stringify({
+          event: 'PAYMENT_STATUS_SYNC_BLOCKED_REFUNDED',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          currentFinancialStatus: current,
+          reason: 'order_already_refunded_or_cancelled',
+          timestamp: new Date().toISOString()
+        }));
+        return { success: true, skipped: true, reason: 'order_already_refunded', current };
+      }
+
+      // ✅ GUARD 2: Don't call orderMarkAsPaid if order has real gateway payments (e.g. Revolut)
+      // orderMarkAsPaid creates a phantom "manual" sale transaction for the remaining balance,
+      // which permanently breaks refund capability through the original gateway.
+      // This protects Draft Orders with partial payment and any order with real card payments.
+      let hasRealGatewayPayment = false;
+      try {
+        const txResp = await callShopifyAdmin(`/orders/${shopifyOrderId}/transactions.json`);
+        const transactions = txResp?.transactions || [];
+        hasRealGatewayPayment = transactions.some(t =>
+          (t.kind === 'sale' || t.kind === 'capture') &&
+          t.status === 'success' &&
+          t.gateway && t.gateway !== 'manual'
+        );
+        if (hasRealGatewayPayment) {
+          const realTx = transactions.find(t =>
+            (t.kind === 'sale' || t.kind === 'capture') && t.status === 'success' && t.gateway !== 'manual'
+          );
+          console.log(JSON.stringify({
+            event: 'PAYMENT_STATUS_SYNC_BLOCKED_GATEWAY',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            reason: 'real_gateway_payment_exists',
+            gateway: realTx?.gateway,
+            amount: realTx?.amount,
+            transactionId: realTx?.id,
+            timestamp: new Date().toISOString()
+          }));
+          return { success: true, skipped: true, reason: 'real_gateway_payment_exists', gateway: realTx?.gateway };
+        }
+      } catch (txError) {
+        console.warn(`[PAYMENT SYNC] Could not check transactions (non-blocking): ${txError?.message}`);
+        // Non-blocking: if we can't check, proceed with caution (existing behavior)
+      }
+
       console.log(JSON.stringify({
         event: 'PAYMENT_STATUS_SYNC_ATTEMPT_PAID',
         requestId,
