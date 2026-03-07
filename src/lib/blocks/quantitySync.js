@@ -35,7 +35,8 @@ const BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID = String(process.env.BITRIX_EMPTY_OR
  * @param {string} requestId - Request correlation ID
  * @returns {Promise<{synced: boolean, changes?: number}>}
  */
-export async function handleQuantitySync(shopifyOrderId, dealId, requestId) {
+export async function handleQuantitySync(shopifyOrderId, dealId, requestId, options = {}) {
+    const { forceRemove = false } = options;
     if (!shopifyOrderId || shopifyOrderId.trim() === '') {
         console.log(JSON.stringify({
             event: 'QUANTITY_SYNC_SKIP',
@@ -68,7 +69,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId) {
             : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
         const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
 
-        if (!isBitrixOrder) {
+        if (!isBitrixOrder && !forceRemove) {
             return { synced: false, reason: 'not_bitrix_order' };
         }
 
@@ -158,6 +159,10 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId) {
             const shopifyQty = parseFloat(lineItem.quantity || 0);
 
             if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
+                // forceRemove mode: only process removals (qty→0), skip other changes
+                if (forceRemove && !isBitrixOrder && bitrixQty > 0) {
+                    continue;
+                }
                 quantityChanges.push({
                     key: matchKey || shopifyVariantId || shopifySku,
                     variantId: matchedEntry?.variantId || shopifyVariantId,

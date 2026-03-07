@@ -2006,7 +2006,7 @@ async function handleDealUpdate(dealId, requestId) {
 
         if (!skipQuantitySync) {
           const { handleQuantitySync } = await import('../../../src/lib/blocks/quantitySync.js');
-          await handleQuantitySync(shopifyOrderId, dealId, requestId);
+          await handleQuantitySync(shopifyOrderId, dealId, requestId, { forceRemove: true });
         }
       } else {
         console.log(`[BITRIX WEBHOOK] Quantity sync skipped in LOSE stage (${stageId}) to allow refund logic.`);
