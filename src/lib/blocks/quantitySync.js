@@ -86,6 +86,19 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             timestamp: new Date().toISOString()
         }));
 
+        // ✅ GUARD: In forceRemove mode, if Bitrix has 0 rows, skip entirely.
+        // This prevents race condition where Bitrix echo webhook arrives before
+        // product rows are added to a newly created deal, causing all Shopify items to be deleted.
+        if (forceRemove && !isBitrixOrder && bitrixRows.length === 0) {
+            console.log(JSON.stringify({
+                event: 'QUANTITY_SYNC_SKIP_FORCE_REMOVE_EMPTY',
+                requestId, dealId, shopifyOrderId,
+                reason: 'forceRemove_but_no_bitrix_rows',
+                timestamp: new Date().toISOString()
+            }));
+            return { synced: false, reason: 'forceRemove_no_rows' };
+        }
+
         // Get line items from Shopify
         const shopifyLineItems = shopifyOrder.line_items || [];
 
