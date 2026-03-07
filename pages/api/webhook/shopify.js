@@ -1632,7 +1632,121 @@ async function handleOrderUpdated(order) {
           console.error(`[SHOPIFY WEBHOOK] ⚠️ Product rows update returned unexpected result:`, productRowsResp);
         }
       } catch (productRowsError) {
-        console.error(`[SHOPIFY WEBHOOK] ❌ Failed to update product rows for deal ${dealId}:`, productRowsError);
+        const errMsg = productRowsError?.message || productRowsError?.errorDetails?.error_description || String(productRowsError);
+        const isShippedError = errMsg.includes('Cannot delete shipped') || errMsg.includes('shipped product');
+
+        if (isShippedError) {
+          // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          // FALLBACK: productrows.set failed because row is shipped.
+          // Update existing rows individually (price/discount) instead.
+          // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          console.log(`[SHOPIFY WEBHOOK] 🔄 SHIPPED FALLBACK: productrows.set failed for deal ${dealId}. Falling back to individual row updates.`);
+
+          try {
+            const existingRowsResp = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
+            const existingRows = existingRowsResp.result || [];
+            console.log(`[SHOPIFY WEBHOOK] 📦 Shipped fallback: ${existingRows.length} existing rows, ${productRows.length} new rows`);
+
+            const existingByProductId = new Map();
+            for (const row of existingRows) {
+              const pid = String(row.PRODUCT_ID || '');
+              if (pid && pid !== '0') existingByProductId.set(pid, row);
+            }
+
+            let updatedCount = 0, addedCount = 0, failedCount = 0;
+
+            // Update existing rows that match new rows (update price, remove discount)
+            for (const newRow of productRows) {
+              const newPid = String(newRow.PRODUCT_ID || '');
+              const existRow = existingByProductId.get(newPid);
+
+              if (existRow) {
+                const rowId = existRow.ID || existRow.id;
+                if (!rowId) continue;
+                try {
+                  await callBitrix('/crm.item.productrow.update.json', {
+                    id: rowId,
+                    fields: {
+                      price: newRow.PRICE || 0,
+                      quantity: newRow.QUANTITY || 1,
+                      discountTypeId: 1,
+                      discountRate: 0,
+                      discountSum: 0,
+                      taxRate: newRow.TAX_RATE || 0,
+                      taxIncluded: newRow.TAX_INCLUDED || 'Y',
+                    }
+                  });
+                  updatedCount++;
+                  console.log(`[SHOPIFY WEBHOOK] ✅ Shipped fallback: Row ${rowId} (PRODUCT_ID=${newPid}) price updated to ${newRow.PRICE}`);
+                } catch (err) {
+                  failedCount++;
+                  console.error(`[SHOPIFY WEBHOOK] ❌ Shipped fallback: Row ${rowId} update failed: ${err.message}`);
+                }
+              } else {
+                // New product not in existing rows — add it
+                try {
+                  await callBitrix('/crm.item.productrow.add.json', {
+                    fields: {
+                      ownerId: dealId,
+                      ownerType: 'D',
+                      productId: newRow.PRODUCT_ID || 0,
+                      productName: newRow.PRODUCT_NAME || '',
+                      price: newRow.PRICE || 0,
+                      quantity: newRow.QUANTITY || 1,
+                      discountTypeId: 1,
+                      discountRate: 0,
+                      discountSum: 0,
+                      taxRate: newRow.TAX_RATE || 0,
+                      taxIncluded: newRow.TAX_INCLUDED || 'Y',
+                      measureCode: newRow.MEASURE_CODE || 1,
+                    }
+                  });
+                  addedCount++;
+                  console.log(`[SHOPIFY WEBHOOK] ✅ Shipped fallback: New row added PRODUCT_ID=${newPid}, price=${newRow.PRICE}`);
+                } catch (err) {
+                  failedCount++;
+                  console.error(`[SHOPIFY WEBHOOK] ❌ Shipped fallback: Failed to add row PRODUCT_ID=${newPid}: ${err.message}`);
+                }
+              }
+            }
+
+            // Discount existing rows NOT in new rows (refunded/removed items)
+            const newProductIds = new Set(productRows.map(r => String(r.PRODUCT_ID || '')));
+            for (const existRow of existingRows) {
+              const existPid = String(existRow.PRODUCT_ID || '');
+              if (newProductIds.has(existPid)) continue;
+              const rowId = existRow.ID || existRow.id;
+              if (!rowId) continue;
+              const currentPrice = Number(existRow.PRICE_BRUTTO || existRow.PRICE || 0);
+              if (currentPrice > 0) {
+                try {
+                  await callBitrix('/crm.item.productrow.update.json', {
+                    id: rowId,
+                    fields: { price: 0, discountTypeId: 2, discountRate: 100, discountSum: currentPrice }
+                  });
+                  console.log(`[SHOPIFY WEBHOOK] ✅ Shipped fallback: Row ${rowId} (PRODUCT_ID=${existPid}) discounted (removed item)`);
+                } catch (err) {
+                  console.error(`[SHOPIFY WEBHOOK] ❌ Shipped fallback: Row ${rowId} discount failed: ${err.message}`);
+                }
+              }
+            }
+
+            console.log(`[SHOPIFY WEBHOOK] 🔄 Shipped fallback complete: ${updatedCount} updated, ${addedCount} added, ${failedCount} failed`);
+
+            // Force correct OPPORTUNITY
+            const newOpportunity = mappedFields.OPPORTUNITY || 0;
+            try {
+              await callBitrix('/crm.deal.update.json', { id: dealId, fields: { OPPORTUNITY: newOpportunity } });
+              console.log(`[SHOPIFY WEBHOOK] ✅ Shipped fallback: OPPORTUNITY updated to ${newOpportunity} for deal ${dealId}`);
+            } catch (oppErr) {
+              console.error(`[SHOPIFY WEBHOOK] ❌ Shipped fallback: Failed to update OPPORTUNITY: ${oppErr.message}`);
+            }
+          } catch (fallbackErr) {
+            console.error(`[SHOPIFY WEBHOOK] ❌ Shipped fallback failed entirely: ${fallbackErr.message}`);
+          }
+        } else {
+          console.error(`[SHOPIFY WEBHOOK] ❌ Failed to update product rows for deal ${dealId}:`, productRowsError);
+        }
       }
     } else {
       // All items removed — try to clear rows
