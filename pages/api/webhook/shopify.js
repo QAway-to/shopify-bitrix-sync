@@ -553,6 +553,21 @@ async function handleOrderCreated(order) {
         STAGE_ID: verifiedDeal.STAGE_ID,
         TITLE_MATCH: verifiedDeal.TITLE === dealFields.TITLE ? '✅ YES' : `❌ NO (Expected: "${dealFields.TITLE}")`
       });
+
+      // ✅ CRITICAL FIX: Force Title Update if Bitrix Automation overwrote it after update
+      if (verifiedDeal.TITLE !== dealFields.TITLE) {
+        console.warn(`[SHOPIFY WEBHOOK] ⚠️ TITLE MISMATCH after UPDATE: "${verifiedDeal.TITLE}" → "${dealFields.TITLE}"`);
+        try {
+          await callBitrix('/crm.deal.update.json', {
+            id: dealId,
+            fields: { TITLE: dealFields.TITLE }
+          });
+          verifiedDeal.TITLE = dealFields.TITLE;
+          console.log(`[SHOPIFY WEBHOOK] ✅ TITLE forced update successful: "${dealFields.TITLE}"`);
+        } catch (titleErr) {
+          console.error(`[SHOPIFY WEBHOOK] ❌ Failed to force TITLE update:`, titleErr);
+        }
+      }
     }
 
     // Store successful update operation
