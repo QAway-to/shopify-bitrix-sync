@@ -1158,13 +1158,29 @@ async function handleOrderUpdated(order) {
     const newStage = normalizeStage(fields.STAGE_ID);
 
     if (currentBitrixStage !== newStage) {
-      // Use the deal's CURRENT category for stage prefix, NOT the calculated one!
-      const currentCategoryId = Number(deal.CATEGORY_ID);
-      const correctedStageId = currentCategoryId > 0 ? `C${currentCategoryId}:${newStage}` : newStage;
+      // ✅ STAGE DOWNGRADE GUARD: Prevent rolling back higher-priority stages
+      // Priority order: NEW < PREPARATION < EXECUTING < WON/LOSE
+      const STAGE_PRIORITY = {
+        'NEW': 1,
+        'PREPARATION': 2,
+        'EXECUTING': 3,
+        'WON': 10,
+        'LOSE': 10,
+      };
+      const currentPriority = STAGE_PRIORITY[currentBitrixStage] || 0;
+      const newPriority = STAGE_PRIORITY[newStage] || 0;
 
-      fieldsToUpdate.STAGE_ID = correctedStageId;
-      console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: STAGE_ID "${currentBitrixStage}" (raw: ${deal.STAGE_ID}) -> "${newStage}" (corrected to: ${correctedStageId})`);
-      tempHasChanges = true;
+      if (newPriority < currentPriority) {
+        console.log(`[SHOPIFY WEBHOOK] 🛑 STAGE DOWNGRADE BLOCKED: "${currentBitrixStage}" (priority ${currentPriority}) → "${newStage}" (priority ${newPriority}). Keeping current stage.`);
+      } else {
+        // Use the deal's CURRENT category for stage prefix, NOT the calculated one!
+        const currentCategoryId = Number(deal.CATEGORY_ID);
+        const correctedStageId = currentCategoryId > 0 ? `C${currentCategoryId}:${newStage}` : newStage;
+
+        fieldsToUpdate.STAGE_ID = correctedStageId;
+        console.log(`[SHOPIFY WEBHOOK] 📝 Change detected: STAGE_ID "${currentBitrixStage}" (raw: ${deal.STAGE_ID}) -> "${newStage}" (corrected to: ${correctedStageId})`);
+        tempHasChanges = true;
+      }
     }
   }
 
