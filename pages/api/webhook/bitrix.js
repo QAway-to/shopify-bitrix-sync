@@ -3082,6 +3082,68 @@ async function handleDealUpdate(dealId, requestId) {
     }
   }
 
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP: COMMENT SYNC (Bitrix COMMENTS → Shopify note)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (shopifyOrderId && shopifyOrderId.trim() !== '' && comments) {
+    try {
+      const { updateOrder, getOrder } = await import('../../../src/lib/shopify/adminClient.js');
+      const shopifyOrder = await getOrder(shopifyOrderId);
+      const currentNote = (shopifyOrder?.note || '').trim();
+      const bitrixComment = comments.trim();
+
+      // Only sync if Bitrix comment differs from current Shopify note
+      if (bitrixComment && currentNote !== bitrixComment) {
+        await updateOrder(shopifyOrderId, { id: shopifyOrderId, note: bitrixComment });
+        console.log(JSON.stringify({
+          event: 'COMMENT_SYNC_SUCCESS',
+          requestId,
+          dealId,
+          shopifyOrderId,
+          noteBefore: currentNote.substring(0, 100),
+          noteAfter: bitrixComment.substring(0, 100),
+          timestamp: new Date().toISOString()
+        }));
+      }
+    } catch (commentErr) {
+      console.warn(`[BITRIX WEBHOOK] ⚠️ Comment sync failed: ${commentErr.message}`);
+    }
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STEP: TITLE IDENTITY CHECK (always verify deal TITLE = #orderName)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (shopifyOrderId && shopifyOrderId.trim() !== '') {
+    try {
+      const { getOrder: getShopifyOrder } = await import('../../../src/lib/shopify/adminClient.js');
+      const shopifyOrder = await getShopifyOrder(shopifyOrderId);
+      const expectedTitle = shopifyOrder?.name || null; // e.g. "#2990"
+
+      if (expectedTitle && dealData.TITLE !== expectedTitle) {
+        console.warn(`[BITRIX WEBHOOK] ⚠️ TITLE MISMATCH: "${dealData.TITLE}" → "${expectedTitle}"`);
+        try {
+          await callBitrix('/crm.deal.update.json', {
+            id: dealId,
+            fields: { TITLE: expectedTitle }
+          });
+          console.log(JSON.stringify({
+            event: 'TITLE_IDENTITY_FIX',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            oldTitle: dealData.TITLE,
+            newTitle: expectedTitle,
+            timestamp: new Date().toISOString()
+          }));
+        } catch (titleErr) {
+          console.error(`[BITRIX WEBHOOK] ❌ TITLE fix failed: ${titleErr.message}`);
+        }
+      }
+    } catch (titleCheckErr) {
+      console.warn(`[BITRIX WEBHOOK] ⚠️ Title identity check failed: ${titleCheckErr.message}`);
+    }
+  }
+
   // No MW action found, continue with DELIVERY trigger (all categories)
   // Check Delivery trigger conditions
   // ✅ Updated: Now uses centralized stage mapping for C2:EXECUTING, C4:2, C8:2
