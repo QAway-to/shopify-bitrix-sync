@@ -16,9 +16,10 @@
 import { findShopifyVariantByAttributes, createShopifyOrderForPreorder } from '../shopify/adminClient.js';
 import { syncProductVariantOptimized } from '../bitrix/products.js';
 import { callBitrix } from '../bitrix/client.js';
+import { resolveUserFieldListValue } from '../bitrix/userFields.js';
 
 // Bitrix User Field IDs
-const UF_BRAND = 'UF_CRM_1768251890190';
+const UF_BRAND = 'UF_CRM_1741642513658'; // New Select List Field (formerly UF_CRM_1768251890190)
 const UF_MODEL = 'UF_CRM_1739793668182';
 const UF_SIZE = 'UF_CRM_1739793720585';
 const UF_SHOPIFY_ORDER_ID = 'UF_CRM_1742556489';
@@ -39,7 +40,17 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         return { handled: false, reason: 'not_category_4' };
     }
 
-    const brand = dealData[UF_BRAND] || dealData[UF_BRAND.toLowerCase()];
+    let brand = dealData[UF_BRAND] || dealData[UF_BRAND.toLowerCase()];
+
+    // ✅ RESOLVE BRAND: If the value is a Select List ID (number or array), resolve to String
+    if (brand && (Array.isArray(brand) || !isNaN(Number(brand)))) {
+        const resolvedBrand = await resolveUserFieldListValue(UF_BRAND, brand);
+        if (resolvedBrand) {
+            console.log(`[PRE-ORDER] Resolved Brand ID ${JSON.stringify(brand)} -> "${resolvedBrand}"`);
+            brand = resolvedBrand;
+        }
+    }
+
     let model = dealData[UF_MODEL] || dealData[UF_MODEL.toLowerCase()];
     const size = dealData[UF_SIZE] || dealData[UF_SIZE.toLowerCase()];
 
