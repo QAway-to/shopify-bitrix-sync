@@ -36,7 +36,12 @@ const BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID = String(process.env.BITRIX_EMPTY_OR
  * @returns {Promise<{synced: boolean, changes?: number}>}
  */
 export async function handleQuantitySync(shopifyOrderId, dealId, requestId, options = {}) {
-    const { forceRemove = false } = options;
+    const {
+        forceRemove = false,
+        // Safety: when order already has refunds, never "re-add" items from Bitrix into Shopify.
+        // This prevents accidental resurrection of refunded/removed line items.
+        allowAddWhenRefunded = false
+    } = options;
     if (!shopifyOrderId || shopifyOrderId.trim() === '') {
         console.log(JSON.stringify({
             event: 'QUANTITY_SYNC_SKIP',
@@ -62,6 +67,11 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         if (!shopifyOrder) {
             return { synced: false, reason: 'order_not_found' };
         }
+
+        const financialStatus = shopifyOrder.financial_status ? String(shopifyOrder.financial_status) : null;
+        const refundedStatuses = new Set(['refunded', 'partially_refunded', 'voided']);
+        const isRefundedOrVoided = financialStatus ? refundedStatuses.has(financialStatus) : false;
+        const blockAddsDueToRefund = isRefundedOrVoided && !allowAddWhenRefunded;
 
         // Check if order is created from Bitrix (has BITRIX:{dealId} tag)
         const orderTags = Array.isArray(shopifyOrder.tags)
@@ -176,6 +186,11 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                 if (forceRemove && !isBitrixOrder && bitrixQty > 0) {
                     continue;
                 }
+                // If order is refunded/partially_refunded/voided, do not push increases from Bitrix to Shopify.
+                // Allow only decreases/removals (e.g., cleanup) to avoid re-adding refunded items.
+                if (blockAddsDueToRefund && bitrixQty > shopifyQty) {
+                    continue;
+                }
                 quantityChanges.push({
                     key: matchKey || shopifyVariantId || shopifySku,
                     variantId: matchedEntry?.variantId || shopifyVariantId,
@@ -198,6 +213,9 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             });
 
             if (!existsInShopify && entry.quantity > 0) {
+                if (blockAddsDueToRefund) {
+                    continue;
+                }
                 quantityChanges.push({
                     key,
                     variantId: entry.variantId,
@@ -216,6 +234,8 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                 requestId,
                 dealId,
                 shopifyOrderId,
+                financialStatus,
+                blockAddsDueToRefund,
                 bitrixItemsCount: bitrixQuantities.size,
                 shopifyItemsCount: shopifyLineItems.length,
                 timestamp: new Date().toISOString()
@@ -228,6 +248,8 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             requestId,
             dealId,
             shopifyOrderId,
+            financialStatus,
+            blockAddsDueToRefund,
             changesCount: quantityChanges.length,
             changes: quantityChanges,
             timestamp: new Date().toISOString()
