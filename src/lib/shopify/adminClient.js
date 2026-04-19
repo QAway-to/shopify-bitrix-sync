@@ -273,27 +273,23 @@ export async function createShopifyOrderForPreorder(variantGraphQLId, options = 
 
   // ✅ Build shipping/billing address from customer data
   const customer = options.customer || {};
-  if (customer.firstName || customer.lastName || customer.phone || customer.address) {
-    const addressObj = {
-      first_name: customer.firstName || '',
-      last_name: customer.lastName || '',
-      phone: customer.phone || '',
-    };
+  const addressObj = {
+    first_name: customer.firstName || 'Preorder',
+    last_name: customer.lastName || '',
+    phone: customer.phone || '',
+  };
 
-    // Add address fields if present
-    if (customer.address) {
-      addressObj.address1 = customer.address.address1 || '';
-      addressObj.address2 = customer.address.address2 || '';
-      addressObj.city = customer.address.city || '';
-      addressObj.zip = customer.address.zip || '';
-      addressObj.province = customer.address.province || '';
-      addressObj.country = customer.address.country || '';
-    }
-
-    // Set both shipping and billing address
-    orderData.shipping_address = addressObj;
-    orderData.billing_address = addressObj;
+  if (customer.address) {
+    addressObj.address1 = customer.address.address1 || '';
+    addressObj.address2 = customer.address.address2 || '';
+    addressObj.city = customer.address.city || '';
+    addressObj.zip = customer.address.zip || '';
+    addressObj.province = customer.address.province || '';
+    addressObj.country = customer.address.country || '';
   }
+
+  orderData.shipping_address = addressObj;
+  orderData.billing_address = addressObj;
 
   const response = await callShopifyAdmin('/orders.json', {
     method: 'POST',
