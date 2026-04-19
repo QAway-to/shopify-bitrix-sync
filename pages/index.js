@@ -419,6 +419,31 @@ export default function ShopifyPage() {
     }
   };
 
+  const handleDownloadBitrixLogs = async () => {
+    try {
+      const response = await fetch('/api/logs/download-bitrix');
+
+      if (!response.ok) {
+        throw new Error('Failed to download Bitrix logs');
+      }
+
+      const logText = await response.text();
+
+      const blob = new Blob([logText], { type: 'text/plain;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bitrix-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading Bitrix logs:', error);
+      alert(`Error downloading Bitrix logs: ${error.message}`);
+    }
+  };
+
 
   const handleSendToShopify = async () => {
     if (selectedBitrixEvents.length === 0) {
@@ -681,6 +706,24 @@ export default function ShopifyPage() {
                 title="Download integration logs"
               >
                 Logs
+              </button>
+              <button
+                onClick={handleDownloadBitrixLogs}
+                className="btn"
+                style={{
+                  background: '#b45309',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  minWidth: '120px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+                title="Download Bitrix logs"
+              >
+                Bitrix Logs
               </button>
               {bitrixEvents.length > 0 && (
                 <>

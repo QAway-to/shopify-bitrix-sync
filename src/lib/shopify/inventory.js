@@ -5,6 +5,7 @@
 
 import { getShopifyAdminBase, getShopifyAdminToken } from './adminClient.js';
 import { getCategoryByHandle } from '../bitrix/mappingUtils.js';
+import { logger } from '../logging/logger.js';
 
 /**
  * Get product variants with inventory by product title
@@ -279,6 +280,9 @@ export async function getAllProductsFromShopify() {
     }
 
     console.log(`[SHOPIFY INVENTORY] Fetched ${allProducts.length} product variants from Shopify`);
+    for (const p of allProducts) {
+      logger.info('inventory_updated', 'Inventory quantity changed', { variantId: p.variant_id, delta: null, newQty: p.qty });
+    }
     return allProducts;
   } catch (error) {
     console.error(`[SHOPIFY INVENTORY] Error fetching all products from Shopify:`, error);

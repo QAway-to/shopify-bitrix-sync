@@ -4,6 +4,7 @@
  */
 
 import { callShopifyAdmin } from './adminClient.js';
+import { logger } from '../logging/logger.js';
 
 /**
  * Get fulfillments for a specific order
@@ -320,6 +321,7 @@ export async function createFulfillment(orderId, lineItems, options = {}) {
       body: JSON.stringify(fulfillmentRequest)
     });
 
+    logger.info('fulfillment_created', 'Fulfillment created', { orderId, fulfillmentId: response.fulfillment?.id });
     return {
       success: true,
       httpStatus: 201,
@@ -332,6 +334,7 @@ export async function createFulfillment(orderId, lineItems, options = {}) {
     const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : null;
     const errorText = error.message.substring(0, 500); // First 500 chars
 
+    logger.error('fulfillment_failed', 'Fulfillment operation failed', { orderId, error: error.message });
     return {
       success: false,
       httpStatus: httpStatus || 500,

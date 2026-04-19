@@ -1,152 +1,84 @@
 /**
- * API endpoint to download Bitrix logs
- * Collects logs from recent Bitrix webhook operations and returns as text file
+ * GET /api/logs/download-bitrix
+ *
+ * Downloads Bitrix-related logs from PostgreSQL as a plain-text file.
+ * Filters rows where source LIKE '%bitrix%' OR event_type LIKE '%bitrix%'.
+ * Returns the last 1 000 matching rows sorted by created_at DESC.
+ *
+ * Response: text/plain attachment named "logs-bitrix-YYYY-MM-DD.txt"
  */
-import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
-import { formatCapturedConsoleEntries } from '../../../src/lib/logging/consoleCapture.js';
+
+import { pool } from '../../../src/lib/logging/db.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  if (!pool) {
+    return res.status(503).json({ error: 'Database not available' });
   }
 
   try {
-    // Collect logs from various sources
-    const logs = [];
-    
-    // Add timestamp
-    logs.push('='.repeat(80));
-    logs.push(`BITRIX-SHOPIFY INTEGRATION LOGS`);
-    logs.push(`Generated: ${new Date().toISOString()}`);
-    logs.push('='.repeat(80));
-    logs.push('');
+    const { rows } = await pool.query(
+      `SELECT * FROM logs
+       WHERE source ILIKE '%bitrix%' OR event_type ILIKE '%bitrix%'
+       ORDER BY created_at DESC
+       LIMIT 1000`
+    );
 
-    // Environment information
-    logs.push('='.repeat(80));
-    logs.push('ENVIRONMENT INFORMATION');
-    logs.push('='.repeat(80));
-    logs.push('');
-    logs.push(`Node.js Version: ${process.version}`);
-    logs.push(`Platform: ${process.platform}`);
-    logs.push(`Timestamp: ${new Date().toISOString()}`);
-    logs.push('');
+    const lines = [];
+    const dateLabel = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
-    // Get recent Bitrix events
-    logs.push('='.repeat(80));
-    logs.push('RECENT BITRIX WEBHOOK OPERATIONS');
-    logs.push('='.repeat(80));
-    logs.push('');
+    lines.push('='.repeat(80));
+    lines.push('BITRIX INTEGRATION LOGS');
+    lines.push(`Generated: ${new Date().toISOString()}`);
+    lines.push('Filter: source ILIKE \'%bitrix%\' OR event_type ILIKE \'%bitrix%\'');
+    lines.push(`Rows returned: ${rows.length}`);
+    lines.push('='.repeat(80));
+    lines.push('');
 
-    try {
-      const events = bitrixAdapter.getAllEvents();
-      
-      if (events && events.length > 0) {
-        logs.push(`Total events: ${events.length}`);
-        logs.push('');
-        
-        // Sort by received_at (most recent first)
-        const sortedEvents = [...events].sort((a, b) => {
-          const dateA = new Date(a.received_at || a.created_at || 0);
-          const dateB = new Date(b.received_at || b.created_at || 0);
-          return dateB - dateA;
-        });
+    for (const row of rows) {
+      const ts = row.created_at ? new Date(row.created_at).toISOString() : 'N/A';
+      const level = (row.level ?? 'info').toUpperCase();
+      const message = row.message ?? '';
 
-        sortedEvents.forEach((event, index) => {
-          const eventId = event.id || event.eventId || `event-${index}`;
-          const dealId = event.dealId || 'N/A';
-          const shopifyOrderId = event.shopifyOrderId || 'N/A';
-          const receivedAt = event.received_at || event.created_at || 'N/A';
-          const categoryId = event.categoryId || 'N/A';
-          const stageId = event.stageId || 'N/A';
-          const comments = event.comments || 'N/A';
+      // Build the primary log line: [timestamp] [LEVEL] message
+      let line = `[${ts}] [${level}]`;
+      if (row.source) line += ` [${row.source}]`;
+      if (row.event_type) line += ` <${row.event_type}>`;
+      if (row.request_id) line += ` (${row.request_id})`;
+      line += ` ${message}`;
+      lines.push(line);
 
-          logs.push(`Event #${index + 1}: ${eventId}`);
-          logs.push(`  Deal ID: ${dealId}`);
-          logs.push(`  Shopify Order ID: ${shopifyOrderId}`);
-          logs.push(`  Category ID: ${categoryId}`);
-          logs.push(`  Stage ID: ${stageId}`);
-          logs.push(`  Received At: ${receivedAt}`);
-          logs.push(`  Comments: ${comments}`);
-          
-          // Add raw deal data if available
-          if (event.rawDealData) {
-            logs.push(`  Raw Deal Data (summary):`);
-            const dealData = event.rawDealData;
-            logs.push(`    TITLE: ${dealData.TITLE || 'N/A'}`);
-            logs.push(`    OPPORTUNITY: ${dealData.OPPORTUNITY || 'N/A'}`);
-            logs.push(`    CURRENCY_ID: ${dealData.CURRENCY_ID || 'N/A'}`);
-            logs.push(`    UF_CRM_1742556489 (Shopify Order ID): ${dealData.UF_CRM_1742556489 || 'N/A'}`);
-          }
-          
-          logs.push('');
-        });
-      } else {
-        logs.push('No events found.');
-        logs.push('');
+      // Append structured metadata on the next line if present
+      if (row.metadata) {
+        const meta = typeof row.metadata === 'string' ? row.metadata : JSON.stringify(row.metadata);
+        lines.push(`  metadata: ${meta}`);
       }
-    } catch (error) {
-      logs.push(`Error collecting events: ${error.message}`);
-      logs.push('');
+
+      // Extra fields
+      if (row.entity_type || row.entity_id) {
+        lines.push(`  entity: ${row.entity_type ?? ''}/${row.entity_id ?? ''}`);
+      }
+      if (row.duration_ms != null) {
+        lines.push(`  duration: ${row.duration_ms}ms`);
+      }
+
+      lines.push('');
     }
 
-    logs.push('='.repeat(80));
-    logs.push('NOTE');
-    logs.push('='.repeat(80));
-    logs.push('');
-    logs.push('For detailed server-side logs (console.log output), check:');
-    logs.push('  - Server console output (stdout/stderr)');
-    logs.push('  - Application logs in production environment');
-    logs.push('  - Deployment platform logs (Render, etc.)');
-    logs.push('');
-    logs.push('This log file includes:');
-    logs.push('  - Recent webhook events received from Bitrix');
-    logs.push('  - Event metadata (deal ID, Shopify order ID, category, stage)');
-    logs.push('  - Deal information');
-    logs.push('');
+    lines.push('='.repeat(80));
+    lines.push(`End of log file — ${new Date().toISOString()}`);
+    lines.push('='.repeat(80));
 
-    logs.push('='.repeat(80));
-    logs.push('SERVER CONSOLE OUTPUT (CAPTURED stdout/stderr)');
-    logs.push('='.repeat(80));
-    logs.push('');
-    logs.push('This section contains recent console.log/warn/error output captured by the app runtime.');
-    logs.push('Tip: search for events like AUTO_ADDRESS_, ADDRESS_UPDATE_, SHOPIFY Admin API error (422), etc.');
-    logs.push('');
+    const logText = lines.join('\n');
 
-    try {
-      const consoleLines = formatCapturedConsoleEntries(5000);
-      if (consoleLines.length === 0) {
-        logs.push('No console output captured yet.');
-      } else {
-        logs.push(`Captured lines: ${consoleLines.length}`);
-        logs.push('');
-        logs.push(...consoleLines);
-      }
-    } catch (e) {
-      logs.push(`Failed to include captured console output: ${e.message}`);
-    }
-    logs.push('');
-    logs.push('='.repeat(80));
-    logs.push(`End of log file - ${new Date().toISOString()}`);
-    logs.push('='.repeat(80));
-
-    // Convert to text
-    const logText = logs.join('\n');
-
-    // Set headers for file download
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="bitrix-shopify-logs-${Date.now()}.txt"`);
-    
-    res.status(200).send(logText);
-  } catch (error) {
-    console.error('[BITRIX LOGS DOWNLOAD] Error:', error);
-    res.status(500).json({ error: 'Failed to generate logs', message: error.message });
+    res.setHeader('Content-Disposition', `attachment; filename="logs-bitrix-${dateLabel}.txt"`);
+    return res.status(200).send(logText);
+  } catch (err) {
+    console.error('[logs/download-bitrix] Query failed:', err.message);
+    return res.status(500).json({ error: 'Failed to download Bitrix logs', detail: err.message });
   }
 }
-
-
-
-
-
-
-

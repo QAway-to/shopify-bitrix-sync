@@ -5,6 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { logger } from '../../logging/logger.js';
 
 const STORAGE_DIR = path.join(process.cwd(), '.data');
 const PROGRESS_FILE = path.join(STORAGE_DIR, 'sync-progress.json');
@@ -48,6 +49,13 @@ class SyncProgressAdapter {
      * Start a new sync run
      */
     startRun(requestId, sectionIds) {
+        if (this.data.currentRun) {
+            logger.warn('concurrent_sync_detected', 'New sync started while previous still running', {
+                existingRequestId: this.data.currentRun.requestId,
+                newRequestId: requestId
+            });
+        }
+
         this.data.currentRun = {
             requestId,
             startTime: new Date().toISOString(),
@@ -67,6 +75,7 @@ class SyncProgressAdapter {
             message: `Starting sync for sections: ${sectionIds.join(', ')}`,
             sectionIds
         });
+        logger.info('sync_run_started', 'Sync run started', { requestId, type: 'inventory_sync' });
 
         saveProgress(this.data);
     }
@@ -160,6 +169,11 @@ class SyncProgressAdapter {
 
         this.data.currentRun = null;
         saveProgress(this.data);
+        logger.info('sync_run_completed', 'Sync run completed', {
+            requestId: this.data.lastRun.requestId,
+            processed: results.totals?.updated ?? 0,
+            failed: results.totals?.errors ?? 0
+        });
     }
 
     /**

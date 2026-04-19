@@ -4,6 +4,7 @@
  */
 
 import { callBitrix } from './client.js';
+import { logger } from '../logging/logger.js';
 import { updateSkuMapping, updateSkuMappingSilent, getCategoryByHandle, getSectionIdByCategory, findProductIdBySku, findProductIdByVariantId, updateVariantIdMapping } from './mappingUtils.js';
 
 // ============ SIZE ENUM MAPPING ============
@@ -91,6 +92,7 @@ export async function createBitrixProduct(productData, catalogId = 14, sectionId
     if (response.result) {
       const productId = parseInt(response.result);
       console.log(`[BITRIX PRODUCTS] ✅ Product created: ${name} (variant_id: ${variant_id}, SKU: ${sku || 'N/A'}) → ID: ${productId}`);
+      logger.info('product_created', 'Bitrix product created on demand', { productId, sku: sku || null, title: name });
 
       // Reliability Hack (from Autosync findings):
       // Explicitly update description using catalog.product.update immediately after creation
@@ -839,12 +841,13 @@ export async function syncProductVariant(productData, createNew = true, sectionI
       documentId: documentId,
       documentType: documentType
     };
-  } catch (error) {
-    console.error(`[BITRIX PRODUCTS] ❌ Error syncing product ${skuClean}:`, error);
+  } catch (e) {
+    console.error(`[BITRIX PRODUCTS] ❌ Error syncing product ${skuClean}:`, e);
+    logger.error('product_sync_failed', 'Failed to sync product', { sku: skuClean, error: e.message });
     return {
       success: false,
       sku: skuClean,
-      error: error.message
+      error: e.message
     };
   }
 }
@@ -1047,12 +1050,13 @@ export async function syncProductVariantOptimized(productData, createNew = true,
       created: isNewProduct,
       priceUpdated: priceUpdated
     };
-  } catch (error) {
-    console.error(`[BITRIX PRODUCTS] ❌ Error syncing product ${skuClean}:`, error);
+  } catch (e) {
+    console.error(`[BITRIX PRODUCTS] ❌ Error syncing product ${skuClean}:`, e);
+    logger.error('product_sync_failed', 'Failed to sync product', { sku: skuClean, error: e.message });
     return {
       success: false,
       sku: skuClean,
-      error: error.message
+      error: e.message
     };
   }
 }

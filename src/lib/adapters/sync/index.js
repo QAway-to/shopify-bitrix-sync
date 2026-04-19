@@ -2,6 +2,7 @@
 // Persistent storage for inventory sync operations
 import fs from 'fs';
 import path from 'path';
+import { logger } from '../../logging/logger.js';
 
 // Storage file path
 const STORAGE_DIR = path.join(process.cwd(), '.data');
@@ -78,8 +79,18 @@ export class SyncAdapter {
             this.storage = this.storage.slice(-500);
         }
 
+        logger.info('sync_operation_stored', 'Sync operation recorded', {
+            operationId: uniqueId,
+            type: operation.operationType || 'inventory_sync',
+            status: operation.success === false ? 'failed' : 'success'
+        });
+
         // Save to persistent storage
-        saveOperationsToFile(this.storage);
+        try {
+            saveOperationsToFile(this.storage);
+        } catch (e) {
+            logger.error('sync_state_write_failed', 'Cannot persist sync state to filesystem', { error: e.message });
+        }
 
         return operationData;
     }

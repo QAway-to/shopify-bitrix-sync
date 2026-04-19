@@ -13,6 +13,7 @@
  * 5. Add BitrixUpdated tag to prevent webhook loop
  */
 
+import { logger } from '../logging/logger.js';
 import { getOrder, callShopifyGraphQL } from '../shopify/adminClient.js';
 import { addTagToOrder, cancelOrderByDealId } from '../shopify/order.js';
 import { createRefund, calculateRefundAmount } from '../shopify/refund.js';
@@ -348,6 +349,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                     orderName: cancelResult.orderName,
                     timestamp: new Date().toISOString()
                 }));
+                logger.info('order_cancelled', 'Order cancelled', { orderId: cancelResult.orderId, dealId });
 
                 return {
                     handled: true,
@@ -400,6 +402,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
             error: cancelError.message,
             timestamp: new Date().toISOString()
         }));
+        logger.error('order_cancel_failed', 'Cancel failed', { orderId: shopifyOrderId, error: cancelError.message });
         return { handled: false, reason: 'exception', error: cancelError.message };
     }
 }

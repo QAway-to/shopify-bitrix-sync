@@ -1,5 +1,6 @@
 // Shopify Webhook endpoint
 import '../../../src/lib/logging/consoleCapture.js';
+import { createRequestLogger, logger } from '../../../src/lib/logging/logger.js';
 import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
 import { successAdapter } from '../../../src/lib/adapters/success/index.js';
 import { callBitrix, getBitrixWebhookBase, classifyBitrixError } from '../../../src/lib/bitrix/client.js';
@@ -188,6 +189,14 @@ async function createDealWithRetry(dealFields, shopifyOrderId, maxRetries = 3, p
             const sortedDeals = duplicateCheckResp.result.sort((a, b) => Number(a.ID) - Number(b.ID));
             firstDealId = sortedDeals[0].ID;
             console.warn(`[SHOPIFY WEBHOOK] Using the oldest deal: ${firstDealId}`);
+
+            logger.warn('race_condition_detected', 'Multiple Bitrix deals found after creation — race condition', {
+              entity_id: shopifyOrderId,
+              deal_count: duplicateCheckResp.result.length,
+              deal_ids: duplicateCheckResp.result.map(d => d.ID),
+              oldest_deal_id: firstDealId,
+              created_deal_id: dealId,
+            });
 
             // If this is not the oldest deal, we should delete the duplicate (but user said no deletion)
             // So we just use the oldest one and mark as duplicate
@@ -722,6 +731,11 @@ async function handleOrderCreated(order) {
     console.log(`[SHOPIFY WEBHOOK] ✅ Deal was duplicate, using existing: ${dealId} (found on attempt ${createResult.attempt})`);
   } else {
     console.log(`[SHOPIFY WEBHOOK] ✅ Deal created successfully: ${dealId} (attempt ${createResult.attempt})`);
+    logger.info('deal_created', 'Bitrix deal created from Shopify order', {
+      entity_id: String(dealId),
+      shopify_order_id: shopifyOrderId,
+      attempt: createResult.attempt,
+    });
   }
 
   // ✅ Product rows are already set during deal creation (in createDealWithRetry function)
@@ -813,6 +827,11 @@ async function handleOrderUpdated(order) {
   const now = Date.now();
   if (lastProcessed && (now - lastProcessed) < ORDER_DEDUP_WINDOW_MS) {
     console.log(`[SHOPIFY WEBHOOK] 🛑 DEDUP GUARD: Order ${shopifyOrderId} was processed ${now - lastProcessed}ms ago (< ${ORDER_DEDUP_WINDOW_MS}ms). Skipping.`);
+    logger.warn('duplicate_attempt', 'Dedup guard: order updated too recently, skipping', {
+      entity_id: shopifyOrderId,
+      elapsed_ms: now - lastProcessed,
+      window_ms: ORDER_DEDUP_WINDOW_MS,
+    });
     return;
   }
   ORDER_PROCESS_TIMESTAMPS.set(shopifyOrderId, now);
@@ -1823,6 +1842,10 @@ async function handleOrderUpdated(order) {
 const processingOrders = new Set();
 
 export default async function handler(req, res) {
+  const requestId = crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}`;
+  const slog = createRequestLogger(requestId, 'webhook/shopify');
+  const startTime = Date.now();
+
   if (req.method !== 'POST') {
     console.log(`[SHOPIFY WEBHOOK] ❌ Method not allowed: ${req.method}`);
     res.status(405).end('Method not allowed');
@@ -1849,10 +1872,20 @@ export default async function handler(req, res) {
   log(`Order ID: ${order?.id}`);
   log(`Order Name: ${order?.name}`);
 
+  slog.info('webhook_received', 'Shopify webhook received', {
+    topic,
+    entity_id: String(order?.id || ''),
+    order_name: order?.name,
+  });
+
   // ✅ DUPLICATE PREVENTION LOCK
   const shopifyOrderId = String(order.id);
   if (processingOrders.has(shopifyOrderId)) {
     log(`⚠️⚠️⚠️ DROPPING REQUEST: Order ${shopifyOrderId} is already being processed! (Lock active)`);
+    slog.warn('duplicate_attempt', 'Dedup guard: order already being processed (lock active)', {
+      entity_id: shopifyOrderId,
+      order_name: order?.name,
+    });
     return res.status(200).json({ success: true, skipped: 'locked_processing' });
   }
 
@@ -2106,6 +2139,14 @@ export default async function handler(req, res) {
           shopifyOrderId: order?.id
         });
 
+        slog.error('handler_error', 'Shopify webhook handler error', {
+          entity_id: String(order?.id || ''),
+          topic,
+          error_message: handlerError.message,
+          error_type: handlerError.errorType || 'UNKNOWN',
+          duration_ms: Date.now() - startTime,
+        });
+
         // Still return 200 to prevent Shopify from retrying (we'll handle errors internally)
         // But log extensively for debugging
         res.status(200).json({
@@ -2127,6 +2168,12 @@ export default async function handler(req, res) {
         orderId: order?.id,
         orderName: order?.name
       });
+      slog.error('unexpected_error', 'Unexpected error in Shopify webhook handler', {
+        entity_id: String(order?.id || ''),
+        topic,
+        error_message: e.message,
+        duration_ms: Date.now() - startTime,
+      });
       // Return 200 to prevent Shopify retries, but log error
       res.status(200).json({
         success: false,
@@ -2141,5 +2188,10 @@ export default async function handler(req, res) {
       processingOrders.delete(shopifyOrderId);
       log(`🔓 Released lock for order ${shopifyOrderId}`);
     }
+    slog.info('webhook_completed', 'Shopify webhook handler completed', {
+      entity_id: shopifyOrderId,
+      topic,
+      duration_ms: Date.now() - startTime,
+    });
   }
 }

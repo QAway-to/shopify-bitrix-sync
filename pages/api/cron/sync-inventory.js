@@ -9,6 +9,7 @@
  */
 
 import { runInventorySync, SECTION_NAMES } from '../../../src/lib/sync/inventorySyncCore.js';
+import { logger } from '../../../src/lib/logging/logger.js';
 import { syncProgressAdapter } from '../../../src/lib/adapters/sync/progressAdapter.js';
 import { runImageSync } from '../../../src/lib/sync/imageSyncCore.js';
 import { imageProgressAdapter } from '../../../src/lib/adapters/sync/imageProgressAdapter.js';
@@ -126,8 +127,10 @@ async function executeSync(source = 'manual', sectionIds = ALL_SECTIONS) {
     isSyncRunning = true;
     const requestId = `sync-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     currentSyncRequestId = requestId;
+    const executeSyncStartTime = Date.now();
 
     console.log(`[INVENTORY SYNC] 🚀 Starting sync (${source}), requestId: ${requestId}, sections: ${sectionIds.join(', ')}`);
+    logger.info('cron_triggered', 'Inventory cron job started', { trigger: 'cron' });
 
     try {
         syncProgressAdapter.startRun(requestId, sectionIds);
@@ -167,6 +170,7 @@ async function executeSync(source = 'manual', sectionIds = ALL_SECTIONS) {
         syncProgressAdapter.endRun(results);
 
         console.log(`[INVENTORY SYNC] ✅ Sync complete. Created: ${results.totals.created}, Updated: ${results.totals.updated}, Errors: ${results.totals.errors}`);
+        logger.info('cron_completed', 'Inventory cron job done', { duration_ms: Date.now() - executeSyncStartTime });
 
         // ============ AUTO-TRIGGER IMAGE SYNC ============
         console.log('[INVENTORY SYNC] 🔗 Auto-triggering Image Sync...');

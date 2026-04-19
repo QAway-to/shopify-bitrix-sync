@@ -2,6 +2,7 @@
 // ⚠️ VERSION MARKER - Change this to verify deployed code version
 const BITRIX_WEBHOOK_VERSION = 'v2026-01-08-A';
 import '../../../src/lib/logging/consoleCapture.js';
+import { createRequestLogger, logger } from '../../../src/lib/logging/logger.js';
 import { callBitrix } from '../../../src/lib/bitrix/client.js';
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
 import { BITRIX_CONFIG } from '../../../src/lib/bitrix/config.js';
@@ -3054,6 +3055,11 @@ async function handleDealUpdate(dealId, requestId) {
               titleUpdated: !!updateFields.TITLE,
               timestamp: new Date().toISOString()
             }));
+            logger.info('order_created', 'Shopify order created from Bitrix deal', {
+              entity_id: String(dealId),
+              shopify_order_id: createdOrderId,
+              order_name: orderName,
+            });
           } catch (updateError) {
             console.error(`[BITRIX TO SHOPIFY] Error updating deal: ${updateError.message}`);
           }
@@ -3066,6 +3072,10 @@ async function handleDealUpdate(dealId, requestId) {
             message: orderResult.message,
             timestamp: new Date().toISOString()
           }));
+          logger.error('order_create_failed', 'Failed to create Shopify order from Bitrix deal', {
+            entity_id: String(dealId),
+            error_message: orderResult.error || orderResult.message,
+          });
         }
       } else {
         console.log(JSON.stringify({
@@ -3984,6 +3994,11 @@ async function handleDealCreate(dealId, requestId) {
               orderName,
               timestamp: new Date().toISOString()
             }));
+            logger.info('order_created', 'Shopify order created from Bitrix deal (create mode)', {
+              entity_id: String(dealId),
+              shopify_order_id: createdOrderId,
+              order_name: orderName,
+            });
           } catch (updateError) {
             console.warn(`[CREATE MODE] Failed to update deal: ${updateError.message}`);
           }
@@ -4262,6 +4277,11 @@ async function handleDealCreate(dealId, requestId) {
                     foundOrderId: postCreateCheck,
                     timestamp: new Date().toISOString()
                   }));
+                  logger.warn('race_condition_detected', 'Duplicate Shopify order detected immediately after creation', {
+                    entity_id: String(dealId),
+                    created_order_id: createdOrderId,
+                    found_order_id: postCreateCheck,
+                  });
                   // Use the first found order
                   existingShopifyOrderId = postCreateCheck;
                 } else {
@@ -4530,6 +4550,11 @@ async function handleDealCreate(dealId, requestId) {
               orderName: orderResult.orderName,
               timestamp: new Date().toISOString()
             }));
+            logger.info('order_created', 'Shopify order created from Bitrix deal (catalog mode)', {
+              entity_id: String(dealId),
+              shopify_order_id: createdOrderId,
+              order_name: orderResult.orderName,
+            });
 
             // Sync payment status
             try {
@@ -4612,7 +4637,9 @@ async function handleDealCreate(dealId, requestId) {
  * Main webhook handler
  */
 export default async function handler(req, res) {
-  const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const requestId = crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}`;
+  const slog = createRequestLogger(requestId, 'webhook/bitrix');
+  const startTime = Date.now();
   const contentType = req.headers['content-type'] || 'unknown';
   const body = req.body || {};
   const payloadKeys = getPayloadKeys(body);
@@ -4630,6 +4657,11 @@ export default async function handler(req, res) {
     hasAuthToken,
     timestamp: new Date().toISOString()
   }));
+  slog.info('webhook_received', 'Bitrix webhook received', {
+    method: req.method,
+    content_type: contentType,
+    has_auth_token: hasAuthToken,
+  });
 
   if (req.method !== 'POST') {
     console.log(JSON.stringify({
@@ -4683,6 +4715,10 @@ export default async function handler(req, res) {
     extractionPath,
     timestamp: new Date().toISOString()
   }));
+  slog.info('webhook_received', 'Bitrix webhook deal extracted', {
+    entity_id: String(dealId),
+    extraction_path: extractionPath,
+  });
 
   const event = body;
   const eventType = event.event || event.EVENT || event['event'] || 'unknown';
@@ -4763,6 +4799,11 @@ export default async function handler(req, res) {
         skip_reason: result?.skip_reason || null
       });
     }
+    slog.info('webhook_completed', 'Bitrix webhook handler completed', {
+      entity_id: String(dealId || ''),
+      event_type: eventType,
+      duration_ms: Date.now() - startTime,
+    });
   } catch (e) {
     // ✅ Structured logging: [BITRIX_WEBHOOK_ERROR]
     console.log(JSON.stringify({
@@ -4773,6 +4814,11 @@ export default async function handler(req, res) {
       stack: e.stack,
       timestamp: new Date().toISOString()
     }));
+    slog.error('handler_error', 'Bitrix webhook handler error', {
+      entity_id: String(dealId || ''),
+      error_message: e.message,
+      duration_ms: Date.now() - startTime,
+    });
 
     res.status(500).json({
       error: 'Internal server error',

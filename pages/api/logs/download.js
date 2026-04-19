@@ -1,543 +1,98 @@
 /**
- * API endpoint to download logs
- * Collects logs from recent operations and returns as text file
+ * GET /api/logs/download
+ *
+ * Downloads all logs from PostgreSQL as a plain-text file.
+ * Returns the last 1 000 rows sorted by created_at DESC.
+ *
+ * Optional query parameter:
+ *   source — filter by exact source value (e.g. "webhook/shopify")
+ *
+ * Response: text/plain attachment named "logs-YYYY-MM-DD.txt"
  */
-import { shopifyAdapter } from '../../../src/lib/adapters/shopify/index.js';
-import { successAdapter } from '../../../src/lib/adapters/success/index.js';
-import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
-import { syncAdapter } from '../../../src/lib/adapters/sync/index.js';
-import { syncProgressAdapter } from '../../../src/lib/adapters/sync/progressAdapter.js';
-import { mapShopifyOrderToBitrixDeal } from '../../../src/lib/bitrix/orderMapper.js';
-import { formatCapturedConsoleEntries } from '../../../src/lib/logging/consoleCapture.js';
+
+import { pool } from '../../../src/lib/logging/db.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  if (!pool) {
+    return res.status(503).json({ error: 'Database not available' });
   }
 
   try {
-    // Collect logs from various sources
-    const logs = [];
+    const { source } = req.query;
 
-    // Add timestamp
-    logs.push('='.repeat(80));
-    logs.push(`SHOPIFY-BITRIX INTEGRATION LOGS`);
-    logs.push(`Generated: ${new Date().toISOString()}`);
-    logs.push('='.repeat(80));
-    logs.push('');
+    const conditions = [];
+    const params = [];
 
-    // Environment information
-    logs.push('='.repeat(80));
-    logs.push('ENVIRONMENT INFORMATION');
-    logs.push('='.repeat(80));
-    logs.push('');
-    logs.push(`Node.js Version: ${process.version}`);
-    logs.push(`Platform: ${process.platform}`);
-    logs.push(`Timestamp: ${new Date().toISOString()}`);
-    logs.push('');
-
-    // === SYNC PROGRESS SECTION ===
-    try {
-      const syncProgressLogs = syncProgressAdapter.getFormattedLogs();
-      logs.push(syncProgressLogs);
-      logs.push('');
-    } catch (syncError) {
-      logs.push('INVENTORY SYNC PROGRESS: Error loading sync progress');
-      logs.push(`  ${syncError.message}`);
-      logs.push('');
+    if (source) {
+      params.push(source);
+      conditions.push(`source = $${params.length}`);
     }
 
-    // === IMAGE SYNC PROGRESS SECTION ===
-    try {
-      const { imageProgressAdapter } = await import('../../../src/lib/adapters/sync/imageProgressAdapter.js');
-      const imageSyncLogs = imageProgressAdapter.getFormattedLogs();
-      logs.push(imageSyncLogs);
-      logs.push('');
-    } catch (imgError) {
-      logs.push('IMAGE SYNC PROGRESS: Error loading sync progress');
-      logs.push(`  ${imgError.message}`);
-      logs.push('');
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const { rows } = await pool.query(
+      `SELECT * FROM logs ${where} ORDER BY created_at DESC LIMIT 1000`,
+      params
+    );
+
+    const lines = [];
+    const dateLabel = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    lines.push('='.repeat(80));
+    lines.push('INTEGRATION LOGS');
+    lines.push(`Generated: ${new Date().toISOString()}`);
+    if (source) {
+      lines.push(`Filter: source = ${source}`);
     }
+    lines.push(`Rows returned: ${rows.length}`);
+    lines.push('='.repeat(80));
+    lines.push('');
 
-    // Get recent events
-    logs.push('='.repeat(80));
-    logs.push('RECENT WEBHOOK OPERATIONS');
-    logs.push('='.repeat(80));
-    logs.push('');
+    for (const row of rows) {
+      const ts = row.created_at ? new Date(row.created_at).toISOString() : 'N/A';
+      const level = (row.level ?? 'info').toUpperCase();
+      const message = row.message ?? '';
 
-    try {
-      const events = shopifyAdapter.getAllEvents();
+      // Build the primary log line: [timestamp] [LEVEL] message
+      let line = `[${ts}] [${level}]`;
+      if (row.source) line += ` [${row.source}]`;
+      if (row.event_type) line += ` <${row.event_type}>`;
+      if (row.request_id) line += ` (${row.request_id})`;
+      line += ` ${message}`;
+      lines.push(line);
 
-      if (events && events.length > 0) {
-        logs.push(`Total events: ${events.length}`);
-        logs.push('');
-
-        // Sort by received_at (most recent first)
-        const sortedEvents = [...events].sort((a, b) => {
-          const dateA = new Date(a.received_at || a.created_at || 0);
-          const dateB = new Date(b.received_at || b.created_at || 0);
-          return dateB - dateA;
-        });
-
-        for (let index = 0; index < sortedEvents.length; index++) {
-          const event = sortedEvents[index];
-          const eventId = event.id || event.eventId || `event-${index}`;
-          const orderId = event.orderId || event.id || 'N/A';
-          const receivedAt = event.received_at || event.created_at || 'N/A';
-          const totalPrice = event.current_total_price || event.total_price || 'N/A';
-          const currency = event.currency || 'EUR';
-          const financialStatus = event.financial_status || 'N/A';
-          const lineItemsCount = event.line_items ? event.line_items.length : 0;
-
-          logs.push(`Event #${index + 1}: ${eventId}`);
-          logs.push(`  Order ID: ${orderId}`);
-          logs.push(`  Email: ${event.email || 'N/A'}`);
-          logs.push(`  Received At: ${receivedAt}`);
-          logs.push(`  Total Price: ${totalPrice} ${currency}`);
-          logs.push(`  Financial Status: ${financialStatus}`);
-          logs.push(`  Line Items: ${lineItemsCount}`);
-
-          // Add line items details
-          if (event.line_items && event.line_items.length > 0) {
-            logs.push(`  Line Items Details:`);
-            event.line_items.forEach((item, itemIndex) => {
-              const currentQty = item.current_quantity ?? item.quantity ?? 0;
-              logs.push(`    ${itemIndex + 1}. ${item.title || 'N/A'} (SKU: ${item.sku || 'N/A'})`);
-              logs.push(`       Quantity: ${item.quantity || 0} → Current: ${currentQty}`);
-              logs.push(`       Price: ${item.price || 'N/A'} ${currency}`);
-            });
-          }
-
-          // ✅ Add Bitrix mapping details (product rows calculation)
-          try {
-            const { dealFields, productRows } = await mapShopifyOrderToBitrixDeal(event);
-            logs.push(`  Bitrix Mapping Details:`);
-            logs.push(`    Total Product Rows: ${productRows.length}`);
-            logs.push(`    Deal OPPORTUNITY: ${dealFields.OPPORTUNITY || 'N/A'} ${dealFields.CURRENCY_ID || currency}`);
-
-            // Count active line items
-            const activeLineItems = event.line_items?.filter(item => {
-              const currentQty = Number(item.current_quantity ?? item.quantity ?? 0);
-              return currentQty > 0;
-            }) || [];
-
-            logs.push(`    Active Line Items: ${activeLineItems.length} (from ${event.line_items?.length || 0} total)`);
-
-            // Show product rows breakdown with mapping details
-            if (productRows.length > 0) {
-              logs.push(`    Product Rows Breakdown:`);
-              productRows.forEach((row, index) => {
-                const hasProductId = row.PRODUCT_ID && row.PRODUCT_ID !== 0;
-                const productName = row.PRODUCT_NAME || 'N/A';
-                const productId = row.PRODUCT_ID || 'N/A';
-
-                if (hasProductId) {
-                  logs.push(`      ${index + 1}. PRODUCT_ID=${productId} (linked to catalog) - Price: ${row.PRICE} ${currency}, Qty: ${row.QUANTITY}`);
-                } else {
-                  logs.push(`      ${index + 1}. PRODUCT_NAME="${productName}" (NOT linked - custom row) - Price: ${row.PRICE} ${currency}, Qty: ${row.QUANTITY}`);
-                }
-              });
-
-              // Summary
-              const linkedRows = productRows.filter(r => r.PRODUCT_ID && r.PRODUCT_ID !== 0).length;
-              const customRows = productRows.length - linkedRows;
-              logs.push(`    Summary: ${linkedRows} row(s) linked to catalog (PRODUCT_ID), ${customRows} custom row(s) (PRODUCT_NAME)`);
-            }
-          } catch (mappingError) {
-            logs.push(`  Bitrix Mapping Error: ${mappingError.message}`);
-          }
-
-          logs.push('');
-        }
-      } else {
-        logs.push('No events found.');
-        logs.push('');
+      // Append structured metadata on the next line if present
+      if (row.metadata) {
+        const meta = typeof row.metadata === 'string' ? row.metadata : JSON.stringify(row.metadata);
+        lines.push(`  metadata: ${meta}`);
       }
-    } catch (error) {
-      logs.push(`Error collecting events: ${error.message}`);
-      logs.push('');
-    }
 
-    // ✅ Add successful operations section
-    logs.push('='.repeat(80));
-    logs.push('SUCCESSFUL OPERATIONS');
-    logs.push('='.repeat(80));
-    logs.push('');
-
-    try {
-      const operations = successAdapter.getAllOperations();
-
-      if (operations && operations.length > 0) {
-        logs.push(`Total successful operations: ${operations.length}`);
-        logs.push('');
-
-        // Sort by timestamp (most recent first)
-        const sortedOperations = [...operations].sort((a, b) => {
-          const dateA = new Date(a.timestamp || a.stored_at || 0);
-          const dateB = new Date(b.timestamp || b.stored_at || 0);
-          return dateB - dateA;
-        });
-
-        sortedOperations.forEach((op, index) => {
-          logs.push(`Operation #${index + 1}: ${op.id || op.operationId}`);
-          logs.push(`  Type: ${op.operationType || 'N/A'}`);
-          logs.push(`  Deal ID: ${op.dealId || 'N/A'}`);
-          logs.push(`  Shopify Order ID: ${op.shopifyOrderId || 'N/A'}`);
-          logs.push(`  Shopify Order Name: ${op.shopifyOrderName || 'N/A'}`);
-          logs.push(`  Timestamp: ${op.timestamp || op.stored_at || 'N/A'}`);
-          logs.push(`  Verified: ${op.verified ? 'Yes' : 'No'}`);
-          if (op.attempt) {
-            logs.push(`  Attempt: ${op.attempt}`);
-          }
-          if (op.wasDuplicate) {
-            logs.push(`  Was Duplicate: Yes`);
-          }
-          if (op.productRowsCount !== undefined) {
-            logs.push(`  Product Rows Count: ${op.productRowsCount}`);
-          }
-          if (op.updatedFields && Array.isArray(op.updatedFields)) {
-            logs.push(`  Updated Fields: ${op.updatedFields.join(', ')}`);
-          }
-
-          // Add deal data summary
-          if (op.dealData) {
-            logs.push(`  Deal Data Summary:`);
-            logs.push(`    TITLE: ${op.dealData.TITLE || 'N/A'}`);
-            logs.push(`    OPPORTUNITY: ${op.dealData.OPPORTUNITY || 'N/A'} ${op.dealData.CURRENCY_ID || 'EUR'}`);
-            logs.push(`    STAGE_ID: ${op.dealData.STAGE_ID || 'N/A'}`);
-            logs.push(`    CATEGORY_ID: ${op.dealData.CATEGORY_ID || 'N/A'}`);
-          }
-
-          logs.push('');
-        });
-      } else {
-        logs.push('No successful operations found.');
-        logs.push('');
+      // Extra fields
+      if (row.entity_type || row.entity_id) {
+        lines.push(`  entity: ${row.entity_type ?? ''}/${row.entity_id ?? ''}`);
       }
-    } catch (error) {
-      logs.push(`Error collecting successful operations: ${error.message}`);
-      logs.push('');
-    }
-
-    // ✅ Add RETRY ATTEMPTS section
-    logs.push('='.repeat(80));
-    logs.push('RETRY ATTEMPTS');
-    logs.push('='.repeat(80));
-    logs.push('');
-
-    try {
-      const operations = successAdapter.getAllOperations();
-
-      if (operations && operations.length > 0) {
-        const operationsWithRetries = operations.filter(op => op.attempt && op.attempt > 1);
-
-        if (operationsWithRetries.length > 0) {
-          logs.push(`Total operations with retries: ${operationsWithRetries.length}`);
-          logs.push('');
-
-          operationsWithRetries.forEach((op, index) => {
-            logs.push(`Retry Operation #${index + 1}: ${op.id || op.operationId}`);
-            logs.push(`  Type: ${op.operationType || 'N/A'}`);
-            logs.push(`  Deal ID: ${op.dealId || 'N/A'}`);
-            logs.push(`  Shopify Order ID: ${op.shopifyOrderId || 'N/A'}`);
-            logs.push(`  Attempt: ${op.attempt || 'N/A'}`);
-            logs.push(`  Was Duplicate: ${op.wasDuplicate ? 'Yes' : 'No'}`);
-            logs.push(`  Timestamp: ${op.timestamp || op.stored_at || 'N/A'}`);
-            logs.push('');
-          });
-        } else {
-          logs.push('No operations required retries (all succeeded on first attempt).');
-          logs.push('');
-        }
-      } else {
-        logs.push('No operations found to analyze retries.');
-        logs.push('');
+      if (row.duration_ms != null) {
+        lines.push(`  duration: ${row.duration_ms}ms`);
       }
-    } catch (error) {
-      logs.push(`Error collecting retry information: ${error.message}`);
-      logs.push('');
+
+      lines.push('');
     }
 
-    // ✅ Add VERIFICATION RESULTS section
-    logs.push('='.repeat(80));
-    logs.push('VERIFICATION RESULTS');
-    logs.push('='.repeat(80));
-    logs.push('');
+    lines.push('='.repeat(80));
+    lines.push(`End of log file — ${new Date().toISOString()}`);
+    lines.push('='.repeat(80));
 
-    try {
-      const operations = successAdapter.getAllOperations();
+    const logText = lines.join('\n');
 
-      if (operations && operations.length > 0) {
-        const verifiedOperations = operations.filter(op => op.verified === true);
-        const unverifiedOperations = operations.filter(op => op.verified === false);
-
-        logs.push(`Total operations: ${operations.length}`);
-        logs.push(`  Verified: ${verifiedOperations.length}`);
-        logs.push(`  Unverified: ${unverifiedOperations.length}`);
-        logs.push('');
-
-        if (unverifiedOperations.length > 0) {
-          logs.push(`Unverified Operations (${unverifiedOperations.length}):`);
-          logs.push('');
-          unverifiedOperations.forEach((op, index) => {
-            logs.push(`  ${index + 1}. Operation: ${op.id || op.operationId}`);
-            logs.push(`     Type: ${op.operationType || 'N/A'}`);
-            logs.push(`     Deal ID: ${op.dealId || 'N/A'}`);
-            logs.push(`     Shopify Order ID: ${op.shopifyOrderId || 'N/A'}`);
-            logs.push(`     Timestamp: ${op.timestamp || op.stored_at || 'N/A'}`);
-            logs.push(`     Note: Deal may have been deleted or verification failed`);
-            logs.push('');
-          });
-        } else {
-          logs.push('All operations were successfully verified.');
-          logs.push('');
-        }
-      } else {
-        logs.push('No operations found to analyze verification.');
-        logs.push('');
-      }
-    } catch (error) {
-      logs.push(`Error collecting verification information: ${error.message}`);
-      logs.push('');
-    }
-
-    // ✅ Add ERRORS AND FAILURES section
-    logs.push('='.repeat(80));
-    logs.push('ERRORS AND FAILURES');
-    logs.push('='.repeat(80));
-    logs.push('');
-    logs.push('Note: Detailed error logs are available in server-side console output.');
-    logs.push('This section tracks operations that may indicate issues:');
-    logs.push('');
-
-    try {
-      const operations = successAdapter.getAllOperations();
-
-      if (operations && operations.length > 0) {
-        // Check for operations with high retry counts (may indicate issues)
-        const highRetryOperations = operations.filter(op => op.attempt && op.attempt >= 3);
-
-        // Check for unverified operations (may indicate failures)
-        const unverifiedOperations = operations.filter(op => op.verified === false);
-
-        // Check for operations with zero product rows (may indicate data issues)
-        const zeroProductRowsOperations = operations.filter(op => op.productRowsCount === 0 && op.operationType === 'CREATE');
-
-        if (highRetryOperations.length > 0 || unverifiedOperations.length > 0 || zeroProductRowsOperations.length > 0) {
-          if (highRetryOperations.length > 0) {
-            logs.push(`Operations with high retry counts (${highRetryOperations.length}):`);
-            highRetryOperations.forEach((op, index) => {
-              logs.push(`  ${index + 1}. Operation: ${op.id || op.operationId}`);
-              logs.push(`     Deal ID: ${op.dealId || 'N/A'}, Shopify Order: ${op.shopifyOrderId || 'N/A'}`);
-              logs.push(`     Attempts: ${op.attempt || 'N/A'}`);
-              logs.push(`     Note: High retry count may indicate Bitrix API issues or race conditions`);
-              logs.push('');
-            });
-          }
-
-          if (zeroProductRowsOperations.length > 0) {
-            logs.push(`Operations with zero product rows (${zeroProductRowsOperations.length}):`);
-            zeroProductRowsOperations.forEach((op, index) => {
-              logs.push(`  ${index + 1}. Operation: ${op.id || op.operationId}`);
-              logs.push(`     Deal ID: ${op.dealId || 'N/A'}, Shopify Order: ${op.shopifyOrderId || 'N/A'}`);
-              logs.push(`     Note: Created deal with no product rows - may indicate all items were refunded/removed`);
-              logs.push('');
-            });
-          }
-        } else {
-          logs.push('No obvious error indicators found in successful operations.');
-          logs.push('All operations completed with reasonable retry counts and verification.');
-          logs.push('');
-        }
-      } else {
-        logs.push('No operations found to analyze for errors.');
-        logs.push('');
-      }
-    } catch (error) {
-      logs.push(`Error analyzing operations for failures: ${error.message}`);
-      logs.push('');
-    }
-
-    logs.push('='.repeat(80));
-    logs.push('NOTE');
-    logs.push('='.repeat(80));
-    logs.push('');
-    logs.push('For detailed server-side logs (console.log output), check:');
-    logs.push('  - Server console output (stdout/stderr)');
-    logs.push('  - Application logs in production environment');
-    logs.push('  - Deployment platform logs (Render, etc.)');
-    logs.push('');
-
-    // ✅ Add INVENTORY SYNC OPERATIONS section
-    logs.push('='.repeat(80));
-    logs.push('INVENTORY SYNC OPERATIONS');
-    logs.push('='.repeat(80));
-    logs.push('');
-
-    try {
-      const syncOps = syncAdapter.getAllOperations();
-
-      if (syncOps && syncOps.length > 0) {
-        logs.push(`Total inventory sync runs: ${syncOps.length}`);
-        logs.push('');
-
-        syncOps.forEach((op, index) => {
-          logs.push(`Sync Run #${index + 1}: ${op.id}`);
-          logs.push(`  Timestamp: ${op.timestamp || 'N/A'}`);
-          logs.push(`  Success: ${op.success ? 'Yes' : 'No'}`);
-          logs.push(`  Duration: ${op.duration || 'N/A'}ms`);
-
-          if (op.summary) {
-            logs.push(`  Summary:`);
-            logs.push(`    Synced: ${op.summary.synced || 0}`);
-            logs.push(`    Created: ${op.summary.created || 0}`);
-            logs.push(`    Price Updated: ${op.summary.priceUpdated || 0}`);
-            logs.push(`    Qty Updated: ${op.summary.qtyUpdated || 0}`);
-            logs.push(`    Skipped: ${op.summary.skipped || 0}`);
-            logs.push(`    Errors: ${op.summary.errors || 0}`);
-          }
-
-          if (op.errors && op.errors.length > 0) {
-            logs.push(`  Error Details (first 5):`);
-            op.errors.slice(0, 5).forEach((err, errIdx) => {
-              logs.push(`    ${errIdx + 1}. SKU: ${err.sku || 'N/A'}, Error: ${err.error || 'Unknown'}`);
-            });
-          }
-
-          logs.push('');
-        });
-      } else {
-        logs.push('No inventory sync runs found.');
-        logs.push('');
-      }
-    } catch (error) {
-      logs.push(`Error collecting inventory sync operations: ${error.message}`);
-      logs.push('');
-    }
-
-    logs.push('This log file includes:');
-    logs.push('  - Recent webhook events received from Shopify');
-    logs.push('  - Event metadata (order ID, amounts, statuses)');
-    logs.push('  - Line items information with current_quantity');
-    logs.push('  - Bitrix mapping details (product rows, OPPORTUNITY calculation)');
-    logs.push('  - Successful operations (created/updated deals with verification status)');
-    logs.push('  - Retry attempts (operations that required multiple attempts)');
-    logs.push('  - Verification results (deals verified after creation/update)');
-    logs.push('  - Errors and failures (operations with high retry counts, unverified deals, etc.)');
-    logs.push('  - Inventory sync operations (product/price/qty updates)');
-    logs.push('');
-
-    // ========================================================================
-    // SERVER CONSOLE (CAPTURED stdout/stderr)
-    // ========================================================================
-    logs.push('');
-    logs.push('='.repeat(80));
-    logs.push('SERVER CONSOLE OUTPUT (CAPTURED stdout/stderr)');
-    logs.push('='.repeat(80));
-    logs.push('');
-    logs.push('This section contains recent console.log/warn/error output captured by the app runtime.');
-    logs.push('Tip: search for events like AUTO_ADDRESS_, ADDRESS_UPDATE_, SHOPIFY Admin API error (422), etc.');
-    logs.push('');
-
-    try {
-      const consoleLines = formatCapturedConsoleEntries(5000);
-      if (consoleLines.length === 0) {
-        logs.push('No console output captured yet.');
-      } else {
-        logs.push(`Captured lines: ${consoleLines.length}`);
-        logs.push('');
-        logs.push(...consoleLines);
-      }
-    } catch (e) {
-      logs.push(`Failed to include captured console output: ${e.message}`);
-    }
-    logs.push('');
-    // ========================================================================
-    // BITRIX → SHOPIFY OPERATIONS
-    // ========================================================================
-    logs.push('');
-    logs.push('='.repeat(80));
-    logs.push('BITRIX → SHOPIFY WEBHOOK OPERATIONS');
-    logs.push('='.repeat(80));
-    logs.push('');
-
-    try {
-      const bitrixEvents = bitrixAdapter.getAllEvents();
-
-      if (bitrixEvents && bitrixEvents.length > 0) {
-        logs.push(`Total Bitrix events: ${bitrixEvents.length}`);
-        logs.push('');
-
-        // Sort by received_at (most recent first)
-        const sortedBitrixEvents = [...bitrixEvents].sort((a, b) => {
-          const dateA = new Date(a.received_at || a.created_at || 0);
-          const dateB = new Date(b.received_at || b.created_at || 0);
-          return dateB - dateA;
-        });
-
-        for (let index = 0; index < sortedBitrixEvents.length; index++) {
-          const event = sortedBitrixEvents[index];
-          const eventId = event.id || event.eventId || `event-${index}`;
-          const dealId = event.dealId || 'N/A';
-          const receivedAt = event.received_at || event.created_at || 'N/A';
-          const topic = event.topic || event.event || 'N/A';
-
-          logs.push(`Bitrix Event #${index + 1}: ${eventId}`);
-          logs.push(`  Deal ID: ${dealId}`);
-          logs.push(`  Topic: ${topic}`);
-          logs.push(`  Received At: ${receivedAt}`);
-
-          if (event.rawDealData) {
-            logs.push(`  Deal Title: ${event.rawDealData.TITLE || 'N/A'}`);
-            logs.push(`  Deal Stage: ${event.rawDealData.STAGE_ID || 'N/A'}`);
-            logs.push(`  Deal Amount: ${event.rawDealData.OPPORTUNITY || 'N/A'} ${event.rawDealData.CURRENCY_ID || 'EUR'}`);
-          }
-
-          logs.push('');
-        }
-      } else {
-        logs.push('No Bitrix events found.');
-        logs.push('');
-      }
-    } catch (error) {
-      logs.push(`Error collecting Bitrix events: ${error.message}`);
-      logs.push('');
-    }
-
-    logs.push('='.repeat(80));
-    logs.push('NOTE');
-    logs.push('='.repeat(80));
-    logs.push('');
-    logs.push('This log file includes:');
-    logs.push('  - Shopify → Bitrix webhook operations');
-    logs.push('  - Bitrix → Shopify webhook operations');
-    logs.push('  - Successful operations (created/updated deals with verification status)');
-    logs.push('  - Retry attempts (operations that required multiple attempts)');
-    logs.push('  - Verification results (deals verified after creation/update)');
-    logs.push('  - Errors and failures (operations with high retry counts, unverified deals, etc.)');
-    logs.push('  - Product mapping details (PRODUCT_ID vs PRODUCT_NAME)');
-    logs.push('');
-    logs.push('Note: Detailed error logs (console.log output) are available in server-side logs.');
-    logs.push('For production environments, check:');
-    logs.push('  - Server console output (stdout/stderr)');
-    logs.push('  - Application logs in deployment platform (Render, etc.)');
-    logs.push('');
-    logs.push('='.repeat(80));
-    logs.push(`End of log file - ${new Date().toISOString()}`);
-    logs.push('='.repeat(80));
-
-    // Convert to text
-    const logText = logs.join('\n');
-
-    // Set headers for file download
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="integration-logs-${Date.now()}.txt"`);
-
-    res.status(200).send(logText);
-  } catch (error) {
-    console.error('[LOGS DOWNLOAD] Error:', error);
-    res.status(500).json({ error: 'Failed to generate logs', message: error.message });
+    res.setHeader('Content-Disposition', `attachment; filename="logs-${dateLabel}.txt"`);
+    return res.status(200).send(logText);
+  } catch (err) {
+    console.error('[logs/download] Query failed:', err.message);
+    return res.status(500).json({ error: 'Failed to download logs', detail: err.message });
   }
 }
-

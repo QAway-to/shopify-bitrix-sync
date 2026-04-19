@@ -3,6 +3,8 @@
  * Maps stage IDs to semantic meanings across all categories
  */
 
+import { logger } from '../logging/logger.js';
+
 // Delivery stages - when order is handed to courier/shipping
 export const DELIVERY_STAGES = [
     'C2:EXECUTING',   // Cat 2 (Stock site) - Delivery

@@ -13,6 +13,7 @@
  * 5. Update Deal with Shopify Order ID (LAST to avoid race condition)
  */
 
+import { logger } from '../logging/logger.js';
 import { findShopifyVariantByAttributes, createShopifyOrderForPreorder } from '../shopify/adminClient.js';
 import { syncProductVariantOptimized } from '../bitrix/products.js';
 import { callBitrix } from '../bitrix/client.js';
@@ -121,6 +122,7 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         const newOrderId = String(order.id);
         const newOrderName = order.name;
         console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId} (${newOrderName})`);
+        logger.info('preorder_created', 'Pre-order Shopify order created', { dealId, orderId: newOrderId, variantId: variant.id.split('/').pop() });
 
         // 2. Ensure Product exists in Bitrix (On-Demand)
         const syncData = {
@@ -178,6 +180,7 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
 
     } catch (err) {
         console.error(`[PRE-ORDER] ❌ Error in reservation flow: ${err.message}`);
+        logger.error('preorder_failed', 'Pre-order creation failed', { dealId, error: err.message });
         return { handled: true, success: false, error: err.message };
     }
 }

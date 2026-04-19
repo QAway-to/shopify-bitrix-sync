@@ -3,6 +3,7 @@
  * Returns both deal fields and product rows
  */
 
+import { logger } from '../logging/logger.js';
 import { BITRIX_CONFIG, financialStatusToStageId, financialStatusToPaymentStatus, sourceNameToSourceId } from './config.js';
 import skuMapping from './skuMapping.json' assert { type: 'json' };
 import handleMapping from './handleMapping.json' assert { type: 'json' };
@@ -418,6 +419,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   }
 
   console.log(`[ORDER MAPPER] Category determined: ${categoryId} (Source: ${isPOS ? 'POS' : 'Site'}, Type: ${hasPreorderTag ? 'Pre-order' : 'Stock'}) based on source_name: "${sourceName}", tags:`, orderTags);
+  logger.info('category_determined', 'Deal category set', { categoryId, source: isPOS ? 'POS' : 'Site', hasPreorderTag, orderId: order.id });
 
   // Customer name
   const customerName = order.customer
@@ -520,6 +522,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       console.log(`[ORDER MAPPER] Financial status "${order.financial_status}" → Stage "${stageId}" for category ${categoryId}`);
     }
   }
+  logger.info('stage_mapped', 'Deal stage determined', { financialStatus: order.financial_status, categoryId, stageId });
 
   // Map financial status to payment status field
   // ✅ CRITICAL: For cancelled orders, ALWAYS set payment status to '58' (Unpaid)
@@ -735,6 +738,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       const model = parseModelFromTitle(firstItem.title);
       if (model) {
         dealFields.UF_CRM_1739793668182 = model;
+        logger.warn('heuristic_parse', 'Product parsed from title', { title: firstItem.title, model, color: dealFields.UF_CRM_1739793651654|| null });
       }
 
       if (firstItem.vendor) {
@@ -807,6 +811,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
         if (productId) {
           mappingMethod = 'sku/xml_id';
           console.log(`[ORDER MAPPER] ✅ Found by SKU/XML_ID: "${item.sku}" -> Product ID: ${productId}`);
+          logger.info('sku_resolved', 'SKU resolved via ' + mappingMethod, { sku: item.sku, productId, layer: mappingMethod });
         } else {
           console.error(`[ORDER MAPPER] ❌ SKU/XML_ID NOT FOUND in Bitrix: "${item.sku}"`);
         }
@@ -822,6 +827,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
           productId = certProductId;
           mappingMethod = 'variant_id_certificate';
           console.log(`[ORDER MAPPER] ✅ Found by variant_id (certificate): ${variantId} -> Product ID: ${productId}`);
+          logger.info('sku_resolved', 'SKU resolved via ' + mappingMethod, { sku: item.sku, productId, layer: mappingMethod });
         } else {
           console.error(`[ORDER MAPPER] ❌ variant_id NOT FOUND in certificate map: ${variantId}`);
         }
@@ -846,6 +852,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
             productId = existingProductResp.result[0].ID;
             mappingMethod = 'xml_id_lookup';
             console.log(`[ORDER MAPPER] ✅ ON-DEMAND: Found existing product by XML_ID: ${variantIdStr} -> Product ID: ${productId}`);
+            logger.info('sku_resolved', 'SKU resolved via ' + mappingMethod, { sku: item.sku, productId, layer: mappingMethod });
           } else {
             // Create new product in Bitrix
             const sku = item.sku || '';

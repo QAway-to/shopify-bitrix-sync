@@ -5,6 +5,7 @@
 
 import { callShopifyAdmin, callShopifyGraphQL } from './adminClient.js';
 import { getVariantIdsBySkus } from './hold.js';
+import { logger } from '../logging/logger.js';
 
 // In-memory lock to prevent concurrent order creation for the same deal
 const dealIdLocks = new Map();
@@ -511,6 +512,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       cachedOrderId,
       timestamp: new Date().toISOString()
     }));
+    logger.warn('duplicate_order_skipped', 'Duplicate order suppressed', { dealId, existingOrderId: cachedOrderId });
     return {
       success: true,
       orderId: cachedOrderId,
@@ -529,6 +531,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
   if (!lockAcquired) {
     // Another request is creating order - wait and check for existing order multiple times
     console.log(`[CREATE ORDER FROM BITRIX] ⚠️ Lock already held for deal ${dealId}, waiting and checking for existing order...`);
+    logger.warn('order_lock_active', 'Order creation lock active for deal', { dealId });
 
     // Wait with multiple checks for existing order
     for (let checkAttempt = 1; checkAttempt <= 10; checkAttempt++) {
@@ -929,6 +932,9 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       wasDuplicate,
       timestamp: new Date().toISOString()
     }));
+    if (!wasDuplicate) {
+      logger.info('shopify_order_created', 'Shopify order created', { orderId: canonicalOrderId, dealId, name: restOrder.name });
+    }
 
     return {
       success: true,
@@ -950,6 +956,7 @@ export async function createOrderFromBitrix(items, dealId, correlationId = null,
       stack: error.stack,
       timestamp: new Date().toISOString()
     }));
+    logger.error('shopify_order_failed', 'Failed to create Shopify order', { dealId, error: error.message });
 
     return {
       success: false,

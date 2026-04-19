@@ -1,6 +1,7 @@
 // Optimized API endpoint for syncing products with progress tracking and parallel processing
 import { getCategoryProducts } from '../../../src/lib/shopify/inventory.js';
 import { syncProductVariantOptimized, refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
+import { logger } from '../../../src/lib/logging/logger.js';
 
 // Server-only imports
 const isServer = typeof window === 'undefined';
@@ -98,6 +99,7 @@ export default async function handler(req, res) {
     sectionId,
     timestamp: new Date().toISOString()
   }));
+  logger.info('category_sync_started', 'Category sync started', { sectionId });
 
   // Start processing in background (don't wait for response)
   processCategoryAsync(requestId, category, sectionId, isCreateAction, progress)
@@ -266,6 +268,7 @@ async function processCategoryAsync(requestId, category, sectionId, isCreateActi
       summary: results.summary,
       timestamp: new Date().toISOString()
     }));
+    logger.info('category_sync_completed', 'Category sync completed', { processed: results.summary.total });
 
   } catch (error) {
     console.error(JSON.stringify({
@@ -276,6 +279,7 @@ async function processCategoryAsync(requestId, category, sectionId, isCreateActi
       stack: error.stack,
       timestamp: new Date().toISOString()
     }));
+    logger.error('category_sync_failed', 'Category sync failed', { error: error.message });
 
     progress.status = 'error';
     progress.message = `Ошибка: ${error.message}`;

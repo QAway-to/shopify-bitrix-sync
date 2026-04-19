@@ -3,6 +3,8 @@
  * Handles all API calls to Bitrix24
  */
 
+import { logger } from '../logging/logger.js';
+
 /**
  * Call Bitrix24 REST API method
  * @param {string} webhookUrl - Base webhook URL (e.g., https://domain.bitrix24.eu/rest/52/xxx/)
@@ -139,6 +141,8 @@ export async function callBitrix(method, payload = {}) {
   const methodPath = method.startsWith('/') ? method : `/${method}`;
   const url = `${baseUrl}${methodPath}`;
 
+  const _startMs = Date.now();
+
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -158,6 +162,8 @@ export async function callBitrix(method, payload = {}) {
         code: errorInfo.code,
         payload: payload
       });
+      const snippet = JSON.stringify(result).slice(0, 200);
+      logger.error('bitrix_api_error', errorInfo.type + ': ' + errorInfo.message, { method, errorType: errorInfo.type, response: snippet });
       const error = new Error(`Bitrix API error (${errorInfo.type}): ${errorInfo.message}`);
       error.errorType = errorInfo.type;
       error.errorDetails = errorInfo.details;
@@ -172,12 +178,15 @@ export async function callBitrix(method, payload = {}) {
         code: errorInfo.code,
         payload: payload
       });
+      const snippet = JSON.stringify(result).slice(0, 200);
+      logger.error('bitrix_api_error', errorInfo.type + ': ' + errorInfo.message, { method, errorType: errorInfo.type, response: snippet });
       const error = new Error(`Bitrix API error (${errorInfo.type}): ${errorInfo.message}`);
       error.errorType = errorInfo.type;
       error.errorDetails = errorInfo.details;
       throw error;
     }
 
+    logger.info('bitrix_api_call', 'Bitrix API success', { method, duration_ms: Date.now() - _startMs });
     return result;
   } catch (error) {
     // If error already has errorType, re-throw as is

@@ -4,6 +4,7 @@
  */
 
 import { callBitrixAPI } from './client.js';
+import { logger } from '../logging/logger.js';
 
 /**
  * Find contact by email
@@ -27,8 +28,9 @@ export async function findContactByEmail(webhookUrl, email) {
     }
 
     return null;
-  } catch (error) {
-    console.error('[BITRIX CONTACT] Error finding contact by email:', error);
+  } catch (e) {
+    console.error('[BITRIX CONTACT] Error finding contact by email:', e);
+    logger.warn('contact_lookup_failed', 'Silent error in contact lookup', { error: e.message });
     return null;
   }
 }
@@ -55,8 +57,9 @@ export async function findContactByPhone(webhookUrl, phone) {
     }
 
     return null;
-  } catch (error) {
-    console.error('[BITRIX CONTACT] Error finding contact by phone:', error);
+  } catch (e) {
+    console.error('[BITRIX CONTACT] Error finding contact by phone:', e);
+    logger.warn('contact_lookup_failed', 'Silent error in contact lookup', { error: e.message });
     return null;
   }
 }
@@ -113,7 +116,9 @@ export async function createContact(webhookUrl, contactData) {
     const result = await callBitrixAPI(webhookUrl, 'crm.contact.add', { fields });
 
     if (result.result) {
-      return parseInt(result.result);
+      const contactId = parseInt(result.result);
+      logger.info('contact_created', 'Contact created in Bitrix', { contactId, email: contactData.email });
+      return contactId;
     }
 
     return null;
@@ -211,6 +216,7 @@ export async function upsertBitrixContact(webhookUrl, shopifyOrder) {
     contactId = await findContactByEmail(webhookUrl, email);
     if (contactId) {
       console.log(`[BITRIX CONTACT] Found existing contact by email: ${contactId}`);
+      logger.info('contact_found', 'Existing contact found', { contactId, email });
       // Update address if available (fixes "Array" issue for old contacts)
       if (addressData) {
         await updateContactAddress(webhookUrl, contactId, addressData);
@@ -224,6 +230,7 @@ export async function upsertBitrixContact(webhookUrl, shopifyOrder) {
     contactId = await findContactByPhone(webhookUrl, phone);
     if (contactId) {
       console.log(`[BITRIX CONTACT] Found existing contact by phone: ${contactId}`);
+      logger.info('contact_found', 'Existing contact found', { contactId, email });
       // Update address if available
       if (addressData) {
         await updateContactAddress(webhookUrl, contactId, addressData);

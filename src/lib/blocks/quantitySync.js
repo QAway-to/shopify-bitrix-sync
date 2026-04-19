@@ -13,6 +13,7 @@
  * 5. Clean up stub products if real products added
  */
 
+import { logger } from '../logging/logger.js';
 import { getOrder, callShopifyAdmin } from '../shopify/adminClient.js';
 import {
     incrementLineItemQuantity,
@@ -54,6 +55,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         return { synced: false, reason: 'no_order_id' };
     }
 
+    const _syncStartTime = Date.now();
     try {
         console.log(JSON.stringify({
             event: 'QUANTITY_SYNC_START',
@@ -95,6 +97,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             rowsCount: bitrixRows.length,
             timestamp: new Date().toISOString()
         }));
+        logger.info('quantity_sync_started', 'Quantity sync started for deal', { dealId, rowCount: bitrixRows.length });
 
         // ✅ GUARD: In forceRemove mode, if Bitrix has 0 rows, skip entirely.
         // This prevents race condition where Bitrix echo webhook arrives before
@@ -363,6 +366,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             }
         }
 
+        logger.info('quantity_sync_completed', 'Quantity sync done', { dealId, duration_ms: Date.now() - _syncStartTime });
         return { synced: true, changes: quantityChanges.length };
 
     } catch (quantitySyncError) {
@@ -373,6 +377,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             error: quantitySyncError.message,
             timestamp: new Date().toISOString()
         }));
+        logger.error('quantity_sync_failed', 'Quantity sync error', { dealId, error: quantitySyncError.message });
         return { synced: false, error: quantitySyncError.message };
     }
 }

@@ -49,3 +49,4 @@ venv/
 .vscode/
 *.swp
 *.swo
+.env.local

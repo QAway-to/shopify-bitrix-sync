@@ -9,6 +9,8 @@
  * - Logs progress every 5 minutes
  */
 
+import { logger } from '../logging/logger.js';
+
 // ============ SECTION MAPPING ============
 export const SECTION_MAP = {
     'category-a-f': 36,
@@ -162,7 +164,9 @@ async function fetchShopifyProducts(progressCallback) {
                     try {
                         pageInfo = link.split('page_info=')[1].split('>')[0];
                         hasNext = true;
-                    } catch (e) { /* ignore */ }
+                    } catch (e) {
+                        logger.warn('pagination_restart', 'pageInfo parse failed, restarting pagination', { page: pageInfo });
+                    }
                     break;
                 }
             }
@@ -361,6 +365,7 @@ export async function runInventorySync(options = {}) {
             message: `Starting sync for sections: ${sectionIds.map(id => SECTION_NAMES[id]).join(', ')}`,
             sectionIds
         });
+        logger.info('inventory_sync_started', 'Inventory sync started', { sectionId: sectionIds });
 
         // 1. Fetch all Shopify products
         const shopifyVariants = await fetchShopifyProducts(progressCallback);
@@ -399,6 +404,7 @@ export async function runInventorySync(options = {}) {
             message: `Sync complete in ${Math.round(results.duration / 1000)}s`,
             results
         });
+        logger.info('inventory_sync_completed', 'Inventory sync done', { processed: results.totals, duration_ms: results.duration });
 
         return results;
 
@@ -412,6 +418,7 @@ export async function runInventorySync(options = {}) {
             message: error.message,
             error
         });
+        logger.error('inventory_sync_failed', 'Inventory sync failed', { error: error.message, sectionId: sectionIds });
 
         return results;
     }
