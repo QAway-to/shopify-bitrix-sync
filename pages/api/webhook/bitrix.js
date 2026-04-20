@@ -2465,7 +2465,8 @@ async function handleDealUpdate(dealId, requestId) {
           // Get line items from Shopify
           const shopifyLineItems = shopifyOrder.line_items || [];
 
-          // Build map of SKU -> quantity from Bitrix
+          // Build map of identifier -> { quantity, isVariantId } from Bitrix
+          // Priority: XML_ID (Shopify variant ID) first, CODE (SKU) as fallback
           const bitrixQuantities = new Map();
           for (const row of bitrixRows) {
             const productId = row.PRODUCT_ID;
@@ -2473,11 +2474,17 @@ async function handleDealUpdate(dealId, requestId) {
               try {
                 const productResp = await callBitrix('/crm.product.get.json', { id: productId });
                 if (productResp.result) {
-                  // In Bitrix, SKU is stored in CODE field, not SKU field
-                  const sku = productResp.result.CODE || productResp.result.code || productResp.result.SKU || productResp.result.sku;
-                  if (sku && sku.trim() !== '') {
-                    const quantity = parseFloat(row.QUANTITY || row.quantity || 0);
-                    bitrixQuantities.set(sku.trim(), quantity);
+                  const product = productResp.result;
+                  const xmlId = product.XML_ID; // Shopify variant ID stored here
+                  const code = product.CODE || product.code || product.SKU || product.sku;
+                  const quantity = parseFloat(row.QUANTITY || row.quantity || 0);
+
+                  if (xmlId && xmlId.toString().trim() !== '') {
+                    // XML_ID = Shopify variant ID: addPositionToOrder uses it directly
+                    bitrixQuantities.set(xmlId.toString().trim(), { quantity, isVariantId: true });
+                  } else if (code && code.trim() !== '') {
+                    // Fallback: CODE (SKU) — addPositionToOrder resolves via getVariantIdsBySkus
+                    bitrixQuantities.set(code.trim(), { quantity, isVariantId: false });
                   }
                 }
               } catch (productError) {
@@ -2490,29 +2497,35 @@ async function handleDealUpdate(dealId, requestId) {
           // IMPORTANT: If Bitrix rows are empty, we still must decrement all Shopify SKU-backed line items to 0.
           const quantityChanges = [];
           for (const lineItem of shopifyLineItems) {
-            const rawSku = lineItem.sku;
-            if (!rawSku || String(rawSku).trim() === '') continue;
+            const lineVariantId = lineItem.variant_id ? String(lineItem.variant_id).trim() : null;
+            const lineSku = lineItem.sku ? String(lineItem.sku).trim() : null;
 
-            const sku = String(rawSku).trim();
-            const bitrixQty = bitrixQuantities.has(sku) ? bitrixQuantities.get(sku) : 0;
+            // Match by variant_id first (unambiguous), then fall back to SKU
+            const matchKey = (lineVariantId && bitrixQuantities.has(lineVariantId))
+              ? lineVariantId
+              : (lineSku && bitrixQuantities.has(lineSku))
+                ? lineSku
+                : null;
+
             const shopifyQty = parseFloat(lineItem.quantity || 0);
+            const bitrixQty = matchKey ? bitrixQuantities.get(matchKey).quantity : 0;
+            const sku = lineSku || lineVariantId;
+            if (!sku) continue;
 
-            if (Math.abs(bitrixQty - shopifyQty) > 0.01) { // Allow small floating point differences
-              quantityChanges.push({
-                sku,
-                bitrixQty,
-                shopifyQty,
-                newQty: bitrixQty
-              });
+            if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
+              quantityChanges.push({ sku, bitrixQty, shopifyQty, newQty: bitrixQty });
             }
           }
 
           // Also check for new items in Bitrix that don't exist in Shopify
-          for (const [sku, bitrixQty] of bitrixQuantities.entries()) {
-            const existsInShopify = shopifyLineItems.some(li => String(li?.sku || '').trim() === sku);
+          for (const [identifier, { quantity: bitrixQty, isVariantId }] of bitrixQuantities.entries()) {
+            const existsInShopify = shopifyLineItems.some(li => {
+              if (isVariantId) return String(li?.variant_id || '').trim() === identifier;
+              return String(li?.sku || '').trim() === identifier;
+            });
             if (!existsInShopify && bitrixQty > 0) {
               quantityChanges.push({
-                sku,
+                sku: identifier, // numeric variantId string or SKU — addPositionToOrder handles both
                 bitrixQty,
                 shopifyQty: 0,
                 newQty: bitrixQty,
