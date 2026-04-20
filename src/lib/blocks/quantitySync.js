@@ -44,26 +44,13 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         allowAddWhenRefunded = false
     } = options;
     if (!shopifyOrderId || shopifyOrderId.trim() === '') {
-        console.log(JSON.stringify({
-            event: 'QUANTITY_SYNC_SKIP',
-            requestId,
-            dealId,
-            shopifyOrderId: shopifyOrderId || 'empty',
-            reason: 'no_shopify_order_id',
-            timestamp: new Date().toISOString()
-        }));
+        logger.info('quantity_sync_skip', 'Quantity sync skipped', { dealId, shopifyOrderId, reason: 'no_shopify_order_id' });
         return { synced: false, reason: 'no_order_id' };
     }
 
     const _syncStartTime = Date.now();
     try {
-        console.log(JSON.stringify({
-            event: 'QUANTITY_SYNC_START',
-            requestId,
-            dealId,
-            shopifyOrderId,
-            timestamp: new Date().toISOString()
-        }));
+        logger.info('quantity_sync_start', 'Quantity sync started', { dealId, shopifyOrderId });
 
         const shopifyOrder = await getOrder(shopifyOrderId);
         if (!shopifyOrder) {
@@ -89,26 +76,13 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', { id: dealId });
         const bitrixRows = Array.isArray(productRowsResp?.result) ? productRowsResp.result : [];
 
-        console.log(JSON.stringify({
-            event: 'QUANTITY_SYNC_BITRIX_ROWS',
-            requestId,
-            dealId,
-            shopifyOrderId,
-            rowsCount: bitrixRows.length,
-            timestamp: new Date().toISOString()
-        }));
-        logger.info('quantity_sync_started', 'Quantity sync started for deal', { dealId, rowCount: bitrixRows.length });
+        logger.info('quantity_sync_bitrix_rows', 'Bitrix product rows fetched', { dealId, shopifyOrderId, rowsCount: bitrixRows.length });
 
         // ✅ GUARD: In forceRemove mode, if Bitrix has 0 rows, skip entirely.
         // This prevents race condition where Bitrix echo webhook arrives before
         // product rows are added to a newly created deal, causing all Shopify items to be deleted.
         if (forceRemove && !isBitrixOrder && bitrixRows.length === 0) {
-            console.log(JSON.stringify({
-                event: 'QUANTITY_SYNC_SKIP_FORCE_REMOVE_EMPTY',
-                requestId, dealId, shopifyOrderId,
-                reason: 'forceRemove_but_no_bitrix_rows',
-                timestamp: new Date().toISOString()
-            }));
+            logger.info('quantity_sync_skip_force_remove', 'Sync skipped: forceRemove but no Bitrix rows', { dealId, shopifyOrderId });
             return { synced: false, reason: 'forceRemove_no_rows' };
         }
 
@@ -142,11 +116,11 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                                 sku: sku ? sku.trim() : null
                             });
                         } else {
-                            console.warn(`[SYNC QUANTITIES] Product ${productId} has no variant_id (XML_ID) or SKU`);
+                            logger.warn('quantity_sync_product_no_key', 'Product has no XML_ID or SKU — skipped', { dealId, productId });
                         }
                     }
                 } catch (productError) {
-                    console.warn(`[SYNC QUANTITIES] Failed to get product ${productId}: ${productError.message}`);
+                    logger.warn('quantity_sync_product_fetch_error', 'Failed to fetch product from Bitrix', { dealId, productId, error: productError.message });
                 }
             }
         }
@@ -232,31 +206,19 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         }
 
         if (quantityChanges.length === 0) {
-            console.log(JSON.stringify({
-                event: 'QUANTITY_SYNC_NO_CHANGES',
-                requestId,
-                dealId,
-                shopifyOrderId,
-                financialStatus,
-                blockAddsDueToRefund,
+            logger.info('quantity_sync_no_changes', 'No quantity changes detected', {
+                dealId, shopifyOrderId, financialStatus, blockAddsDueToRefund,
                 bitrixItemsCount: bitrixQuantities.size,
                 shopifyItemsCount: shopifyLineItems.length,
-                timestamp: new Date().toISOString()
-            }));
+            });
             return { synced: true, changes: 0 };
         }
 
-        console.log(JSON.stringify({
-            event: 'QUANTITY_SYNC_DETECTED',
-            requestId,
-            dealId,
-            shopifyOrderId,
-            financialStatus,
-            blockAddsDueToRefund,
+        logger.info('quantity_sync_detected', 'Quantity changes detected', {
+            dealId, shopifyOrderId, financialStatus, blockAddsDueToRefund,
             changesCount: quantityChanges.length,
             changes: quantityChanges,
-            timestamp: new Date().toISOString()
-        }));
+        });
 
         // Apply changes
         let hasChanges = false;
@@ -371,11 +333,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
  * Clean up stub order by removing default variant and BITRIX_STUB tag
  */
 async function cleanupStubOrder(shopifyOrderId, dealId, requestId) {
-    console.log(JSON.stringify({
-        event: 'STUB_ORDER_CLEANUP_START',
-        requestId, dealId, shopifyOrderId,
-        timestamp: new Date().toISOString()
-    }));
+    logger.info('stub_order_cleanup_start', 'Stub order cleanup started', { dealId, shopifyOrderId });
 
     try {
         // Step 1: Remove default variant
@@ -400,12 +358,7 @@ async function cleanupStubOrder(shopifyOrderId, dealId, requestId) {
                 if (setResult.success) {
                     const commitResult = await commitOrderEdit(beginResult.calculatedOrderId);
                     if (commitResult.success) {
-                        console.log(JSON.stringify({
-                            event: 'STUB_ORDER_DEFAULT_VARIANT_REMOVED',
-                            requestId, dealId, shopifyOrderId,
-                            defaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID,
-                            timestamp: new Date().toISOString()
-                        }));
+                        logger.info('stub_order_variant_removed', 'Default stub variant removed from order', { dealId, shopifyOrderId, defaultVariantId: BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID });
                     }
                 }
             }
@@ -435,28 +388,13 @@ async function cleanupStubOrder(shopifyOrderId, dealId, requestId) {
                     })
                 });
 
-                console.log(JSON.stringify({
-                    event: 'STUB_ORDER_TAG_REMOVED',
-                    requestId, dealId, shopifyOrderId,
-                    removedTag: 'BITRIX_STUB',
-                    timestamp: new Date().toISOString()
-                }));
+                logger.info('stub_order_tag_removed', 'BITRIX_STUB tag removed from order', { dealId, shopifyOrderId, removedTag: 'BITRIX_STUB' });
             }
         }
 
-        console.log(JSON.stringify({
-            event: 'STUB_ORDER_CLEANUP_SUCCESS',
-            requestId, dealId, shopifyOrderId,
-            timestamp: new Date().toISOString()
-        }));
+        logger.info('stub_order_cleanup_success', 'Stub order cleanup completed', { dealId, shopifyOrderId });
     } catch (stubCleanupError) {
-        console.warn(`[STUB CLEANUP] Failed to clean up stub order: ${stubCleanupError.message}`);
-        console.log(JSON.stringify({
-            event: 'STUB_ORDER_CLEANUP_ERROR',
-            requestId, dealId, shopifyOrderId,
-            error: stubCleanupError.message,
-            timestamp: new Date().toISOString()
-        }));
+        logger.warn('stub_order_cleanup_error', 'Failed to clean up stub order', { dealId, shopifyOrderId, error: stubCleanupError.message });
     }
 }
 

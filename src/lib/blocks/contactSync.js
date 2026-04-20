@@ -13,6 +13,7 @@
 
 import { getOrder, updateOrder } from '../shopify/adminClient.js';
 import { callBitrix } from '../bitrix/client.js';
+import { logger } from '../logging/logger.js';
 
 const BITRIX_FALLBACK_EMAIL = 'hold@bfcshoes.local';
 
@@ -53,7 +54,7 @@ export async function getBitrixContactData(dealData) {
 
         return { email, phone, firstName, lastName, contactId };
     } catch (err) {
-        console.warn(`[CONTACT SYNC] Failed to get contact ${contactId}: ${err.message}`);
+        logger.warn('contact_sync_fetch_error', 'Failed to fetch contact from Bitrix', { error: err.message });
         return { email: null, phone: null, firstName: null, lastName: null, contactId };
     }
 }
@@ -129,14 +130,7 @@ export async function syncContactToShopify(shopifyOrderId, dealData, requestId, 
         const bitrixContact = await getBitrixContactData(dealData);
 
         if (!bitrixContact.contactId) {
-            console.log(JSON.stringify({
-                event: 'CONTACT_SYNC_SKIP',
-                requestId,
-                dealId,
-                shopifyOrderId,
-                reason: 'no_contact_id',
-                timestamp: new Date().toISOString()
-            }));
+            logger.info('contact_sync_skip', 'Contact sync skipped', { requestId, dealId, shopifyOrderId, reason: 'no_contact_id' });
             return { synced: false, reason: 'no_contact_id' };
         }
 
@@ -150,54 +144,22 @@ export async function syncContactToShopify(shopifyOrderId, dealData, requestId, 
         const { needsUpdate, changes } = checkContactChanges(bitrixContact, shopifyOrder);
 
         if (!needsUpdate) {
-            console.log(JSON.stringify({
-                event: 'CONTACT_SYNC_NO_CHANGES',
-                requestId,
-                dealId,
-                shopifyOrderId,
-                contactId: bitrixContact.contactId,
-                currentEmail: shopifyOrder.email,
-                bitrixEmail: bitrixContact.email,
-                timestamp: new Date().toISOString()
-            }));
+            logger.info('contact_sync_no_changes', 'No contact changes detected', { requestId, dealId, shopifyOrderId, contactId: bitrixContact.contactId, currentEmail: shopifyOrder.email, bitrixEmail: bitrixContact.email });
             return { synced: false, reason: 'no_changes' };
         }
 
-        console.log(JSON.stringify({
-            event: 'CONTACT_SYNC_UPDATING',
-            requestId,
-            dealId,
-            shopifyOrderId,
-            contactId: bitrixContact.contactId,
-            changes: Object.keys(changes),
-            timestamp: new Date().toISOString()
-        }));
+        logger.info('contact_sync_updating', 'Updating contact in Shopify', { requestId, dealId, shopifyOrderId, contactId: bitrixContact.contactId, changes: Object.keys(changes) });
 
         // Update Shopify order
         const updatePayload = { id: shopifyOrderId, ...changes };
         await updateOrder(shopifyOrderId, updatePayload);
 
-        console.log(JSON.stringify({
-            event: 'CONTACT_SYNC_SUCCESS',
-            requestId,
-            dealId,
-            shopifyOrderId,
-            contactId: bitrixContact.contactId,
-            updatedFields: Object.keys(changes),
-            timestamp: new Date().toISOString()
-        }));
+        logger.info('contact_sync_success', 'Contact synced to Shopify', { requestId, dealId, shopifyOrderId, contactId: bitrixContact.contactId, updatedFields: Object.keys(changes) });
 
         return { synced: true, changes };
 
     } catch (err) {
-        console.error(JSON.stringify({
-            event: 'CONTACT_SYNC_ERROR',
-            requestId,
-            dealId,
-            shopifyOrderId,
-            error: err.message,
-            timestamp: new Date().toISOString()
-        }));
+        logger.error('contact_sync_error', 'Contact sync failed', { requestId, dealId, shopifyOrderId, error: err.message });
         return { synced: false, error: err.message };
     }
 }

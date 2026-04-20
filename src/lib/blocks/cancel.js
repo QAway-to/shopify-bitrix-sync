@@ -46,14 +46,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
         return { handled: false, reason: 'not_lose_stage' };
     }
 
-    console.log(JSON.stringify({
-        event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_CHECK',
-        requestId,
-        dealId,
-        stageId,
-        shopifyOrderId: shopifyOrderId || 'not_set',
-        timestamp: new Date().toISOString()
-    }));
+    logger.info('order_cancel_check', 'Order cancel check', { requestId, dealId, stageId, shopifyOrderId: shopifyOrderId || 'not_set' });
 
     // 🆕 FETCH DEAL DATA SENSITIVELY
     let lossAction = { action: 'CANCEL', restock: true, reason: 'OTHER' };
@@ -73,12 +66,12 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                 const mappedAction = getActionByLossReason(lossReasonId);
                 if (mappedAction) {
                     lossAction = mappedAction;
-                    console.log(`[CANCEL BLOCK] 🔍 Mapped Loss Reason ID ${lossReasonId} to Action:`, lossAction);
+                    logger.info('order_cancel_loss_reason_mapped', 'Mapped loss reason to action', { dealId, lossReasonId, lossAction });
                 } else {
-                    console.warn(`[CANCEL BLOCK] ⚠️ Unknown Loss Reason ID ${lossReasonId}, using default CANCEL+RESTOCK`);
+                    logger.warn('order_cancel_unknown_loss_reason', 'Unknown loss reason ID, using default CANCEL+RESTOCK', { dealId, lossReasonId });
                 }
             } else {
-                console.log(`[CANCEL BLOCK] ℹ️ No Loss Reason set in field ${BITRIX_LOSS_REASON_FIELD}`);
+                logger.info('order_cancel_no_loss_reason', 'No loss reason set', { dealId, field: BITRIX_LOSS_REASON_FIELD });
             }
         }
 
@@ -101,14 +94,14 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                     const canCancel = !isFulfilled; // Prevent canceling fulfilled orders
 
                     if (isFulfilled) {
-                        console.warn(`[CANCEL BLOCK] ⚠️ Order ${shopifyOrderId} is already FULFILLED. Skipping orderCancel part.`);
+                        logger.warn('order_cancel_skip_fulfilled', 'Order is already fulfilled, skipping cancel', { shopifyOrderId, dealId });
                     }
 
                     // ✅ FIX: Check if order is ALREADY CANCELLED to prevent loop
                     // If Bitrix sends "LOSE" update -> we try to cancel -> if already cancelled, we MUST stop here
                     // otherwise we might update tags/notes which triggers Shopify webhook -> Bitrix update -> Loop
                     if (shopifyOrder.cancelled_at) {
-                        console.log(`[CANCEL BLOCK] ℹ️ Order ${shopifyOrderId} is ALREADY CANCELLED (at ${shopifyOrder.cancelled_at}). Skipping logic to prevent loop.`);
+                        logger.info('order_already_cancelled', 'Order already cancelled, skipping to prevent loop', { shopifyOrderId, dealId, cancelledAt: shopifyOrder.cancelled_at });
                         return {
                             handled: true,
                             success: true,
@@ -129,7 +122,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         const currency = shopifyOrder.currency || 'EUR';
 
                         if (overpayment > 0.01) {
-                            console.log(`[CANCEL BLOCK] 💰 Detected Overpayment of ${overpayment} ${currency}. Initiating Reconciliation Refund...`);
+                            logger.info('order_cancel_overpayment_detected', 'Overpayment detected, initiating reconciliation refund', { shopifyOrderId, dealId, overpayment, currency });
                             const reconciliationResult = await createRefund(shopifyOrderId, {
                                 amount: String(overpayment),
                                 currency: currency,
@@ -139,11 +132,11 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                             if (reconciliationResult.success) {
                                 console.log(`[CANCEL BLOCK] ✅ Reconciliation Refund created.`);
                             } else {
-                                console.warn(`[CANCEL BLOCK] ⚠️ Reconciliation Refund failed: ${reconciliationResult.error}`);
+                                logger.warn('order_cancel_reconciliation_failed', 'Reconciliation refund failed', { shopifyOrderId, dealId, error: reconciliationResult.error });
                             }
                         }
                     } catch (reconError) {
-                        console.warn(`[CANCEL BLOCK] ⚠️ Error during reconciliation check: ${reconError.message}`);
+                        logger.warn('order_cancel_reconciliation_error', 'Error during reconciliation check', { shopifyOrderId, dealId, error: reconError.message });
                     }
 
                     // Determine Strategy
@@ -154,7 +147,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         // Must use Refund logic (Diff)
                         doRefund = true;
                         doCancel = false;
-                        console.log(`[CANCEL BLOCK] ⚠️ Order is FULFILLED. Forcing REFUND strategy (Diff Only). Cancel disabled.`);
+                        logger.info('order_cancel_strategy_refund_forced', 'Order is fulfilled, forcing REFUND strategy, cancel disabled', { shopifyOrderId, dealId });
                     } else {
                         // Unfulfilled
                         // Unfulfilled
@@ -166,7 +159,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                             doRefund = false; // Void/Cancel entire order (Refund not needed if unpaid)
                             doCancel = true;
                             if (isUnpaid && lossAction.action === 'REFUND') {
-                                console.log(`[CANCEL BLOCK] ℹ️ Action is REFUND but order is UNPAID. Switching to CANCEL strategy.`);
+                                logger.info('order_cancel_strategy_override', 'Action is REFUND but order is UNPAID, switching to CANCEL strategy', { shopifyOrderId, dealId, financialStatus: shopifyOrder.financial_status });
                             }
                         } else {
                             // Action === 'REFUND' AND Order is PAID/PARTIALLY_PAID
@@ -177,7 +170,6 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
 
                     // STEP 1: CALCULATE DIFF & REFUND
                     if (doRefund) {
-                        console.log(`[CANCEL BLOCK] 🔄 Calculating Item Diff for Refund...`);
 
                         // 1. Map Shopify Items (ID -> Qty)
                         const shopifyItemsMap = {};
@@ -211,7 +203,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                                         bitrixItemMap[Number(xmlId)] = (bitrixItemMap[Number(xmlId)] || 0) + row.QUANTITY;
                                     }
                                 } catch (e) {
-                                    console.warn(`[CANCEL BLOCK] Failed to resolve Bitrix Product ${row.PRODUCT_ID}`, e);
+                                    logger.warn('order_cancel_product_resolve_error', 'Failed to resolve Bitrix product', { dealId, productId: row.PRODUCT_ID, error: e.message });
                                 }
                             }
                         }
@@ -243,7 +235,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         }
 
                         if (itemsToRefund.length > 0) {
-                            console.log(`[CANCEL BLOCK] 📉 Refund Diff Calculated:`, itemsToRefund);
+                            logger.info('order_cancel_refund_diff', 'Refund diff calculated', { shopifyOrderId, dealId, itemsToRefund });
                             try {
                                 const refundResult = await createRefund(shopifyOrderId, {
                                     refundLineItems: itemsToRefund,
@@ -254,19 +246,19 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                                 if (refundResult.success) {
                                     console.log(`[CANCEL BLOCK] ✅ Refund successful (Mode: ${fullRefundCalc ? 'FULL' : 'PARTIAL'})`);
                                 } else {
-                                    console.error(`[CANCEL BLOCK] ❌ Refund failed: ${refundResult.error}`);
+                                    logger.warn('order_cancel_refund_failed', 'Refund failed', { shopifyOrderId, dealId, error: refundResult.error, mode: fullRefundCalc ? 'FULL' : 'PARTIAL' });
                                 }
                             } catch (refundErr) {
-                                console.error(`[CANCEL BLOCK] ❌ Refund Exception:`, refundErr);
+                                logger.error('order_cancel_refund_exception', 'Refund exception', { shopifyOrderId, dealId, error: refundErr.message });
                             }
                         } else {
-                            console.log(`[CANCEL BLOCK] ℹ️ No refund required (Shopify & Bitrix items match).`);
+                            logger.info('order_cancel_no_refund_needed', 'No refund required, Shopify and Bitrix items match', { shopifyOrderId, dealId });
                         }
                     }
 
                     // STEP 2: CANCEL ORDER
                     if (doCancel && canCancel) {
-                        console.log(`[CANCEL BLOCK] 🚫 Executing Full Order Cancel (Reason: ${lossAction.reason})...`);
+                        logger.info('order_cancel_executing', 'Executing full order cancel', { shopifyOrderId, dealId, reason: lossAction.reason });
                         const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
                         const mutation = `
                         mutation orderCancel($orderId: ID!, $restock: Boolean!) {
@@ -295,16 +287,16 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
 
                             // Check if order is already cancelled - treat as success
                             if (errorMessages.includes('already been canceled') || errorMessages.includes('already cancelled')) {
-                                console.log(`[CANCEL BLOCK] ℹ️ Order ${shopifyOrderId} is already cancelled, ignoring error.`);
+                                logger.info('order_already_cancelled', 'Order already cancelled, ignoring error', { shopifyOrderId, dealId });
                             } else {
-                                console.warn(`[CANCEL BLOCK] Cancel Warnings:`, cancelData.orderCancel.userErrors);
+                                logger.warn('order_cancel_graphql_warnings', 'Cancel warnings from GraphQL', { shopifyOrderId, dealId, userErrors: cancelData.orderCancel.userErrors });
                             }
                         } else {
                             console.log(`[CANCEL BLOCK] 🚫 Order Cancelled Successfully`);
                         }
                     } else {
                         if (!canCancel) {
-                            console.log(`[CANCEL BLOCK] ⏭️ Skipping Cancellation (Order Fulfilled or strategy)`);
+                            logger.info('order_cancel_skip', 'Skipping cancellation, order fulfilled or strategy override', { shopifyOrderId, dealId });
                         }
                     }
 
@@ -320,7 +312,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
             } catch (regularCancelError) {
                 // If it's the "already cancelled" error from inside callShopifyGraphQL (unlikely but possible if it throws)
                 if (regularCancelError.message && (regularCancelError.message.includes('already been canceled') || regularCancelError.message.includes('already cancelled'))) {
-                    console.log(`[CANCEL BLOCK] ℹ️ Order ${shopifyOrderId} was already cancelled (caught exception).`);
+                    logger.info('order_already_cancelled', 'Order already cancelled (caught exception)', { shopifyOrderId, dealId });
                     return {
                         handled: true,
                         success: true,
@@ -329,7 +321,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                     };
                 }
 
-                console.log(`[CANCEL BLOCK] Error during detail processing: ${regularCancelError.message}`);
+                logger.warn('order_cancel_detail_error', 'Error during detail processing', { shopifyOrderId, dealId, error: regularCancelError.message });
                 // Proceed to fallback?
             }
         }
@@ -340,15 +332,6 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
             const cancelResult = await cancelOrderByDealId(dealId);
 
             if (cancelResult.success) {
-                console.log(JSON.stringify({
-                    event: 'BITRIX_TO_SHOPIFY_TECHNICAL_ORDER_CANCEL_SUCCESS',
-                    requestId,
-                    dealId,
-                    stageId,
-                    shopifyOrderId: cancelResult.orderId,
-                    orderName: cancelResult.orderName,
-                    timestamp: new Date().toISOString()
-                }));
                 logger.info('order_cancelled', 'Order cancelled', { orderId: cancelResult.orderId, dealId });
 
                 return {
@@ -358,51 +341,20 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                     shopifyOrderId: cancelResult.orderId
                 };
             } else if (cancelResult.error === 'ORDER_NOT_FOUND') {
-                console.log(JSON.stringify({
-                    event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_SKIP',
-                    requestId,
-                    dealId,
-                    stageId,
-                    skip_reason: 'no_order_found',
-                    timestamp: new Date().toISOString()
-                }));
+                logger.info('order_cancel_skip_no_order', 'No order found to cancel', { dealId, stageId });
                 // No order to cancel - continue with normal flow
                 return { handled: false, reason: 'no_order_found' };
             } else {
-                console.log(JSON.stringify({
-                    event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_ERROR',
-                    requestId,
-                    dealId,
-                    stageId,
-                    error: cancelResult.error,
-                    message: cancelResult.message,
-                    timestamp: new Date().toISOString()
-                }));
+                logger.warn('order_cancel_error', 'Order cancel failed', { dealId, stageId, error: cancelResult.error, message: cancelResult.message });
                 return { handled: false, reason: 'cancel_failed', error: cancelResult.error };
             }
         } catch (techCancelError) {
-            console.log(JSON.stringify({
-                event: 'BITRIX_TO_SHOPIFY_TECHNICAL_ORDER_CANCEL_ERROR',
-                requestId,
-                dealId,
-                stageId,
-                error: techCancelError.message,
-                timestamp: new Date().toISOString()
-            }));
+            logger.error('order_technical_cancel_error', 'Technical order cancel error', { dealId, stageId, error: techCancelError.message });
             return { handled: false, reason: 'technical_cancel_error', error: techCancelError.message };
         }
 
     } catch (cancelError) {
-        console.error(`[BITRIX TO SHOPIFY] Error cancelling order for deal ${dealId}:`, cancelError);
-        console.log(JSON.stringify({
-            event: 'BITRIX_TO_SHOPIFY_ORDER_CANCEL_EXCEPTION',
-            requestId,
-            dealId,
-            stageId,
-            error: cancelError.message,
-            timestamp: new Date().toISOString()
-        }));
-        logger.error('order_cancel_failed', 'Cancel failed', { orderId: shopifyOrderId, error: cancelError.message });
+        logger.error('order_cancel_failed', 'Cancel failed', { orderId: shopifyOrderId, dealId, error: cancelError.message });
         return { handled: false, reason: 'exception', error: cancelError.message };
     }
 }

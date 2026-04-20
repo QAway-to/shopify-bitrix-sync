@@ -17,6 +17,7 @@ import { getOrder, callShopifyAdmin } from '../shopify/adminClient.js';
 import { updateShippingAddress } from '../shopify/address.js';
 import { callBitrix } from '../bitrix/client.js';
 import { BITRIX_DEAL_FIELDS } from '../shared/constants.js';
+import { logger } from '../logging/logger.js';
 
 /**
  * Parse Bitrix address string into Shopify address format
@@ -64,7 +65,7 @@ export function parseBitrixAddressString(addressString) {
             country: lastPart
         };
     } catch (error) {
-        console.warn(`[ADDRESS PARSE] Failed to parse: ${error.message}`);
+        logger.warn('address_parse_error', 'Failed to parse address string', { error: error.message });
         return null;
     }
 }
@@ -143,7 +144,7 @@ export async function handleAddressUpdate(shopifyOrderId, dealData, requestId, d
                             parsedAddress.country = countryMatch.name;
                         }
                     } catch (countryError) {
-                        console.warn(`[BITRIX ADDRESS] Failed to resolve country code: ${countryError.message}`);
+                        logger.warn('address_country_resolve_error', 'Failed to resolve country code', { error: countryError.message });
                     }
                 }
 
@@ -151,17 +152,7 @@ export async function handleAddressUpdate(shopifyOrderId, dealData, requestId, d
                 const currentAddress = shopifyOrder.shipping_address || {};
                 addressChanged = hasAddressChanged(parsedAddress, currentAddress);
 
-                console.log(JSON.stringify({
-                    event: 'AUTO_ADDRESS_CHECK',
-                    requestId,
-                    dealId,
-                    shopifyOrderId,
-                    bitrixAddress: bitrixAddressField,
-                    parsedAddress,
-                    addressChanged,
-                    deliveryPriceChanged,
-                    timestamp: new Date().toISOString()
-                }));
+                logger.info('address_update_check', 'Checking address update', { requestId, dealId, shopifyOrderId, bitrixAddress: bitrixAddressField, parsedAddress, addressChanged, deliveryPriceChanged });
 
                 // Always update if address is provided
                 const shouldUpdateAddress = addressChanged || Object.keys(parsedAddress).length > 0;
@@ -196,7 +187,7 @@ export async function handleAddressUpdate(shopifyOrderId, dealData, requestId, d
                                 }
                             }
                         } catch (contactError) {
-                            console.warn(`[BITRIX ADDRESS] Failed to enrich from contact: ${contactError.message}`);
+                            logger.warn('address_contact_enrich_error', 'Failed to enrich from contact', { error: contactError.message });
                         }
 
                         updatePayload.shipping_address = addressForShopify;
@@ -215,72 +206,30 @@ export async function handleAddressUpdate(shopifyOrderId, dealData, requestId, d
                         }];
                     }
 
-                    console.log(JSON.stringify({
-                        event: 'AUTO_ADDRESS_UPDATE_PAYLOAD',
-                        requestId,
-                        dealId,
-                        shopifyOrderId,
-                        updatePayloadKeys: Object.keys(updatePayload),
-                        timestamp: new Date().toISOString()
-                    }));
+                    logger.info('address_update_payload', 'Address update payload prepared', { requestId, dealId, shopifyOrderId, updatePayloadKeys: Object.keys(updatePayload) });
 
                     const correlationId = `${dealId}:${Date.now()}`;
                     addressUpdateAttempted = true;
                     const addressResult = await updateShippingAddress(shopifyOrderId, updatePayload, correlationId, null);
 
                     if (addressResult.success) {
-                        console.log(JSON.stringify({
-                            event: 'AUTO_ADDRESS_UPDATE_SUCCESS',
-                            requestId,
-                            dealId,
-                            shopifyOrderId,
-                            timestamp: new Date().toISOString()
-                        }));
+                        logger.info('address_update_success', 'Address updated successfully in Shopify', { requestId, dealId, shopifyOrderId });
                         return { updated: true, addressUpdated: true, priceUpdated: deliveryPriceChanged };
                     } else {
-                        console.log(JSON.stringify({
-                            event: 'AUTO_ADDRESS_UPDATE_ERROR',
-                            requestId,
-                            dealId,
-                            shopifyOrderId,
-                            error: addressResult.error,
-                            message: addressResult.message,
-                            timestamp: new Date().toISOString()
-                        }));
+                        logger.warn('address_update_error', 'Address update failed in Shopify', { requestId, dealId, shopifyOrderId, error: addressResult.error, message: addressResult.message });
                         return { updated: false, error: addressResult.error };
                     }
                 } else {
-                    console.log(JSON.stringify({
-                        event: 'AUTO_ADDRESS_NO_CHANGE',
-                        requestId,
-                        dealId,
-                        shopifyOrderId,
-                        timestamp: new Date().toISOString()
-                    }));
+                    logger.info('address_update_no_change', 'No address change detected', { requestId, dealId, shopifyOrderId });
                 }
             } else {
-                console.log(JSON.stringify({
-                    event: 'AUTO_ADDRESS_PARSE_FAILED',
-                    requestId,
-                    dealId,
-                    shopifyOrderId,
-                    bitrixAddress: bitrixAddressField,
-                    timestamp: new Date().toISOString()
-                }));
+                logger.warn('address_parse_failed', 'Failed to parse Bitrix address string', { requestId, dealId, shopifyOrderId, bitrixAddress: bitrixAddressField });
             }
         }
 
         // Handle delivery price only update (if address wasn't updated)
         if (deliveryPriceChanged && !addressUpdateAttempted) {
-            console.log(JSON.stringify({
-                event: 'AUTO_DELIVERY_PRICE_UPDATE_DETECTED',
-                requestId,
-                dealId,
-                shopifyOrderId,
-                newDeliveryPrice: deliveryPrice,
-                currentDeliveryPrice: currentShippingPrice,
-                timestamp: new Date().toISOString()
-            }));
+            logger.info('delivery_price_update_detected', 'Delivery price change detected', { requestId, dealId, shopifyOrderId, newDeliveryPrice: deliveryPrice, currentDeliveryPrice: currentShippingPrice });
 
             const correlationId = `${dealId}:${Date.now()}`;
             const currentShippingTitle = currentShippingLines.length > 0
@@ -296,24 +245,10 @@ export async function handleAddressUpdate(shopifyOrderId, dealData, requestId, d
             }, correlationId, null);
 
             if (addressResult.success) {
-                console.log(JSON.stringify({
-                    event: 'AUTO_DELIVERY_PRICE_UPDATE_SUCCESS',
-                    requestId,
-                    dealId,
-                    shopifyOrderId,
-                    newDeliveryPrice: deliveryPrice,
-                    timestamp: new Date().toISOString()
-                }));
+                logger.info('delivery_price_update_success', 'Delivery price updated successfully', { requestId, dealId, shopifyOrderId, newDeliveryPrice: deliveryPrice });
                 return { updated: true, addressUpdated: false, priceUpdated: true };
             } else {
-                console.log(JSON.stringify({
-                    event: 'AUTO_DELIVERY_PRICE_UPDATE_ERROR',
-                    requestId,
-                    dealId,
-                    shopifyOrderId,
-                    error: addressResult.error,
-                    timestamp: new Date().toISOString()
-                }));
+                logger.warn('delivery_price_update_error', 'Delivery price update failed', { requestId, dealId, shopifyOrderId, error: addressResult.error });
                 return { updated: false, error: addressResult.error };
             }
         }
@@ -321,7 +256,7 @@ export async function handleAddressUpdate(shopifyOrderId, dealData, requestId, d
         return { updated: false, reason: 'no_changes' };
 
     } catch (orderCheckError) {
-        console.warn(`[BITRIX TO SHOPIFY] Could not check order ${shopifyOrderId} for address update:`, orderCheckError.message);
+        logger.error('address_update_exception', 'Unexpected exception during address update', { shopifyOrderId, error: orderCheckError.message });
         return { updated: false, error: orderCheckError.message };
     }
 }

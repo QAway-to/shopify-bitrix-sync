@@ -47,7 +47,7 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
     if (brand && (Array.isArray(brand) || !isNaN(Number(brand)))) {
         const resolvedBrand = await resolveUserFieldListValue(UF_BRAND, brand);
         if (resolvedBrand) {
-            console.log(`[PRE-ORDER] Resolved Brand ID ${JSON.stringify(brand)} -> "${resolvedBrand}"`);
+            logger.info('preorder_brand_resolved', 'Brand ID resolved', { brandId: JSON.stringify(brand), brandName: resolvedBrand });
             brand = resolvedBrand;
         }
     }
@@ -62,20 +62,18 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         if (parts.length > 1) {
             parts.pop(); // Remove last part (size/variant suffix)
             model = parts.join(' - '); // Join back
-            console.log(`[PRE-ORDER] Stripped suffix from model input: "${dealData[UF_MODEL]}" -> "${model}"`);
+            logger.info('preorder_model_normalized', 'Model name normalized', { original: dealData[UF_MODEL], normalized: model });
         }
     }
 
-    console.log(JSON.stringify({
-        event: 'PRE_ORDER_FIELD_CHECK',
+    logger.info('preorder_field_check', 'Pre-order field check', {
         requestId,
         dealId,
         fields: { brand, model, size },
         availableUFKeys: Object.keys(dealData).filter(k => k.startsWith('UF_')),
         hasAllFields: !!(brand && model && size),
-        shopifyOrderId: currentShopifyOrderId,
-        timestamp: new Date().toISOString()
-    }));
+        shopifyOrderId: currentShopifyOrderId
+    });
 
     // Skip if already have linked order or missing required fields
     if (!brand || !model || !size) {
@@ -92,7 +90,7 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         const result = await findShopifyVariantByAttributes({ brand, model, size });
 
         if (!result || !result.variant) {
-            console.log(`[PRE-ORDER] ⚠️ No matching variant found for ${brand} ${model} ${size}`);
+            logger.warn('preorder_variant_not_found', 'No matching Shopify variant found', { brand, model, size });
             return { handled: true, success: false, reason: 'no_matching_variant' };
         }
 
@@ -115,7 +113,7 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         });
 
         if (!order || !order.id) {
-            console.error(`[PRE-ORDER] ❌ Failed to create Shopify order`);
+            logger.error('preorder_order_creation_failed', 'Failed to create Shopify order', { error: 'order or order.id missing' });
             return { handled: true, success: false, reason: 'order_creation_failed' };
         }
 
@@ -141,7 +139,7 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         const syncResult = await syncProductVariantOptimized(syncData, true);
 
         if (!syncResult.productId) {
-            console.error(`[PRE-ORDER] ❌ Failed to sync product to Bitrix`);
+            logger.error('preorder_product_sync_failed', 'Failed to sync product to Bitrix', { error: 'syncResult.productId missing' });
             return { handled: true, success: false, reason: 'product_sync_failed', newShopifyOrderId: newOrderId };
         }
 
@@ -179,7 +177,6 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         };
 
     } catch (err) {
-        console.error(`[PRE-ORDER] ❌ Error in reservation flow: ${err.message}`);
         logger.error('preorder_failed', 'Pre-order creation failed', { dealId, error: err.message });
         return { handled: true, success: false, error: err.message };
     }
