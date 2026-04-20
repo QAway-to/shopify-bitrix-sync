@@ -66,9 +66,12 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         const orderTags = Array.isArray(shopifyOrder.tags)
             ? shopifyOrder.tags
             : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
-        const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
+        const isBitrixCreatedOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
+        // BitrixUpdated = order is managed by Bitrix (written to at least once); broader than created-by
+        const isBitrixManagedOrder = isBitrixCreatedOrder
+            || orderTags.some(tag => String(tag) === 'BitrixUpdated');
 
-        if (!isBitrixOrder && !forceRemove) {
+        if (!isBitrixManagedOrder && !forceRemove) {
             return { synced: false, reason: 'not_bitrix_order' };
         }
 
@@ -81,7 +84,8 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         // ✅ GUARD: In forceRemove mode, if Bitrix has 0 rows, skip entirely.
         // This prevents race condition where Bitrix echo webhook arrives before
         // product rows are added to a newly created deal, causing all Shopify items to be deleted.
-        if (forceRemove && !isBitrixOrder && bitrixRows.length === 0) {
+        // Uses isBitrixCreatedOrder (narrower) — race condition only applies to freshly created deals.
+        if (forceRemove && !isBitrixCreatedOrder && bitrixRows.length === 0) {
             logger.info('quantity_sync_skip_force_remove', 'Sync skipped: forceRemove but no Bitrix rows', { dealId, shopifyOrderId });
             return { synced: false, reason: 'forceRemove_no_rows' };
         }
@@ -194,7 +198,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             });
             if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
                 // forceRemove mode: only process removals (qty→0), skip other changes
-                if (forceRemove && !isBitrixOrder && bitrixQty > 0) {
+                if (forceRemove && !isBitrixManagedOrder && bitrixQty > 0) {
                     continue;
                 }
                 // If order is refunded/partially_refunded/voided, do not push increases from Bitrix to Shopify.
