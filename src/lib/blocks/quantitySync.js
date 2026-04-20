@@ -128,6 +128,21 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         // Compare with Shopify and find differences
         const quantityChanges = [];
 
+        // Returns total quantity already fulfilled/shipped for a given line item id
+        function getFulfilledQtyForLineItem(order, lineItemId) {
+            if (!order.fulfillments || !Array.isArray(order.fulfillments)) return 0;
+            let total = 0;
+            for (const fulfillment of order.fulfillments) {
+                if (!Array.isArray(fulfillment.line_items)) continue;
+                for (const li of fulfillment.line_items) {
+                    if (String(li.id) === String(lineItemId)) {
+                        total += parseFloat(li.quantity ?? 0);
+                    }
+                }
+            }
+            return total;
+        }
+
         // Check existing Shopify items - match by variant_id first, then sku
         for (const lineItem of shopifyLineItems) {
             const shopifyVariantId = lineItem.variant_id ? String(lineItem.variant_id) : null;
@@ -156,7 +171,11 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             }
 
             const bitrixQty = matchedEntry ? matchedEntry.quantity : 0;
-            const shopifyQty = parseFloat(lineItem.current_quantity ?? lineItem.quantity ?? 0);
+            const fulfillable = lineItem.fulfillable_quantity != null
+                ? parseFloat(lineItem.fulfillable_quantity)
+                : parseFloat(lineItem.current_quantity ?? lineItem.quantity ?? 0);
+            const fulfilledForLine = getFulfilledQtyForLineItem(shopifyOrder, lineItem.id);
+            const shopifyQty = Math.min(fulfillable + fulfilledForLine, parseFloat(lineItem.quantity ?? 0));
 
             if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
                 // forceRemove mode: only process removals (qty→0), skip other changes
