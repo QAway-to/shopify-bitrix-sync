@@ -194,21 +194,6 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             const fulfilledForLine = getFulfilledQtyForLineItem(shopifyOrder, lineItem.id);
             const shopifyQty = Math.min(fulfillable + fulfilledForLine, parseFloat(lineItem.quantity ?? 0));
 
-            logger.info('quantity_sync_item_debug', 'Per-item match diagnostic', {
-                dealId, shopifyOrderId,
-                lineItemId: lineItem.id,
-                shopifyVariantId,
-                shopifySku,
-                lineItemQuantity: parseFloat(lineItem.quantity ?? 0),
-                matchStrategy: matchedEntry ? (matchKey === shopifyVariantId ? 'variant_id' : 'sku') : 'none',
-                matchedEntry: matchedEntry ? { variantId: matchedEntry.variantId, sku: matchedEntry.sku, quantity: matchedEntry.quantity } : null,
-                bitrixQty,
-                fulfillable,
-                fulfilledForLine,
-                shopifyQty,
-                rawFulfillableQuantity: lineItem.fulfillable_quantity,
-                rawCurrentQuantity: lineItem.current_quantity,
-            });
             if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
                 // forceRemove mode: only process removals (qty→0), skip other changes
                 if (forceRemove && !isBitrixManagedOrder && bitrixQty > 0) {
