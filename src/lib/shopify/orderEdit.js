@@ -61,37 +61,11 @@ export async function beginOrderEdit(orderId) {
       throw new Error('Order edit session failed: calculatedOrder is null (order may be closed or fulfilled)');
     }
 
-    // Fetch original line items (quantity + currentQuantity) for removed-offset compensation
-    let originalLineItems = [];
-    try {
-      const orderQuery = `
-        query getOrderLineItems($id: ID!) {
-          order(id: $id) {
-            lineItems(first: 250) {
-              edges {
-                node {
-                  id
-                  quantity
-                  currentQuantity
-                  variant { id legacyResourceId sku }
-                }
-              }
-            }
-          }
-        }
-      `;
-      const orderData = await callShopifyGraphQL(orderQuery, { id: orderGid });
-      originalLineItems = orderData?.order?.lineItems?.edges?.map(e => e.node) || [];
-    } catch (origErr) {
-      logger.warn('order_edit_original_items_fetch_failed', 'Could not fetch original line items; re-add offset compensation disabled', { orderId, error: origErr.message });
-    }
-
     logger.info('order_edit_begin', 'Order edit session started', { orderId });
     return {
       success: true,
       calculatedOrderId: calculatedOrder.id,
       lineItems: calculatedOrder.lineItems?.edges?.map(e => e.node) || [],
-      originalLineItems
     };
   } catch (error) {
     logger.error('order_edit_begin_error', 'Failed to begin order edit', { orderId, error: error.message });
@@ -401,7 +375,7 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
       return beginResult;
     }
 
-    const { calculatedOrderId, lineItems, originalLineItems } = beginResult;
+    const { calculatedOrderId, lineItems } = beginResult;
 
     // Step 2: Find line item by SKU (prefer active qty>0 over removed qty=0 duplicates)
     const targetLineItem = findLineItemBySku(lineItems, sku);
@@ -434,23 +408,7 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
         };
       }
 
-      // Shopify merges addVariantToEdit into the existing removed line item and applies
-      // the quantity delta relative to the original ordered qty, not current_quantity=0.
-      // Compensate: pass quantityToAdd + removedOffset to get the correct net visible qty.
-      const match = (originalLineItems || []).find(oli => {
-        const oliVariantId = oli.variant?.legacyResourceId || oli.variant?.id?.split('/').pop();
-        return oliVariantId === variantNumericId || (oli.variant?.sku && oli.variant.sku === sku);
-      });
-      const removedOffset = match ? Math.max(0, (match.quantity ?? 0) - (match.currentQuantity ?? 0)) : 0;
-      const compensatedQuantity = quantityToAdd + removedOffset;
-
-      if (removedOffset > 0) {
-        logger.info('order_edit_readd_compensation', 'Compensating removed offset for re-add', {
-          orderId, sku, quantityToAdd, removedOffset, compensatedQuantity
-        });
-      }
-
-      setResult = await addVariantToEdit(calculatedOrderId, variantNumericId, compensatedQuantity);
+      setResult = await addVariantToEdit(calculatedOrderId, variantNumericId, quantityToAdd);
     } else {
       setResult = await setLineItemQuantity(calculatedOrderId, targetLineItem.id, newQuantity);
     }
