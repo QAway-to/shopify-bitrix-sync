@@ -34,22 +34,6 @@ export async function beginOrderEdit(orderId) {
               }
             }
           }
-          order {
-            lineItems(first: 250) {
-              edges {
-                node {
-                  id
-                  quantity
-                  currentQuantity
-                  variant {
-                    id
-                    legacyResourceId
-                    sku
-                  }
-                }
-              }
-            }
-          }
         }
         userErrors {
           field
@@ -77,12 +61,37 @@ export async function beginOrderEdit(orderId) {
       throw new Error('Order edit session failed: calculatedOrder is null (order may be closed or fulfilled)');
     }
 
+    // Fetch original line items (quantity + currentQuantity) for removed-offset compensation
+    let originalLineItems = [];
+    try {
+      const orderQuery = `
+        query getOrderLineItems($id: ID!) {
+          order(id: $id) {
+            lineItems(first: 250) {
+              edges {
+                node {
+                  id
+                  quantity
+                  currentQuantity
+                  variant { id legacyResourceId sku }
+                }
+              }
+            }
+          }
+        }
+      `;
+      const orderData = await callShopifyGraphQL(orderQuery, { id: orderGid });
+      originalLineItems = orderData?.order?.lineItems?.edges?.map(e => e.node) || [];
+    } catch (origErr) {
+      logger.warn('order_edit_original_items_fetch_failed', 'Could not fetch original line items; re-add offset compensation disabled', { orderId, error: origErr.message });
+    }
+
     logger.info('order_edit_begin', 'Order edit session started', { orderId });
     return {
       success: true,
       calculatedOrderId: calculatedOrder.id,
       lineItems: calculatedOrder.lineItems?.edges?.map(e => e.node) || [],
-      originalLineItems: calculatedOrder.order?.lineItems?.edges?.map(e => e.node) || []
+      originalLineItems
     };
   } catch (error) {
     logger.error('order_edit_begin_error', 'Failed to begin order edit', { orderId, error: error.message });
