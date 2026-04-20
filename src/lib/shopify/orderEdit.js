@@ -6,6 +6,7 @@
 
 import { callShopifyGraphQL } from './adminClient.js';
 import { getVariantIdsBySkus } from './hold.js';
+import { logger } from '../logging/logger.js';
 
 /**
  * Begin order edit session
@@ -60,12 +61,14 @@ export async function beginOrderEdit(orderId) {
       throw new Error('Order edit session failed: calculatedOrder is null (order may be closed or fulfilled)');
     }
 
+    logger.info('order_edit_begin', 'Order edit session started', { orderId });
     return {
       success: true,
       calculatedOrderId: calculatedOrder.id,
       lineItems: calculatedOrder.lineItems?.edges?.map(e => e.node) || []
     };
   } catch (error) {
+    logger.error('order_edit_begin_error', 'Failed to begin order edit', { orderId, error: error.message });
     return {
       success: false,
       error: 'ORDER_EDIT_BEGIN_ERROR',
@@ -113,8 +116,10 @@ async function addVariantToEdit(calculatedOrderId, variantId, quantity) {
       throw new Error(`Shopify orderEditAddVariant userErrors: ${errorMessages}`);
     }
 
+    logger.info('order_edit_add_variant', 'Variant added to order edit', { calculatedOrderId, variantId, quantity });
     return { success: true };
   } catch (error) {
+    logger.error('order_edit_add_variant_error', 'Failed to add variant to order edit', { calculatedOrderId, variantId, quantity, error: error.message });
     return {
       success: false,
       error: 'ORDER_EDIT_ADD_VARIANT_ERROR',
@@ -160,8 +165,10 @@ export async function setLineItemQuantity(calculatedOrderId, lineItemId, quantit
       throw new Error(`Shopify orderEditSetQuantity userErrors: ${errorMessages}`);
     }
 
+    logger.info('order_edit_set_quantity', 'Line item quantity set', { calculatedOrderId, lineItemId, quantity });
     return { success: true };
   } catch (error) {
+    logger.error('order_edit_set_quantity_error', 'Failed to set line item quantity', { calculatedOrderId, lineItemId, quantity, error: error.message });
     return {
       success: false,
       error: 'ORDER_EDIT_SET_QUANTITY_ERROR',
@@ -224,6 +231,7 @@ export async function commitOrderEdit(calculatedOrderId) {
     // Extract numeric order ID
     const orderId = order.id.split('/').pop();
 
+    logger.info('order_edit_commit', 'Order edit committed', { calculatedOrderId, orderId, orderName: order.name });
     return {
       success: true,
       orderId: orderId,
@@ -233,6 +241,7 @@ export async function commitOrderEdit(calculatedOrderId) {
       currencyCode: order.totalPriceSet?.shopMoney?.currencyCode || 'EUR'
     };
   } catch (error) {
+    logger.error('order_edit_commit_error', 'Failed to commit order edit', { calculatedOrderId, error: error.message });
     return {
       success: false,
       error: 'ORDER_EDIT_COMMIT_ERROR',
@@ -250,6 +259,7 @@ export async function commitOrderEdit(calculatedOrderId) {
  */
 export async function addPositionToOrder(orderId, variantId, quantity) {
   if (!orderId) {
+    logger.warn('add_position_validation_error', 'addPositionToOrder called without orderId', {});
     return {
       success: false,
       error: 'MISSING_ORDER_ID',
@@ -258,6 +268,7 @@ export async function addPositionToOrder(orderId, variantId, quantity) {
   }
 
   if (!variantId) {
+    logger.warn('add_position_validation_error', 'addPositionToOrder called without variantId', { orderId });
     return {
       success: false,
       error: 'MISSING_VARIANT_ID',
@@ -266,6 +277,7 @@ export async function addPositionToOrder(orderId, variantId, quantity) {
   }
 
   if (!quantity || quantity <= 0) {
+    logger.warn('add_position_validation_error', 'addPositionToOrder called with invalid quantity', { orderId, variantId, quantity });
     return {
       success: false,
       error: 'INVALID_QUANTITY',
@@ -308,6 +320,7 @@ export async function addPositionToOrder(orderId, variantId, quantity) {
     const commitResult = await commitOrderEdit(calculatedOrderId);
     return commitResult;
   } catch (error) {
+    logger.error('add_position_error', 'Failed to add position to order', { orderId, variantId, quantity, error: error.message });
     return {
       success: false,
       error: 'ADD_POSITION_ERROR',
@@ -363,6 +376,7 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
     );
 
     if (!targetLineItem) {
+      logger.warn('increment_line_item_not_found', 'SKU not found in order for increment', { orderId, sku });
       return {
         success: false,
         error: 'LINE_ITEM_NOT_FOUND',
@@ -392,6 +406,7 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
       newQuantity: newQuantity
     };
   } catch (error) {
+    logger.error('increment_quantity_error', 'Failed to increment line item quantity', { orderId, sku, quantityToAdd, error: error.message });
     return {
       success: false,
       error: 'INCREMENT_QUANTITY_ERROR',
@@ -447,6 +462,7 @@ export async function decrementLineItemQuantity(orderId, sku, newQuantity) {
     );
 
     if (!targetLineItem) {
+      logger.warn('decrement_line_item_not_found', 'SKU not found in order for decrement', { orderId, sku });
       return {
         success: false,
         error: 'LINE_ITEM_NOT_FOUND',
@@ -474,6 +490,7 @@ export async function decrementLineItemQuantity(orderId, sku, newQuantity) {
       newQuantity: newQuantity
     };
   } catch (error) {
+    logger.error('decrement_quantity_error', 'Failed to decrement line item quantity', { orderId, sku, newQuantity, error: error.message });
     return {
       success: false,
       error: 'DECREMENT_QUANTITY_ERROR',

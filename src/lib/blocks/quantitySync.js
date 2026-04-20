@@ -217,6 +217,8 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         logger.info('quantity_sync_detected', 'Quantity changes detected', {
             dealId, shopifyOrderId, financialStatus, blockAddsDueToRefund,
             changesCount: quantityChanges.length,
+            bitrixItemsCount: bitrixQuantities.size,
+            shopifyItemsCount: shopifyLineItems.length,
             changes: quantityChanges,
         });
 
@@ -261,7 +263,11 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                     } else {
                         logger.warn('quantity_sync_increment_error', 'Failed to increment line item quantity', {
                             dealId, shopifyOrderId,
-                            sku: change.sku, error: incrementResult.error,
+                            sku: change.sku,
+                            error: incrementResult.error,
+                            message: incrementResult.message,
+                            previousQty: change.shopifyQty,
+                            newQty: change.newQty,
                         });
                     }
                 } else if (change.newQty < change.shopifyQty) {
@@ -286,7 +292,11 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                     } else {
                         logger.warn('quantity_sync_decrement_error', 'Failed to decrement line item quantity', {
                             dealId, shopifyOrderId,
-                            sku: change.sku, error: decrementResult.error,
+                            sku: change.sku,
+                            error: decrementResult.error,
+                            message: decrementResult.message,
+                            previousQty: change.shopifyQty,
+                            newQty: change.newQty,
                         });
                     }
                 }

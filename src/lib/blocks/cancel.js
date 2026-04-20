@@ -130,7 +130,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                                 notify: true
                             });
                             if (reconciliationResult.success) {
-                                console.log(`[CANCEL BLOCK] ✅ Reconciliation Refund created.`);
+                                logger.info('order_cancel_reconciliation_created', 'Reconciliation Refund created', { shopifyOrderId, dealId, overpayment, currency });
                             } else {
                                 logger.warn('order_cancel_reconciliation_failed', 'Reconciliation refund failed', { shopifyOrderId, dealId, error: reconciliationResult.error });
                             }
@@ -244,7 +244,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                                     notify: true
                                 });
                                 if (refundResult.success) {
-                                    console.log(`[CANCEL BLOCK] ✅ Refund successful (Mode: ${fullRefundCalc ? 'FULL' : 'PARTIAL'})`);
+                                    logger.info('order_cancel_refund_success', 'Refund successful', { shopifyOrderId, dealId, mode: fullRefundCalc ? 'FULL' : 'PARTIAL' });
                                 } else {
                                     logger.warn('order_cancel_refund_failed', 'Refund failed', { shopifyOrderId, dealId, error: refundResult.error, mode: fullRefundCalc ? 'FULL' : 'PARTIAL' });
                                 }
@@ -292,7 +292,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                                 logger.warn('order_cancel_graphql_warnings', 'Cancel warnings from GraphQL', { shopifyOrderId, dealId, userErrors: cancelData.orderCancel.userErrors });
                             }
                         } else {
-                            console.log(`[CANCEL BLOCK] 🚫 Order Cancelled Successfully`);
+                            logger.info('order_cancel_success', 'Order cancelled successfully', { shopifyOrderId, dealId });
                         }
                     } else {
                         if (!canCancel) {

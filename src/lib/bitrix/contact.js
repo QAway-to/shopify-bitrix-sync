@@ -121,9 +121,11 @@ export async function createContact(webhookUrl, contactData) {
       return contactId;
     }
 
+    logger.warn('contact_create_no_result', 'Bitrix contact.add returned no result', { email: contactData.email || null });
     return null;
   } catch (error) {
     console.error('[BITRIX CONTACT] Error creating contact:', error);
+    logger.error('contact_create_error', 'Failed to create Bitrix contact', { email: contactData.email || null, error: error.message });
     return null;
   }
 }
@@ -169,12 +171,15 @@ export async function updateContactAddress(webhookUrl, contactId, addressData) {
 
     if (result.result) {
       console.log(`[BITRIX CONTACT] ✅ Updated address for contact ${contactId}: "${addressString}"`);
+      logger.info('contact_address_updated', 'Contact address updated in Bitrix', { contactId });
       return true;
     }
 
+    logger.warn('contact_address_update_no_result', 'Bitrix contact.update returned no result for address', { contactId });
     return false;
   } catch (error) {
     console.error(`[BITRIX CONTACT] Error updating contact address:`, error);
+    logger.error('contact_address_update_error', 'Failed to update contact address in Bitrix', { contactId, error: error.message });
     return false;
   }
 }

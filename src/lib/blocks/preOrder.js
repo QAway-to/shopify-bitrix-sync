@@ -84,7 +84,7 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         return { handled: false, reason: 'order_already_exists' };
     }
 
-    console.log(`[PRE-ORDER] checking availability for: ${brand} ${model} ${size}`);
+    logger.info('preorder_availability_check', 'Checking availability', { dealId, brand, model, size });
 
     try {
         const result = await findShopifyVariantByAttributes({ brand, model, size });
@@ -95,7 +95,7 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         }
 
         const { variant, productTitle, description, images } = result;
-        console.log(`[PRE-ORDER] 🎯 Found matching variant: ${productTitle} - ${variant.title} (ID: ${variant.id})`);
+        logger.info('preorder_variant_found', 'Found matching variant', { dealId, productTitle, variantTitle: variant.title, variantId: variant.id });
 
         // Resolve Image URL
         let imageUrl = null;
@@ -119,8 +119,7 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
 
         const newOrderId = String(order.id);
         const newOrderName = order.name;
-        console.log(`[PRE-ORDER] ✅ Created pending order: ${newOrderId} (${newOrderName})`);
-        logger.info('preorder_created', 'Pre-order Shopify order created', { dealId, orderId: newOrderId, variantId: variant.id.split('/').pop() });
+        logger.info('preorder_created', 'Pre-order Shopify order created', { dealId, orderId: newOrderId, orderName: newOrderName, variantId: variant.id.split('/').pop() });
 
         // 2. Ensure Product exists in Bitrix (On-Demand)
         const syncData = {
@@ -144,8 +143,13 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
         }
 
         // 3. Add Product Row to Deal
-        const rowsResp = await callBitrix('crm.deal.productrows.get', { id: dealId });
-        const rows = rowsResp.result || [];
+        let rows = [];
+        try {
+            const rowsResp = await callBitrix('crm.deal.productrows.get', { id: dealId });
+            rows = rowsResp.result || [];
+        } catch (rowsErr) {
+            logger.error('preorder_get_product_rows_failed', 'Failed to fetch existing product rows', { dealId, error: rowsErr.message });
+        }
 
         rows.push({
             PRODUCT_ID: syncResult.productId,
@@ -154,20 +158,28 @@ export async function handlePreOrder(dealId, dealData, requestId, currentShopify
             PRODUCT_NAME: syncResult.productName || `${productTitle} - ${variant.title}`
         });
 
-        await callBitrix('crm.deal.productrows.set', { id: dealId, rows });
-        console.log(`[PRE-ORDER] ✅ Added product ${syncResult.productId} to deal ${dealId}`);
+        try {
+            await callBitrix('crm.deal.productrows.set', { id: dealId, rows });
+            logger.info('preorder_product_added', 'Added product to deal', { dealId, productId: syncResult.productId });
+        } catch (setRowsErr) {
+            logger.error('preorder_set_product_rows_failed', 'Failed to set product rows on deal', { dealId, productId: syncResult.productId, error: setRowsErr.message });
+        }
 
         // 4. Update Bitrix Deal with Shopify Order ID and Title (LAST STEP)
         // We do this LAST so that if it triggers a webhook re-entry, 
         // the deal already has product rows, preventing "Sync Quantities" from wiping the order.
-        await callBitrix('crm.deal.update', {
-            id: dealId,
-            fields: {
-                [UF_SHOPIFY_ORDER_ID]: newOrderId,
-                TITLE: newOrderName
-            }
-        });
-        console.log(`[PRE-ORDER] ✅ Updated Deal Title and Order ID: ${newOrderName}`);
+        try {
+            await callBitrix('crm.deal.update', {
+                id: dealId,
+                fields: {
+                    [UF_SHOPIFY_ORDER_ID]: newOrderId,
+                    TITLE: newOrderName
+                }
+            });
+            logger.info('preorder_deal_updated', 'Updated Deal Title and Order ID', { dealId, newOrderId, newOrderName });
+        } catch (updateErr) {
+            logger.error('preorder_deal_update_failed', 'Failed to update deal with order ID and title', { dealId, newOrderId, newOrderName, error: updateErr.message });
+        }
 
         return {
             handled: true,

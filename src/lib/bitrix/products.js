@@ -118,6 +118,7 @@ export async function createBitrixProduct(productData, catalogId = 14, sectionId
     }
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] ❌ Error creating product ${name}:`, error);
+    logger.error('product_create_error', 'Failed to create Bitrix product', { name, sku: sku || null, variant_id: variant_id || null, error: error.message });
     throw error;
   }
 }
@@ -145,6 +146,7 @@ export async function findProductByVariantId(variant_id) {
     return null;
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] Error finding product by variant_id ${variant_id}:`, error);
+    logger.warn('product_find_error', 'Failed to find product by variant_id', { variant_id: String(variant_id), error: error.message });
     return null;
   }
 }
@@ -169,6 +171,7 @@ export async function findProductBySku(sku) {
     return null;
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] Error finding product by SKU ${sku}:`, error);
+    logger.warn('product_find_error', 'Failed to find product by SKU', { sku, error: error.message });
     return null;
   }
 }
@@ -223,6 +226,7 @@ export async function updateBitrixProductFields(productId, fields) {
         return true;
       }
       console.error(`[BITRIX PRODUCTS] ⚠️ Unexpected response updating product ${productId}:`, response);
+      logger.warn('product_update_unexpected_response', 'Unexpected response from Bitrix when updating product', { productId, error: 'Unexpected response' });
       return false;
     }
 
@@ -230,6 +234,7 @@ export async function updateBitrixProductFields(productId, fields) {
 
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] ❌ Error updating product ${productId}:`, error);
+    logger.error('product_update_error', 'Failed to update Bitrix product fields', { productId, error: error.message });
     throw error;
   }
 }
@@ -325,6 +330,7 @@ export async function findProductIdByTitle(title) {
     return null;
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] ❌ Error searching Bitrix API for title "${title}":`, error);
+    logger.warn('product_title_search_error', 'Failed to find product by title', { title, error: error.message });
     return null;
   }
 }
@@ -356,6 +362,7 @@ export async function fetchAllBitrixProducts() {
     }
   } catch (error) {
     console.error('[BITRIX PRODUCTS] ❌ Error fetching products list:', error);
+    logger.error('product_list_fetch_error', 'Failed to fetch Bitrix product list', { error: error.message });
     throw error;
   }
   console.log(`[BITRIX PRODUCTS] ✅ Fetched ${all.length} products from Bitrix catalog`);
@@ -407,6 +414,7 @@ export async function getCurrentStock(productId, storeId = 2) {
     return 0;
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] Error getting current stock:`, error);
+    logger.warn('stock_fetch_error', 'Failed to get current stock from Bitrix', { productId, storeId, error: error.message });
     return 0;
   }
 }
@@ -503,6 +511,7 @@ export async function createIncomingDocument(documentData) {
     }
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] ❌ Error creating incoming document:`, error);
+    logger.error('incoming_document_error', 'Failed to create Bitrix incoming document', { productId: documentData.productId, amount: documentData.amount, error: error.message });
     throw error;
   }
 }
@@ -603,6 +612,7 @@ export async function createOutgoingDocument(documentData) {
     }
   } catch (error) {
     console.error(`[BITRIX PRODUCTS] ❌ Error creating outgoing document:`, error);
+    logger.error('outgoing_document_error', 'Failed to create Bitrix outgoing document', { productId: documentData.productId, amount: documentData.amount, error: error.message });
     throw error;
   }
 }

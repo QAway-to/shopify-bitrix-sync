@@ -101,6 +101,7 @@ export async function getProductVariantsByTitle(productTitle) {
     return allVariants;
   } catch (error) {
     console.error(`[SHOPIFY INVENTORY] Error fetching variants for "${productTitle}":`, error);
+    logger.error('inventory_fetch_by_title_error', 'Failed to fetch variants by product title', { productTitle, error: error.message });
     throw error;
   }
 }
@@ -163,6 +164,7 @@ export async function getProductVariantsByHandle(handle) {
     return allVariants;
   } catch (error) {
     console.error(`[SHOPIFY INVENTORY] Error fetching variants for handle "${handle}":`, error);
+    logger.error('inventory_fetch_by_handle_error', 'Failed to fetch variants by product handle', { handle, error: error.message });
     throw error;
   }
 }
@@ -280,12 +282,11 @@ export async function getAllProductsFromShopify() {
     }
 
     console.log(`[SHOPIFY INVENTORY] Fetched ${allProducts.length} product variants from Shopify`);
-    for (const p of allProducts) {
-      logger.info('inventory_updated', 'Inventory quantity changed', { variantId: p.variant_id, delta: null, newQty: p.qty });
-    }
+    logger.info('inventory_bulk_fetched', 'All Shopify product variants fetched', { variantCount: allProducts.length });
     return allProducts;
   } catch (error) {
     console.error(`[SHOPIFY INVENTORY] Error fetching all products from Shopify:`, error);
+    logger.error('inventory_bulk_fetch_error', 'Failed to fetch all products from Shopify', { error: error.message });
     throw error;
   }
 }
@@ -366,6 +367,7 @@ export async function getCategoryProducts(category) {
     return categoryProducts;
   } catch (error) {
     console.error(`[SHOPIFY INVENTORY] Error loading category products for ${category}:`, error);
+    logger.error('inventory_category_load_error', 'Failed to load category products', { category, error: error.message });
     throw error;
   }
 }

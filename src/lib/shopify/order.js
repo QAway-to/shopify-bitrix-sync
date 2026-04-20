@@ -303,6 +303,7 @@ export async function findExistingOrderByDealId(dealId) {
     return null;
   } catch (error) {
     console.warn(`[FIND EXISTING ORDER] Error searching for order by tag ${tag}:`, error.message);
+    logger.warn('order_find_by_deal_error', 'Error searching for order by deal tag', { dealId, tag, error: error.message });
     return null; // Don't block order creation if search fails
   }
 }
@@ -356,6 +357,7 @@ export async function cancelOrderById(orderId, refund = false) {
       // Check if order is already cancelled - treat as success
       if (errorMessages.includes('already been canceled') || errorMessages.includes('already cancelled')) {
         console.log(`[CANCEL ORDER] ℹ️ Order ${orderId} is already cancelled, treating as success`);
+        logger.info('order_already_cancelled', 'Order was already cancelled', { orderId: String(orderId) });
         return {
           success: true,
           orderId: String(orderId),
@@ -369,6 +371,7 @@ export async function cancelOrderById(orderId, refund = false) {
       throw new Error(`Shopify orderCancel userErrors: ${errorMessages}`);
     }
 
+    logger.info('order_cancelled', 'Shopify order cancelled', { orderId: String(orderId), refund });
     console.log(`[CANCEL ORDER] ✅ Successfully cancelled order ${orderId}. Restock: YES, Refund: ${refund ? 'YES' : 'NO'}`);
     if (job?.id) {
       console.log(`[CANCEL ORDER] Job ID: ${job.id}`);
@@ -384,6 +387,7 @@ export async function cancelOrderById(orderId, refund = false) {
     };
   } catch (error) {
     console.error(`[CANCEL ORDER] Error cancelling order ${orderId}:`, error);
+    logger.error('order_cancel_error', 'Failed to cancel Shopify order', { orderId: String(orderId), error: error.message });
     return {
       success: false,
       error: 'ORDER_CANCEL_ERROR',
@@ -407,6 +411,7 @@ export async function cancelOrderByDealId(dealId) {
   const existingOrderId = await findExistingOrderByDealId(dealId);
   if (!existingOrderId) {
     console.log(`[CANCEL ORDER] No technical order found for deal ${dealId}`);
+    logger.warn('order_not_found_for_cancel', 'No order found for deal cancellation', { dealId });
     return {
       success: false,
       error: 'ORDER_NOT_FOUND',
@@ -454,6 +459,7 @@ export async function cancelOrderByDealId(dealId) {
       throw new Error(`Shopify orderCancel userErrors: ${errorMessages}`);
     }
 
+    logger.info('order_cancelled_by_deal', 'Shopify order cancelled by deal', { dealId, orderId: existingOrderId });
     console.log(`[CANCEL ORDER] ✅ Successfully cancelled order ${existingOrderId} for deal ${dealId}. Restock: YES (+1 to Inventory)`);
     if (job?.id) {
       console.log(`[CANCEL ORDER] Job ID: ${job.id}`);
@@ -468,6 +474,7 @@ export async function cancelOrderByDealId(dealId) {
     };
   } catch (error) {
     console.error(`[CANCEL ORDER] Error cancelling order ${existingOrderId} for deal ${dealId}:`, error);
+    logger.error('order_cancel_by_deal_error', 'Failed to cancel order by deal', { dealId, orderId: existingOrderId, error: error.message });
     return {
       success: false,
       error: 'ORDER_CANCEL_ERROR',
@@ -1012,6 +1019,7 @@ export async function addTagToOrder(orderId, tag) {
 
     // Check if tag already exists
     if (existingTags.includes(tag)) {
+      logger.info('order_tag_already_exists', 'Tag already present on order', { orderId: String(orderId), tag });
       return {
         success: true,
         orderId: String(orderId),
@@ -1036,6 +1044,7 @@ export async function addTagToOrder(orderId, tag) {
       })
     });
 
+    logger.info('order_tag_added', 'Tag added to Shopify order', { orderId: String(orderId), tag });
     return {
       success: true,
       orderId: String(orderId),
@@ -1044,6 +1053,7 @@ export async function addTagToOrder(orderId, tag) {
       tags: updatedTags
     };
   } catch (error) {
+    logger.error('order_tag_add_error', 'Failed to add tag to Shopify order', { orderId: String(orderId), tag, error: error.message });
     return {
       success: false,
       error: 'TAG_ADD_ERROR',

@@ -33,6 +33,7 @@ export async function getFulfillmentOrders(orderId) {
 
     // Handle authentication errors (401/403)
     if (httpStatus === 401 || httpStatus === 403) {
+      logger.error('fulfillment_auth_error', 'Shopify auth error fetching fulfillment orders', { orderId, httpStatus, error: error.message });
       return {
         success: false,
         httpStatus,
@@ -45,6 +46,7 @@ export async function getFulfillmentOrders(orderId) {
     }
 
     // Other errors (network, 404, 500, etc.)
+    logger.error('fulfillment_fetch_error', 'Error fetching fulfillment orders', { orderId, httpStatus: httpStatus || 500, error: error.message });
     return {
       success: false,
       httpStatus: httpStatus || 500,
@@ -70,6 +72,7 @@ export async function getFulfillments(orderId) {
     const order = response.order || {};
     const fulfillments = order.fulfillments || [];
 
+    logger.info('fulfillment_fetched', 'Fulfillments fetched for order', { orderId, count: fulfillments.length });
     return {
       success: true,
       httpStatus: 200,
@@ -88,6 +91,7 @@ export async function getFulfillments(orderId) {
 
     // Handle authentication errors (401/403)
     if (httpStatus === 401 || httpStatus === 403) {
+      logger.error('fulfillment_auth_error', 'Shopify auth error fetching fulfillments', { orderId, httpStatus, error: error.message });
       return {
         success: false,
         httpStatus,
@@ -100,6 +104,7 @@ export async function getFulfillments(orderId) {
     }
 
     // Other errors (network, 404, 500, etc.)
+    logger.error('fulfillment_fetch_error', 'Error fetching fulfillments', { orderId, httpStatus: httpStatus || 500, error: error.message });
     return {
       success: false,
       httpStatus: httpStatus || 500,
@@ -143,6 +148,7 @@ export async function getOrderForFulfillment(orderId) {
     // Check if order is already fully fulfilled
     const isFullyFulfilled = fulfillments.some(f => f.status === 'success') && totalFulfillableQuantity === 0;
 
+    logger.info('order_for_fulfillment_fetched', 'Order fetched for fulfillment check', { orderId, totalFulfillableQuantity, isFullyFulfilled });
     return {
       success: true,
       httpStatus: 200,
@@ -159,6 +165,7 @@ export async function getOrderForFulfillment(orderId) {
     const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : null;
 
     if (httpStatus === 401 || httpStatus === 403) {
+      logger.error('order_fulfillment_auth_error', 'Shopify auth error fetching order for fulfillment', { orderId, httpStatus, error: error.message });
       return {
         success: false,
         httpStatus,
@@ -167,6 +174,7 @@ export async function getOrderForFulfillment(orderId) {
       };
     }
 
+    logger.error('order_fulfillment_fetch_error', 'Error fetching order for fulfillment', { orderId, httpStatus: httpStatus || 500, error: error.message });
     return {
       success: false,
       httpStatus: httpStatus || 500,
@@ -186,6 +194,7 @@ export async function getOrderForFulfillment(orderId) {
 export async function createFulfillment(orderId, lineItems, options = {}) {
   try {
     if (!lineItems || lineItems.length === 0) {
+      logger.warn('fulfillment_no_line_items', 'createFulfillment called with no line items', { orderId });
       return {
         success: false,
         error: 'SHOPIFY_FULFILLMENT_CREATE_ERROR',
@@ -216,6 +225,7 @@ export async function createFulfillment(orderId, lineItems, options = {}) {
     try {
       fulfillmentOrdersResponse = await callShopifyAdmin(`/orders/${orderId}/fulfillment_orders.json`);
     } catch (fulfillmentOrdersError) {
+      logger.error('fulfillment_orders_fetch_error', 'Failed to fetch fulfillment orders', { orderId, error: fulfillmentOrdersError.message });
       return {
         success: false,
         error: 'SHOPIFY_FULFILLMENT_ORDERS_FETCH_ERROR',
@@ -226,6 +236,7 @@ export async function createFulfillment(orderId, lineItems, options = {}) {
 
     const fulfillmentOrders = fulfillmentOrdersResponse.fulfillment_orders || [];
     if (fulfillmentOrders.length === 0) {
+      logger.warn('fulfillment_no_fulfillment_orders', 'No fulfillment orders found for order', { orderId });
       return {
         success: false,
         error: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
@@ -241,6 +252,7 @@ export async function createFulfillment(orderId, lineItems, options = {}) {
     );
 
     if (openFulfillmentOrders.length === 0) {
+      logger.warn('fulfillment_no_open_orders', 'No open fulfillment orders found', { orderId });
       return {
         success: false,
         error: 'SHOPIFY_FULFILLMENT_CREATE_SKIP',
@@ -407,6 +419,7 @@ export async function getPostFulfillmentState(orderId) {
     const statusMatch = error.message.match(/\((\d+)\)/);
     const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : null;
 
+    logger.error('post_fulfillment_state_error', 'Failed to get post-fulfillment state', { orderId, httpStatus: httpStatus || 500, error: error.message });
     return {
       success: false,
       httpStatus: httpStatus || 500,
@@ -487,6 +500,7 @@ export async function updateFulfillmentTracking(orderId, fulfillmentId, options 
       body: JSON.stringify(updatePayload)
     });
 
+    logger.info('fulfillment_tracking_updated', 'Fulfillment tracking updated', { orderId, fulfillmentId, trackingNumber: response.fulfillment?.tracking_number });
     return {
       success: true,
       httpStatus: 200,
@@ -500,6 +514,7 @@ export async function updateFulfillmentTracking(orderId, fulfillmentId, options 
     const statusMatch = error.message.match(/\((\d+)\)/);
     const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : null;
 
+    logger.error('fulfillment_tracking_update_error', 'Failed to update fulfillment tracking', { orderId, fulfillmentId, httpStatus: httpStatus || 500, error: error.message });
     return {
       success: false,
       httpStatus: httpStatus || 500,
@@ -546,6 +561,7 @@ export async function updateOrderFulfillmentForDelivery(orderId, options = {}) {
     // Update fulfillment with tracking
     return await updateFulfillmentTracking(orderId, fulfillment.id, options);
   } catch (error) {
+    logger.error('order_fulfillment_update_error', 'Failed to update order fulfillment for delivery', { orderId, error: error.message });
     return {
       success: false,
       error: 'SHOPIFY_FULFILLMENT_UPDATE_ERROR',
@@ -642,14 +658,17 @@ export async function fulfillAllOpenItems(orderId, options = {}) {
       body: JSON.stringify(payload)
     });
 
+    const itemsFulfilled = lineItemsByFulfillmentOrder.reduce((acc, fo) => acc + fo.fulfillment_order_line_items.length, 0);
+    logger.info('fulfill_all_completed', 'All open items fulfilled', { orderId, fulfillmentId: response.fulfillment?.id, itemsFulfilled });
     return {
       success: true,
       fulfillment: response.fulfillment,
       fulfillmentId: response.fulfillment?.id,
-      itemsFulfilled: lineItemsByFulfillmentOrder.reduce((acc, fo) => acc + fo.fulfillment_order_line_items.length, 0)
+      itemsFulfilled
     };
 
   } catch (error) {
+    logger.error('fulfill_all_error', 'Failed to fulfill all open items', { orderId, error: error.message });
     return {
       success: false,
       error: 'FULFILL_ALL_ERROR',

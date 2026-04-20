@@ -40,6 +40,7 @@ export async function callBitrixAPI(webhookUrl, method, params = {}) {
     return result;
   } catch (error) {
     console.error(`[BITRIX API] Error calling ${method}:`, error);
+    logger.error('bitrix_api_error', 'callBitrixAPI error', { method, error: error.message });
     throw error;
   }
 }
@@ -207,6 +208,7 @@ export async function callBitrix(method, payload = {}) {
       message: error.message,
       payload: payload
     });
+    logger.error('bitrix_api_error', 'Bitrix API network or unknown error', { method, errorType: error.errorType, error: error.message });
     throw error;
   }
 }
