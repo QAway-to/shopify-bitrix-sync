@@ -34,6 +34,22 @@ export async function beginOrderEdit(orderId) {
               }
             }
           }
+          order {
+            lineItems(first: 250) {
+              edges {
+                node {
+                  id
+                  quantity
+                  currentQuantity
+                  variant {
+                    id
+                    legacyResourceId
+                    sku
+                  }
+                }
+              }
+            }
+          }
         }
         userErrors {
           field
@@ -65,7 +81,8 @@ export async function beginOrderEdit(orderId) {
     return {
       success: true,
       calculatedOrderId: calculatedOrder.id,
-      lineItems: calculatedOrder.lineItems?.edges?.map(e => e.node) || []
+      lineItems: calculatedOrder.lineItems?.edges?.map(e => e.node) || [],
+      originalLineItems: calculatedOrder.order?.lineItems?.edges?.map(e => e.node) || []
     };
   } catch (error) {
     logger.error('order_edit_begin_error', 'Failed to begin order edit', { orderId, error: error.message });
@@ -329,6 +346,13 @@ export async function addPositionToOrder(orderId, variantId, quantity) {
   }
 }
 
+function findLineItemBySku(lineItems, sku) {
+  return (
+    lineItems.find(item => item.variant && item.variant.sku === sku && item.quantity > 0)
+    || lineItems.find(item => item.variant && item.variant.sku === sku)
+  );
+}
+
 /**
  * Increment quantity for line item by SKU
  * @param {string|number} orderId - Shopify order ID
@@ -368,12 +392,10 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
       return beginResult;
     }
 
-    const { calculatedOrderId, lineItems } = beginResult;
+    const { calculatedOrderId, lineItems, originalLineItems } = beginResult;
 
-    // Step 2: Find line item by SKU
-    const targetLineItem = lineItems.find(item => 
-      item.variant && item.variant.sku === sku
-    );
+    // Step 2: Find line item by SKU (prefer active qty>0 over removed qty=0 duplicates)
+    const targetLineItem = findLineItemBySku(lineItems, sku);
 
     if (!targetLineItem) {
       logger.warn('increment_line_item_not_found', 'SKU not found in order for increment', { orderId, sku });
@@ -391,7 +413,6 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
     // Step 4: Set new quantity or re-add removed item
     let setResult;
     if (currentQuantity === 0) {
-      // Item was removed; use addVariantToEdit instead of setLineItemQuantity
       const variantNumericId = targetLineItem.variant?.legacyResourceId
         || targetLineItem.variant?.id?.split('/').pop();
 
@@ -404,7 +425,23 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
         };
       }
 
-      setResult = await addVariantToEdit(calculatedOrderId, variantNumericId, quantityToAdd);
+      // Shopify merges addVariantToEdit into the existing removed line item and applies
+      // the quantity delta relative to the original ordered qty, not current_quantity=0.
+      // Compensate: pass quantityToAdd + removedOffset to get the correct net visible qty.
+      const match = (originalLineItems || []).find(oli => {
+        const oliVariantId = oli.variant?.legacyResourceId || oli.variant?.id?.split('/').pop();
+        return oliVariantId === variantNumericId || (oli.variant?.sku && oli.variant.sku === sku);
+      });
+      const removedOffset = match ? Math.max(0, (match.quantity ?? 0) - (match.currentQuantity ?? 0)) : 0;
+      const compensatedQuantity = quantityToAdd + removedOffset;
+
+      if (removedOffset > 0) {
+        logger.info('order_edit_readd_compensation', 'Compensating removed offset for re-add', {
+          orderId, sku, quantityToAdd, removedOffset, compensatedQuantity
+        });
+      }
+
+      setResult = await addVariantToEdit(calculatedOrderId, variantNumericId, compensatedQuantity);
     } else {
       setResult = await setLineItemQuantity(calculatedOrderId, targetLineItem.id, newQuantity);
     }
@@ -470,10 +507,8 @@ export async function decrementLineItemQuantity(orderId, sku, newQuantity) {
 
     const { calculatedOrderId, lineItems } = beginResult;
 
-    // Step 2: Find line item by SKU
-    const targetLineItem = lineItems.find(item => 
-      item.variant && item.variant.sku === sku
-    );
+    // Step 2: Find line item by SKU (prefer active qty>0 over removed qty=0 duplicates)
+    const targetLineItem = findLineItemBySku(lineItems, sku);
 
     if (!targetLineItem) {
       logger.warn('decrement_line_item_not_found', 'SKU not found in order for decrement', { orderId, sku });
