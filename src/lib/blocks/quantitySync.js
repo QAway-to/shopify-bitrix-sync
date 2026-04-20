@@ -156,7 +156,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             }
 
             const bitrixQty = matchedEntry ? matchedEntry.quantity : 0;
-            const shopifyQty = parseFloat(lineItem.quantity || 0);
+            const shopifyQty = parseFloat(lineItem.current_quantity ?? lineItem.quantity ?? 0);
 
             if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
                 // forceRemove mode: only process removals (qty→0), skip other changes
