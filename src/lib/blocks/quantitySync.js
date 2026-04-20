@@ -131,6 +131,9 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
 
         // Compare with Shopify and find differences
         const quantityChanges = [];
+        // Shopify may have duplicate line items for the same variant/SKU (from prior Order Edit re-adds).
+        // Bitrix has a unique entry per match key — first Shopify match wins.
+        const processedBitrixKeys = new Set();
 
         // Returns total quantity already fulfilled/shipped for a given line item id
         function getFulfilledQtyForLineItem(order, lineItemId) {
@@ -172,6 +175,16 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                         break;
                     }
                 }
+            }
+
+            if (matchedEntry && matchKey) {
+                if (processedBitrixKeys.has(matchKey)) {
+                    logger.info('quantity_sync_duplicate_skip', 'Duplicate Shopify line item skipped', {
+                        dealId, shopifyOrderId, lineItemId: lineItem.id, matchKey, shopifyVariantId, shopifySku,
+                    });
+                    continue;
+                }
+                processedBitrixKeys.add(matchKey);
             }
 
             const bitrixQty = matchedEntry ? matchedEntry.quantity : 0;
