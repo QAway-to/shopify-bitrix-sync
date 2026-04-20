@@ -388,12 +388,26 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
     const currentQuantity = targetLineItem.quantity || 0;
     const newQuantity = currentQuantity + quantityToAdd;
 
-    // Step 4: Set new quantity
-    const setResult = await setLineItemQuantity(
-      calculatedOrderId,
-      targetLineItem.id,
-      newQuantity
-    );
+    // Step 4: Set new quantity or re-add removed item
+    let setResult;
+    if (currentQuantity === 0) {
+      // Item was removed; use addVariantToEdit instead of setLineItemQuantity
+      const variantNumericId = targetLineItem.variant?.legacyResourceId
+        || targetLineItem.variant?.id?.split('/').pop();
+
+      if (!variantNumericId) {
+        logger.warn('increment_line_item_no_variant', 'Cannot re-add removed line item: variant ID unavailable', { orderId, sku });
+        return {
+          success: false,
+          error: 'LINE_ITEM_NO_VARIANT',
+          message: `Cannot re-add SKU ${sku}: variant GID is null`
+        };
+      }
+
+      setResult = await addVariantToEdit(calculatedOrderId, variantNumericId, quantityToAdd);
+    } else {
+      setResult = await setLineItemQuantity(calculatedOrderId, targetLineItem.id, newQuantity);
+    }
     if (!setResult.success) {
       return setResult;
     }
@@ -471,6 +485,15 @@ export async function decrementLineItemQuantity(orderId, sku, newQuantity) {
     }
 
     const currentQuantity = targetLineItem.quantity || 0;
+
+    if (currentQuantity === 0) {
+      if (newQuantity === 0) {
+        logger.info('decrement_line_item_already_removed', 'Line item already removed (qty=0), no action needed', { orderId, sku });
+        return { success: true, alreadyRemoved: true, previousQuantity: 0, newQuantity: 0 };
+      }
+      logger.warn('decrement_line_item_removed_state', 'Cannot set quantity on removed line item', { orderId, sku, newQuantity });
+      return { success: false, error: 'LINE_ITEM_REMOVED', message: `Cannot set quantity on removed SKU ${sku}` };
+    }
 
     // Step 3: Set new quantity
     const setResult = await setLineItemQuantity(
