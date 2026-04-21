@@ -187,7 +187,6 @@ export async function callBitrix(method, payload = {}) {
       throw error;
     }
 
-    logger.info('bitrix_api_call', 'Bitrix API success', { method, duration_ms: Date.now() - _startMs });
     return result;
   } catch (error) {
     // If error already has errorType, re-throw as is

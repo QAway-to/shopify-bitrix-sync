@@ -75,8 +75,6 @@ class SyncProgressAdapter {
             message: `Starting sync for sections: ${sectionIds.join(', ')}`,
             sectionIds
         });
-        logger.info('sync_run_started', 'Sync run started', { requestId, type: 'inventory_sync' });
-
         saveProgress(this.data);
     }
 
@@ -169,11 +167,6 @@ class SyncProgressAdapter {
 
         this.data.currentRun = null;
         saveProgress(this.data);
-        logger.info('sync_run_completed', 'Sync run completed', {
-            requestId: this.data.lastRun.requestId,
-            processed: results.totals?.updated ?? 0,
-            failed: results.totals?.errors ?? 0
-        });
     }
 
     /**
