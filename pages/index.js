@@ -1,11 +1,8 @@
 import Head from 'next/head';
 import { useState, useEffect } from 'react';
 import WebhookInfo from '../src/components/shopify/WebhookInfo';
-import EventsList from '../src/components/shopify/EventsList';
-import BitrixEventsList from '../src/components/bitrix/EventsList';
-import SuccessOperationsList from '../src/components/success/SuccessOperationsList';
-import DataPreview from '../src/components/shopify/DataPreview';
 import LockedSection from '../src/components/common/LockedSection';
+import DealSyncMonitor from '../src/components/monitor/DealSyncMonitor';
 
 export default function ShopifyPage() {
   const [events, setEvents] = useState([]);
@@ -693,6 +690,7 @@ export default function ShopifyPage() {
                 onClick={handleDownloadLogs}
                 className="btn"
                 style={{
+                  display: 'none',
                   background: '#7c3aed',
                   border: 'none',
                   padding: '8px 16px',
@@ -1061,140 +1059,16 @@ export default function ShopifyPage() {
           )}
         </div>
 
-        {/* Events Lists - Three fixed-width columns: Shopify → Bitrix, Bitrix → Shopify, Success Operations */}
+        {/* Daily Sync Monitor */}
         <div style={{
-          display: 'flex',
-          gap: '20px',
-          marginTop: '20px',
-          alignItems: 'flex-start'
+          marginTop: '30px',
+          padding: '20px',
+          background: 'rgba(15, 23, 42, 0.6)',
+          borderRadius: '12px',
+          border: '1px solid rgba(59, 130, 246, 0.2)'
         }}>
-          {/* Left column: Shopify → Bitrix - Fixed width */}
-          <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-            <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem', flexShrink: 0 }}>
-              Shopify → Middleware → Bitrix
-            </h3>
-            <LockedSection isGuestMode={!isControlsUnlocked} title="Login to view events">
-              <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-                <EventsList
-                  events={events}
-                  selectedEvents={selectedEvents}
-                  onSelectionChange={setSelectedEvents}
-                  onPreviewEvent={handlePreviewEvent}
-                  isLoading={isInitialFetch && isLoading}
-                />
-              </div>
-            </LockedSection>
-          </div>
-
-          {/* Middle column: Bitrix → Shopify - Fixed width */}
-          <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-            <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem', flexShrink: 0 }}>
-              Bitrix → Middleware → Shopify
-            </h3>
-            {sendToShopifyResult && (
-              <div style={{
-                padding: '16px',
-                borderRadius: '8px',
-                marginBottom: '20px',
-                background: sendToShopifyResult.success ? 'rgba(5, 150, 105, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                border: `1px solid ${sendToShopifyResult.success ? '#059669' : '#ef4444'}`,
-                color: sendToShopifyResult.success ? '#059669' : '#ef4444',
-                flexShrink: 0
-              }}>
-                <div style={{ fontWeight: 600, marginBottom: '8px' }}>
-                  {sendToShopifyResult.message}
-                </div>
-                {sendToShopifyResult.total !== undefined && (
-                  <div style={{ fontSize: '0.9rem', marginTop: '8px', opacity: 0.9 }}>
-                    Total: {sendToShopifyResult.total} | Success: {sendToShopifyResult.successful || 0} | Errors: {sendToShopifyResult.failed || 0}
-                  </div>
-                )}
-                {sendToShopifyResult.details && sendToShopifyResult.details.length > 0 && (
-                  <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: `1px solid ${sendToShopifyResult.success ? 'rgba(5, 150, 105, 0.3)' : 'rgba(239, 68, 68, 0.3)'}` }}>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: '8px' }}>Детали ошибок:</div>
-                    {sendToShopifyResult.details.map((err, idx) => (
-                      <div key={idx} style={{
-                        fontSize: '0.8rem',
-                        marginBottom: '6px',
-                        padding: '6px 8px',
-                        background: 'rgba(0, 0, 0, 0.2)',
-                        borderRadius: '4px'
-                      }}>
-                        {err.eventId && <strong>Event ID {err.eventId}: </strong>}
-                        {err.error || err.message || 'Unknown error'}
-                        {err.details && <div style={{ marginTop: '4px', opacity: 0.8 }}>{err.details}</div>}
-                        {err.status && <div style={{ marginTop: '4px', opacity: 0.8 }}>HTTP {err.status}</div>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            <LockedSection isGuestMode={!isControlsUnlocked} title="Login to view events">
-              <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-                <BitrixEventsList
-                  events={bitrixEvents}
-                  selectedEvents={selectedBitrixEvents}
-                  onSelectionChange={setSelectedBitrixEvents}
-                  onPreviewEvent={handleBitrixPreviewEvent}
-                  isLoading={isInitialFetch && isBitrixLoading}
-                />
-              </div>
-            </LockedSection>
-          </div>
-
-          {/* Right column: Success Operations - Fixed width */}
-          <div style={{ width: '400px', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-            <h3 style={{ color: '#f1f5f9', marginBottom: '16px', fontSize: '1.2rem', flexShrink: 0 }}>
-              Success Operations (Testing)
-            </h3>
-            <LockedSection isGuestMode={!isControlsUnlocked} title="Login to view operations">
-              <div style={{ flex: '1 1 auto', minHeight: 0 }}>
-                <SuccessOperationsList
-                  operations={successOperations}
-                  selectedOperations={selectedSuccessOperations}
-                  onSelectionChange={setSelectedSuccessOperations}
-                  onPreviewOperation={handleSuccessPreviewOperation}
-                  isLoading={isInitialFetch && isSuccessLoading}
-                />
-              </div>
-            </LockedSection>
-          </div>
+          <DealSyncMonitor />
         </div>
-
-        {/* Data Preview - Wide block below */}
-        {(previewData && previewEvent) || (bitrixPreviewData && bitrixPreviewEvent) || (previewData && successPreviewOperation) ? (
-          <LockedSection isGuestMode={!isControlsUnlocked} title="Login to view preview">
-            <div style={{ marginTop: '20px', width: '100%' }}>
-              {previewData && previewEvent && !successPreviewOperation && (
-                <DataPreview
-                  shopifyData={previewData.shopifyData}
-                  bitrixData={previewData.bitrixData}
-                  eventId={previewEvent.id}
-                  onSendEvent={handleSendPreviewEvent}
-                  isSending={isSending}
-                />
-              )}
-              {bitrixPreviewData && bitrixPreviewEvent && (
-                <DataPreview
-                  shopifyData={bitrixPreviewData.shopifyData}
-                  bitrixData={bitrixPreviewData.bitrixData}
-                  eventId={bitrixPreviewEvent.dealId || bitrixPreviewEvent.id}
-                  eventType="bitrix"
-                />
-              )}
-              {previewData && successPreviewOperation && (
-                <DataPreview
-                  shopifyData={previewData.shopifyData}
-                  bitrixData={previewData.bitrixData}
-                  eventId={successPreviewOperation.dealId || successPreviewOperation.id}
-                  eventType="success"
-                  operation={successPreviewOperation}
-                />
-              )}
-            </div>
-          </LockedSection>
-        ) : null}
       </main>
     </>
   );
