@@ -2464,6 +2464,23 @@ async function handleDealUpdate(dealId, requestId) {
 
           // Get line items from Shopify
           const shopifyLineItems = shopifyOrder.line_items || [];
+          console.log(JSON.stringify({
+            event: 'quantity_sync_shopify_snapshot',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            itemsCount: shopifyLineItems.length,
+            items: shopifyLineItems.map(li => ({
+              sku: li.sku,
+              variantId: li.variant_id,
+              lineItemId: li.id,
+              quantity: li.quantity,
+              title: li.title,
+              fulfillmentStatus: li.fulfillment_status,
+              fulfillableQuantity: li.fulfillable_quantity,
+            })),
+            timestamp: new Date().toISOString(),
+          }));
 
           // Build map of identifier -> { quantity, isVariantId } from Bitrix
           // Priority: XML_ID (Shopify variant ID) first, CODE (SKU) as fallback
@@ -2482,15 +2499,84 @@ async function handleDealUpdate(dealId, requestId) {
                   if (xmlId && xmlId.toString().trim() !== '') {
                     // XML_ID = Shopify variant ID: addPositionToOrder uses it directly
                     bitrixQuantities.set(xmlId.toString().trim(), { quantity, isVariantId: true });
+                    console.log(JSON.stringify({
+                      event: 'quantity_sync_bitrix_row_resolved',
+                      requestId,
+                      dealId,
+                      shopifyOrderId,
+                      productId,
+                      resolvedBy: 'xml_id',
+                      identifier: xmlId.toString().trim(),
+                      quantity,
+                      productName: product.NAME || product.name || null,
+                      timestamp: new Date().toISOString(),
+                    }));
                   } else if (code && code.trim() !== '') {
                     // Fallback: CODE (SKU) — addPositionToOrder resolves via getVariantIdsBySkus
                     bitrixQuantities.set(code.trim(), { quantity, isVariantId: false });
+                    console.log(JSON.stringify({
+                      event: 'quantity_sync_bitrix_row_resolved',
+                      requestId,
+                      dealId,
+                      shopifyOrderId,
+                      productId,
+                      resolvedBy: 'sku',
+                      identifier: code.trim(),
+                      quantity,
+                      productName: product.NAME || product.name || null,
+                      timestamp: new Date().toISOString(),
+                    }));
+                  } else {
+                    console.warn(JSON.stringify({
+                      event: 'quantity_sync_bitrix_row_sku_missing',
+                      requestId,
+                      dealId,
+                      shopifyOrderId,
+                      productId,
+                      availableKeys: typeof product === 'object' && product !== null ? Object.keys(product) : [],
+                      timestamp: new Date().toISOString(),
+                    }));
                   }
                 }
               } catch (productError) {
                 console.warn(`[SYNC QUANTITIES] Failed to get product ${productId}: ${productError.message}`);
               }
             }
+          }
+
+          console.log(JSON.stringify({
+            event: 'quantity_sync_bitrix_items',
+            requestId,
+            dealId,
+            shopifyOrderId,
+            items: Array.from(bitrixQuantities.entries()).map(([identifier, { quantity, isVariantId }]) => ({
+              identifier,
+              quantity,
+              isVariantId,
+            })),
+            timestamp: new Date().toISOString(),
+          }));
+
+          const orphans = shopifyLineItems.filter(li => {
+            const varId = li.variant_id ? String(li.variant_id).trim() : null;
+            const sku = li.sku ? String(li.sku).trim() : null;
+            if (!varId && !sku) return false;
+            return !bitrixQuantities.has(varId) && !bitrixQuantities.has(sku);
+          });
+          if (orphans.length > 0) {
+            console.warn(JSON.stringify({
+              event: 'quantity_sync_shopify_orphans',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              orphans: orphans.map(li => ({
+                sku: li.sku,
+                variantId: li.variant_id,
+                lineItemId: li.id,
+                quantity: li.quantity,
+              })),
+              timestamp: new Date().toISOString(),
+            }));
           }
 
           // Compare with Shopify and find differences.
@@ -2550,14 +2636,25 @@ async function handleDealUpdate(dealId, requestId) {
             const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
 
             let hasChanges = false;
+            let added = 0, incremented = 0, decremented = 0, errorsCount = 0;
 
             for (const change of quantityChanges) {
               try {
                 if (change.isNew) {
                   // Add new position
+                  console.log(JSON.stringify({
+                    event: 'quantity_sync_add_intent',
+                    requestId,
+                    dealId,
+                    shopifyOrderId,
+                    identifier: change.sku,
+                    quantity: change.newQty,
+                    timestamp: new Date().toISOString(),
+                  }));
                   const addResult = await addPositionToOrder(shopifyOrderId, change.sku, change.newQty);
                   if (addResult.success) {
                     hasChanges = true;
+                    added++;
                     console.log(JSON.stringify({
                       event: 'QUANTITY_SYNC_ADD_SUCCESS',
                       requestId,
@@ -2565,9 +2662,11 @@ async function handleDealUpdate(dealId, requestId) {
                       shopifyOrderId,
                       sku: change.sku,
                       quantity: change.newQty,
+                      shopifyOrderName: addResult.orderName || null,
                       timestamp: new Date().toISOString()
                     }));
                   } else {
+                    errorsCount++;
                     console.log(JSON.stringify({
                       event: 'QUANTITY_SYNC_ADD_ERROR',
                       requestId,
@@ -2586,6 +2685,7 @@ async function handleDealUpdate(dealId, requestId) {
                   const incrementResult = await incrementLineItemQuantity(shopifyOrderId, change.sku, incrementQty);
                   if (incrementResult.success) {
                     hasChanges = true;
+                    incremented++;
                     console.log(JSON.stringify({
                       event: 'QUANTITY_SYNC_INCREMENT_SUCCESS',
                       requestId,
@@ -2597,6 +2697,7 @@ async function handleDealUpdate(dealId, requestId) {
                       timestamp: new Date().toISOString()
                     }));
                   } else {
+                    errorsCount++;
                     console.log(JSON.stringify({
                       event: 'QUANTITY_SYNC_INCREMENT_ERROR',
                       requestId,
@@ -2614,6 +2715,7 @@ async function handleDealUpdate(dealId, requestId) {
                   const decrementResult = await decrementLineItemQuantity(shopifyOrderId, change.sku, change.newQty);
                   if (decrementResult.success) {
                     hasChanges = true;
+                    decremented++;
                     console.log(JSON.stringify({
                       event: 'QUANTITY_SYNC_DECREMENT_SUCCESS',
                       requestId,
@@ -2625,6 +2727,7 @@ async function handleDealUpdate(dealId, requestId) {
                       timestamp: new Date().toISOString()
                     }));
                   } else {
+                    errorsCount++;
                     console.log(JSON.stringify({
                       event: 'QUANTITY_SYNC_DECREMENT_ERROR',
                       requestId,
@@ -2639,6 +2742,7 @@ async function handleDealUpdate(dealId, requestId) {
                   }
                 }
               } catch (changeError) {
+                errorsCount++;
                 console.log(JSON.stringify({
                   event: 'QUANTITY_SYNC_CHANGE_ERROR',
                   requestId,
@@ -2650,6 +2754,20 @@ async function handleDealUpdate(dealId, requestId) {
                 }));
               }
             }
+
+            console.log(JSON.stringify({
+              event: 'quantity_sync_complete',
+              requestId,
+              dealId,
+              shopifyOrderId,
+              added,
+              incremented,
+              decremented,
+              orphansCount: orphans.length,
+              errorsCount,
+              hasChanges,
+              timestamp: new Date().toISOString(),
+            }));
 
             // ✅ STEP C2.1: Clean up stub order if real products were added
             // If order was a stub (has BITRIX_STUB tag) and now has real products, remove stub marker
@@ -2806,6 +2924,7 @@ async function handleDealUpdate(dealId, requestId) {
               shopifyOrderId,
               bitrixItemsCount: bitrixQuantities.size,
               shopifyItemsCount: shopifyLineItems.length,
+              orphansCount: orphans.length,
               timestamp: new Date().toISOString()
             }));
           }
