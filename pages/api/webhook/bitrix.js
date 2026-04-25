@@ -802,11 +802,7 @@ async function handleMWAction(dealId, requestId, dealData, shopifyOrderId) {
   try {
     actionData = JSON.parse(mwActionRaw);
   } catch (parseError) {
-        logger.info('MW_ACTION_PARSE_ERROR', 'MW_ACTION_PARSE_ERROR', {requestId,
-      dealId,
-      shopifyOrderId,
-      error: parseError.message,
-      rawValue: mwActionRaw.substring(0, 200), // Log first 200 chars});
+    logger.warn('MW_ACTION_PARSE_ERROR', 'Failed to parse mwAction JSON', { requestId, dealId, shopifyOrderId, error: parseError.message, rawValue: mwActionRaw.substring(0, 200) });
     return { success: false, reason: 'parse_error', error: parseError.message };
   }
 
