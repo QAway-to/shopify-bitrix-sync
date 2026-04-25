@@ -395,27 +395,19 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   } else {
     categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
 
-    // ✅ NEW CHECK: Inventory-based pre-order detection (Site only)
-    // If ANY item has inventory_quantity <= 0, consider it a pre-order (Category 8)
-    // even if tags are missing.
-    try {
-      if (order.line_items && Array.isArray(order.line_items)) {
-        for (const item of order.line_items) {
-          if (item.variant_id) {
-            const meta = await getShopifyProductMetadata(item.variant_id);
-            // If inventory is 0 or less, it's a pre-order (unless it's the very last item sold, but strictly <=0 usually implies pre-order flow or overselling)
-            // User requested: "quantity <= 0" -> Pre-order (site)
-            logger.info('category_inventory_check', 'Inventory check for pre-order detection', { sku: item.sku, variantId: item.variant_id, inventoryQuantity: meta?.inventory_quantity ?? null, orderId: order.id });
-            if (meta && meta.inventory_quantity < 0) {
-              logger.info('category_inventory_preorder', 'Item has negative inventory — marking as pre-order', { sku: item.sku, variantId: item.variant_id, inventoryQuantity: meta.inventory_quantity, orderId: order.id });
-              categoryId = BITRIX_CONFIG.CATEGORY_PREORDER; // Force Category 8
-              break; // One pre-order item is enough to move the whole deal
-            }
-          }
+    // ✅ Fulfillable quantity check: if any line item cannot be fulfilled → pre-order
+    // fulfillable_quantity = 0 means no stock available (genuine pre-order / oversell)
+    // fulfillable_quantity > 0 means item is reserved and can be shipped (stock order)
+    if (!hasPreorderTag && order.line_items && Array.isArray(order.line_items)) {
+      for (const item of order.line_items) {
+        const fulfillableQty = Number(item.fulfillable_quantity ?? item.quantity ?? 1);
+        logger.info('category_fulfillable_check', 'Fulfillable quantity check for pre-order detection', { sku: item.sku, variantId: item.variant_id, fulfillableQuantity: fulfillableQty, orderId: order.id });
+        if (fulfillableQty === 0) {
+          logger.info('category_fulfillable_preorder', 'Item has zero fulfillable quantity — marking as pre-order', { sku: item.sku, variantId: item.variant_id, orderId: order.id });
+          categoryId = BITRIX_CONFIG.CATEGORY_PREORDER;
+          break;
         }
       }
-    } catch (invError) {
-      console.error(`[ORDER MAPPER] ⚠️ Error checking inventory for pre-order logic:`, invError);
     }
   }
 
