@@ -405,8 +405,9 @@ export async function mapShopifyOrderToBitrixDeal(order) {
             const meta = await getShopifyProductMetadata(item.variant_id);
             // If inventory is 0 or less, it's a pre-order (unless it's the very last item sold, but strictly <=0 usually implies pre-order flow or overselling)
             // User requested: "quantity <= 0" -> Pre-order (site)
-            if (meta && meta.inventory_quantity <= 0) {
-              console.log(`[ORDER MAPPER] 📉 Inventory check: Item ${item.sku} has qty ${meta.inventory_quantity}. Marking as PRE-ORDER (Site).`);
+            logger.info('category_inventory_check', 'Inventory check for pre-order detection', { sku: item.sku, variantId: item.variant_id, inventoryQuantity: meta?.inventory_quantity ?? null, orderId: order.id });
+            if (meta && meta.inventory_quantity < 0) {
+              logger.info('category_inventory_preorder', 'Item has negative inventory — marking as pre-order', { sku: item.sku, variantId: item.variant_id, inventoryQuantity: meta.inventory_quantity, orderId: order.id });
               categoryId = BITRIX_CONFIG.CATEGORY_PREORDER; // Force Category 8
               break; // One pre-order item is enough to move the whole deal
             }
