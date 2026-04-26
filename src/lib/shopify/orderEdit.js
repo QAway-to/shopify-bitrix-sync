@@ -336,6 +336,14 @@ function findLineItemBySku(lineItems, sku) {
   );
 }
 
+function findLineItemByVariantId(lineItems, variantId) {
+  const id = String(variantId);
+  return (
+    lineItems.find(item => item.variant && (item.variant.legacyResourceId === id || item.variant.id?.split('/').pop() === id) && item.quantity > 0)
+    || lineItems.find(item => item.variant && (item.variant.legacyResourceId === id || item.variant.id?.split('/').pop() === id))
+  );
+}
+
 /**
  * Increment quantity for line item by SKU
  * @param {string|number} orderId - Shopify order ID
@@ -343,7 +351,7 @@ function findLineItemBySku(lineItems, sku) {
  * @param {number} quantityToAdd - Quantity to add (will be added to current quantity)
  * @returns {Promise<Object>} Result with updated order data
  */
-export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
+export async function incrementLineItemQuantity(orderId, sku, quantityToAdd, variantId = null) {
   if (!orderId) {
     return {
       success: false,
@@ -352,11 +360,11 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
     };
   }
 
-  if (!sku) {
+  if (!sku && !variantId) {
     return {
       success: false,
       error: 'MISSING_SKU',
-      message: 'SKU is required'
+      message: 'SKU or variant ID is required'
     };
   }
 
@@ -377,8 +385,9 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
 
     const { calculatedOrderId, lineItems } = beginResult;
 
-    // Step 2: Find line item by SKU (prefer active qty>0 over removed qty=0 duplicates)
-    const targetLineItem = findLineItemBySku(lineItems, sku);
+    // Step 2: Find line item — variant_id first (handles empty-sku POS items), then SKU
+    const targetLineItem = (variantId && findLineItemByVariantId(lineItems, variantId))
+      || findLineItemBySku(lineItems, sku);
 
     if (!targetLineItem) {
       logger.warn('increment_line_item_not_found', 'SKU not found in order for increment', { orderId, sku });
@@ -440,7 +449,7 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd) {
  * @param {number} newQuantity - New quantity (will replace current quantity)
  * @returns {Promise<Object>} Result with updated order data
  */
-export async function decrementLineItemQuantity(orderId, sku, newQuantity) {
+export async function decrementLineItemQuantity(orderId, sku, newQuantity, variantId = null) {
   if (!orderId) {
     return {
       success: false,
@@ -449,11 +458,11 @@ export async function decrementLineItemQuantity(orderId, sku, newQuantity) {
     };
   }
 
-  if (!sku) {
+  if (!sku && !variantId) {
     return {
       success: false,
       error: 'MISSING_SKU',
-      message: 'SKU is required'
+      message: 'SKU or variant ID is required'
     };
   }
 
@@ -474,8 +483,9 @@ export async function decrementLineItemQuantity(orderId, sku, newQuantity) {
 
     const { calculatedOrderId, lineItems } = beginResult;
 
-    // Step 2: Find line item by SKU (prefer active qty>0 over removed qty=0 duplicates)
-    const targetLineItem = findLineItemBySku(lineItems, sku);
+    // Step 2: Find line item — variant_id first (handles empty-sku POS items), then SKU
+    const targetLineItem = (variantId && findLineItemByVariantId(lineItems, variantId))
+      || findLineItemBySku(lineItems, sku);
 
     if (!targetLineItem) {
       logger.warn('decrement_line_item_not_found', 'SKU not found in order for decrement', { orderId, sku });

@@ -2122,9 +2122,11 @@ async function handleDealUpdate(dealId, requestId) {
                     bitrixQuantities.set(xmlId.toString().trim(), { quantity, isVariantId: true });
                     logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: 'xml_id', identifier: xmlId.toString().trim(), quantity, productName: product.NAME || product.name || null });
                   } else if (code && code.trim() !== '') {
-                    // Fallback: CODE (SKU) — addPositionToOrder resolves via getVariantIdsBySkus
-                    bitrixQuantities.set(code.trim(), { quantity, isVariantId: false });
-                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: 'sku', identifier: code.trim(), quantity, productName: product.NAME || product.name || null });
+                    // Numeric-only CODE (≥10 digits) means variant_id was stored as fallback when Shopify sku was empty.
+                    // Monitor 'code_as_variant_id' log events — if EAN barcodes are ever used as SKUs this heuristic would misclassify them.
+                    const isVariantIdCode = /^\d{10,}$/.test(code.trim());
+                    bitrixQuantities.set(code.trim(), { quantity, isVariantId: isVariantIdCode });
+                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: isVariantIdCode ? 'code_as_variant_id' : 'sku', identifier: code.trim(), quantity, productName: product.NAME || product.name || null });
                   } else {
                     logger.warn('quantity_sync_bitrix_row_sku_missing', 'Bitrix product has no XML_ID or CODE', { requestId, dealId, shopifyOrderId, productId, availableKeys: typeof product === 'object' && product !== null ? Object.keys(product) : [] });
                   }
@@ -2167,7 +2169,7 @@ async function handleDealUpdate(dealId, requestId) {
             if (!sku) continue;
 
             if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
-              quantityChanges.push({ sku, bitrixQty, shopifyQty, newQty: bitrixQty });
+              quantityChanges.push({ sku, lineVariantId, bitrixQty, shopifyQty, newQty: bitrixQty });
             }
           }
 
@@ -2180,6 +2182,7 @@ async function handleDealUpdate(dealId, requestId) {
             if (!existsInShopify && bitrixQty > 0) {
               quantityChanges.push({
                 sku: identifier, // numeric variantId string or SKU — addPositionToOrder handles both
+                lineVariantId: null,
                 bitrixQty,
                 shopifyQty: 0,
                 newQty: bitrixQty,
@@ -2215,7 +2218,7 @@ async function handleDealUpdate(dealId, requestId) {
                 } else if (change.newQty > change.shopifyQty) {
                   // Increment quantity
                   const incrementQty = change.newQty - change.shopifyQty;
-                  const incrementResult = await incrementLineItemQuantity(shopifyOrderId, change.sku, incrementQty);
+                  const incrementResult = await incrementLineItemQuantity(shopifyOrderId, change.sku, incrementQty, change.lineVariantId);
                   if (incrementResult.success) {
                     hasChanges = true;
                     incremented++;
@@ -2226,7 +2229,7 @@ async function handleDealUpdate(dealId, requestId) {
                   }
                 } else if (change.newQty < change.shopifyQty) {
                   // Decrement quantity
-                  const decrementResult = await decrementLineItemQuantity(shopifyOrderId, change.sku, change.newQty);
+                  const decrementResult = await decrementLineItemQuantity(shopifyOrderId, change.sku, change.newQty, change.lineVariantId);
                   if (decrementResult.success) {
                     hasChanges = true;
                     decremented++;
