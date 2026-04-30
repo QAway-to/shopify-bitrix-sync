@@ -172,7 +172,6 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
     // Implementation: currently we only support reverting to pending (Unpaid -> Pending enforcement).
 
     // CASE 2: Pending -> Paid (GraphQL Mutation)
-    console.log(`[PAYMENT DEBUG 777] Checking conditions: finalDesired='${finalDesired}', current='${current}', check=${finalDesired === 'paid' && current !== 'paid'}`);
     if (finalDesired === 'paid' && current !== 'paid') {
       // ✅ GUARD 1: Don't re-mark as paid if order is already refunded/cancelled (race condition protection)
       // When Shopify refund fires → handleOrderUpdated updates Bitrix → Bitrix webhook fires back here.
@@ -214,7 +213,7 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
           return { success: true, skipped: true, reason: 'real_gateway_payment_exists', gateway: realTx?.gateway };
         }
       } catch (txError) {
-        console.warn(`[PAYMENT SYNC] Could not check transactions (non-blocking): ${txError?.message}`);
+        logger.warn('payment_tx_check_error', 'Could not check transactions (non-blocking)', { shopifyOrderId, dealId, error: txError?.message });
         // Non-blocking: if we can't check, proceed with caution (existing behavior)
       }
 
@@ -261,18 +260,17 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
 
         if (payload?.userErrors && payload.userErrors.length > 0) {
           transactionError = JSON.stringify(payload.userErrors);
-          console.error(`[PAYMENT SYNC] GraphQL Errors: ${transactionError}`);
+          logger.error('payment_mark_paid_graphql_error', 'GraphQL userErrors on orderMarkAsPaid', { shopifyOrderId, dealId, errors: payload.userErrors }, { entityType: 'order', entityId: shopifyOrderId });
         } else if (!payload?.order) {
           transactionError = "Unknown GraphQL error (missing order in response)";
         } else {
-          // Success
           const orderData = payload.order;
-          console.log(`[PAYMENT SYNC] SUCCESS! Order ${orderData?.name} (ID: ${orderData?.id}) is now ${orderData?.displayFinancialStatus}. Fully Paid: ${orderData?.fullyPaid}`);
+          logger.info('payment_mark_paid_success', 'Order marked as paid via GraphQL', { shopifyOrderId, dealId, orderName: orderData?.name, displayStatus: orderData?.displayFinancialStatus, fullyPaid: orderData?.fullyPaid }, { entityType: 'order', entityId: shopifyOrderId });
         }
 
       } catch (err) {
         transactionError = err?.message || String(err);
-        console.error(`[PAYMENT SYNC] Failed to execute orderMarkAsPaid for ${shopifyOrderId}:`, err);
+        logger.error('payment_mark_paid_error', 'Failed to execute orderMarkAsPaid', { shopifyOrderId, dealId, error: err?.message }, { entityType: 'order', entityId: shopifyOrderId });
       }
 
       // Re-fetch to verify
@@ -331,8 +329,7 @@ async function syncShopifyPaymentStatusFromBitrix(dealData, shopifyOrderId, requ
 
     return { success: true, skipped: true, reason: 'no_change_needed', desired: finalDesired, current };
   } catch (err) {
-    console.warn(`[PAYMENT STATUS SYNC] Failed: ${err?.message || String(err)}`);
-        logger.info('PAYMENT_STATUS_SYNC_ERROR', 'PAYMENT_STATUS_SYNC_ERROR', {requestId,
+        logger.error('payment_status_sync_error', 'Payment status sync failed', {requestId,
       dealId,
       shopifyOrderId,
       error: err?.message || String(err),
@@ -422,7 +419,7 @@ function parseBitrixAddressString(addressString) {
 
     return parsed;
   } catch (error) {
-    console.warn(`[BITRIX ADDRESS PARSE] Failed to parse address string: ${error.message}`);
+    logger.warn('address_parse_error', 'Failed to parse Bitrix address string', { addressString, error: error.message });
     // Fallback: return as address1
     return {
       address1: addressString.split('|')[0].trim()
@@ -637,7 +634,7 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
     const price = parseFloat(priceRaw) || 0;
 
     if (price <= 0) {
-      console.error(`[PRODUCT CREATE MODE] Price is 0 or not set in UF_CRM_1768869578330`);
+      logger.error('product_create_missing_price', 'Price is 0 or not set in UF_CRM_1768869578330', { dealId, priceRaw }, { entityType: 'deal', entityId: dealId });
       return {
         success: false,
         error: 'Price not set in UF_CRM_1768869578330',
@@ -679,7 +676,7 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
     });
 
     if (!shopifyResult.success) {
-      console.error(`[PRODUCT CREATE MODE] Failed to create product in Shopify: ${shopifyResult.error}`);
+      logger.error('product_create_shopify_failed', 'Failed to create product in Shopify', { dealId, error: shopifyResult.error }, { entityType: 'deal', entityId: dealId });
       return {
         success: false,
         error: shopifyResult.error,
@@ -706,7 +703,7 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
 
       if (existingProductResp.result && existingProductResp.result.length > 0) {
         bitrixProductId = existingProductResp.result[0].ID;
-        console.log(`[PRODUCT CREATE MODE] Bitrix product already exists: ID ${bitrixProductId}`);
+        logger.info('product_create_bitrix_exists', 'Bitrix product already exists', { dealId, bitrixProductId, variantId }, { entityType: 'deal', entityId: dealId });
       } else {
         // Create new product in Bitrix
         const { getSectionIdBySku } = await import('../../../src/lib/shared/constants.js');
@@ -732,11 +729,11 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
 
         if (createProductResp.result) {
           bitrixProductId = createProductResp.result;
-          console.log(`[PRODUCT CREATE MODE] ✅ Bitrix product created: ID ${bitrixProductId}`);
+          logger.info('product_create_bitrix_created', 'Bitrix product created', { dealId, bitrixProductId, variantId, sku }, { entityType: 'deal', entityId: dealId });
         }
       }
     } catch (bitrixError) {
-      console.warn(`[PRODUCT CREATE MODE] Bitrix product creation failed (non-blocking): ${bitrixError.message}`);
+      logger.warn('product_create_bitrix_error', 'Bitrix product creation failed (non-blocking)', { dealId, error: bitrixError.message }, { entityType: 'deal', entityId: dealId });
     }
 
     // Step 3: Update deal's product rows with the new product
@@ -751,9 +748,9 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
             QUANTITY: 1
           }]
         });
-        console.log(`[PRODUCT CREATE MODE] ✅ Deal product rows updated with product ${bitrixProductId}`);
+        logger.info('product_create_rows_updated', 'Deal product rows updated', { dealId, bitrixProductId }, { entityType: 'deal', entityId: dealId });
       } catch (rowsError) {
-        console.warn(`[PRODUCT CREATE MODE] Failed to update deal product rows: ${rowsError.message}`);
+        logger.warn('product_create_rows_error', 'Failed to update deal product rows', { dealId, bitrixProductId, error: rowsError.message }, { entityType: 'deal', entityId: dealId });
       }
     }
 
@@ -777,7 +774,7 @@ async function handleProductCreateMode(dealId, dealData, requestId) {
     };
 
   } catch (error) {
-    console.error(`[PRODUCT CREATE MODE] Error: ${error.message}`);
+    logger.error('product_create_mode_error', 'Product create mode failed', { dealId, error: error.message }, { entityType: 'deal', entityId: dealId });
     return {
       success: false,
       error: error.message,
@@ -1648,7 +1645,7 @@ async function handleDealUpdate(dealId, requestId) {
           recoveredOrderId: shopifyOrderId});
       }
     } catch (lookupError) {
-      console.warn(`[BITRIX WEBHOOK] Failed to look up existing order: ${lookupError.message}`);
+      logger.warn('order_lookup_error', 'Failed to look up existing order by dealId', { dealId, requestId, error: lookupError.message }, { entityType: 'deal', entityId: dealId });
     }
   }
 
@@ -1682,12 +1679,12 @@ async function handleDealUpdate(dealId, requestId) {
           if (lastWrite && lastWrite.exists && lastWrite.value && lastWrite.value.source === 'shopify') {
             const timeDiff = Date.now() - new Date(lastWrite.value.ts).getTime();
             if (timeDiff < 60000) { // 60 seconds debounce for loop guard
-              console.warn(`[BITRIX WEBHOOK] 🛑 LOOP GUARD: Skipping quantity sync, last write was from Shopify ${Math.round(timeDiff / 1000)}s ago.`);
+              logger.warn('loop_guard_quantity', 'Skipping quantity sync: last write was from Shopify', { shopifyOrderId, dealId, timeDiff_ms: timeDiff }, { entityType: 'order', entityId: shopifyOrderId });
               skipQuantitySync = true;
             }
           }
         } catch (pmError) {
-          console.error(`[BITRIX WEBHOOK] Failed to read provenance marker:`, pmError.message);
+          logger.error('loop_guard_provenance_error', 'Failed to read provenance marker', { shopifyOrderId, dealId, error: pmError.message }, { entityType: 'order', entityId: shopifyOrderId });
         }
 
         if (!skipQuantitySync) {
@@ -1695,10 +1692,10 @@ async function handleDealUpdate(dealId, requestId) {
           await handleQuantitySync(shopifyOrderId, dealId, requestId, { forceRemove: true });
         }
       } else {
-        console.log(`[BITRIX WEBHOOK] Quantity sync skipped in LOSE stage (${stageId}) to allow refund logic.`);
+        logger.info('quantity_sync_skipped_lose', 'Quantity sync skipped in LOSE stage', { shopifyOrderId, dealId, stageId }, { entityType: 'order', entityId: shopifyOrderId });
       }
     } catch (syncError) {
-      console.warn(`[BITRIX WEBHOOK] Quantity sync failed: ${syncError.message}`);
+      logger.warn('quantity_sync_error', 'Quantity sync failed', { shopifyOrderId, dealId, error: syncError.message }, { entityType: 'order', entityId: shopifyOrderId });
     }
   }
 
@@ -1747,7 +1744,7 @@ async function handleDealUpdate(dealId, requestId) {
       fulfillmentState: null // Will be updated after fulfillment creation
     });
   } catch (storeError) {
-    console.error(`[BITRIX WEBHOOK] Failed to store event (non-blocking):`, storeError);
+    logger.warn('store_event_error', 'Failed to store event (non-blocking)', { dealId, requestId, error: storeError?.message }, { entityType: 'deal', entityId: dealId });
   }
 
   // ✅ STEP C: Check for MW action first (UF_MW_SHOPIFY_ACTION)
@@ -1802,13 +1799,13 @@ async function handleDealUpdate(dealId, requestId) {
                   parsedAddress.country = countryMatch.name; // Use exact name from Shopify
                 }
               } catch (countryError) {
-                console.warn(`[BITRIX ADDRESS] Failed to resolve country code: ${countryError.message}`);
+                logger.warn('address_country_resolve_error', 'Failed to resolve country code', { shopifyOrderId, dealId, country: parsedAddress.country, error: countryError.message });
               }
             }
 
             // ✅ VALIDATION: City is required for Shopify
             if (!parsedAddress.city || parsedAddress.city.trim() === '') {
-              console.warn(`[BITRIX ADDRESS] ⚠️ Skipping address update: City is missing (Bitrix: "${bitrixAddressField}")`);
+              logger.warn('address_city_missing', 'Skipping address update: City is missing', { shopifyOrderId, dealId, bitrixAddressField });
               parsedAddress = null; // Invalidate parsing
             }
 
@@ -1879,12 +1876,12 @@ async function handleDealUpdate(dealId, requestId) {
               if (lastWrite && lastWrite.exists && lastWrite.value && lastWrite.value.source === 'shopify') {
                 const timeDiff = Date.now() - new Date(lastWrite.value.ts).getTime();
                 if (timeDiff < 60000) { // 60 seconds debounce for loop guard
-                  console.warn(`[BITRIX ADDRESS] 🛑 LOOP GUARD: Skipping update, last write was from Shopify ${Math.round(timeDiff / 1000)}s ago.`);
+                  logger.warn('loop_guard_address', 'Skipping address update: last write was from Shopify', { shopifyOrderId, dealId, timeDiff_ms: timeDiff }, { entityType: 'order', entityId: shopifyOrderId });
                   isLoop = true;
                 }
               }
             } catch (pErr) {
-              console.warn(`[BITRIX ADDRESS] Provenance check failed: ${pErr.message}`);
+              logger.warn('loop_guard_address_provenance_error', 'Provenance check failed for address loop guard', { shopifyOrderId, dealId, error: pErr.message });
             }
 
             if ((shouldUpdateAddress || deliveryPriceChanged) && !isLoop) {
@@ -1938,7 +1935,7 @@ async function handleDealUpdate(dealId, requestId) {
                     }
                   }
                 } catch (contactError) {
-                  console.warn(`[BITRIX ADDRESS] Failed to enrich shipping_address from contact: ${contactError.message}`);
+                  logger.warn('address_contact_enrich_error', 'Failed to enrich shipping_address from contact', { shopifyOrderId, dealId, error: contactError.message });
                 }
 
                 updatePayload.shipping_address = addressForShopify;
@@ -1981,7 +1978,7 @@ async function handleDealUpdate(dealId, requestId) {
                 try {
                   await setProvenanceMarker(shopifyOrderId, correlationId, 'address_update_from_bitrix', null, 'bitrix');
                 } catch (pmErr) {
-                  console.warn('Failed to set provenance marker:', pmErr);
+                  logger.warn('provenance_marker_set_error', 'Failed to set provenance marker after address update', { shopifyOrderId, dealId, error: pmErr?.message });
                 }
 
                                 logger.info('AUTO_ADDRESS_UPDATE_SUCCESS', 'AUTO_ADDRESS_UPDATE_SUCCESS', {requestId,
@@ -2053,7 +2050,7 @@ async function handleDealUpdate(dealId, requestId) {
       }
     } catch (orderCheckError) {
       // Non-blocking: if we can't check order, continue with normal flow
-      console.warn(`[BITRIX TO SHOPIFY] Could not check order ${shopifyOrderId} for address update:`, orderCheckError.message);
+      logger.warn('address_order_check_error', 'Could not check order for address update', { shopifyOrderId, dealId, error: orderCheckError.message }, { entityType: 'order', entityId: shopifyOrderId });
     }
   }
 
@@ -2063,7 +2060,7 @@ async function handleDealUpdate(dealId, requestId) {
       const { syncContactToShopify } = await import('../../../src/lib/blocks/contactSync.js');
       await syncContactToShopify(shopifyOrderId, dealData, requestId, dealId);
     } catch (contactSyncError) {
-      console.warn(`[BITRIX TO SHOPIFY] Contact sync error: ${contactSyncError.message}`);
+      logger.warn('contact_sync_error', 'Contact sync error (non-blocking)', { shopifyOrderId, dealId, error: contactSyncError.message }, { entityType: 'order', entityId: shopifyOrderId });
     }
   }
 
@@ -2346,7 +2343,7 @@ async function handleDealUpdate(dealId, requestId) {
                   dealId,
                   shopifyOrderId});
               } catch (stubCleanupError) {
-                console.warn(`[STUB CLEANUP] Failed to clean up stub order: ${stubCleanupError.message}`);
+                logger.warn('stub_cleanup_error', 'Failed to clean up stub order', { shopifyOrderId, dealId, error: stubCleanupError.message }, { entityType: 'order', entityId: shopifyOrderId });
                                 logger.info('STUB_ORDER_CLEANUP_ERROR', 'STUB_ORDER_CLEANUP_ERROR', {requestId,
                   dealId,
                   shopifyOrderId,
@@ -2363,7 +2360,7 @@ async function handleDealUpdate(dealId, requestId) {
                   dealId,
                   shopifyOrderId});
               } catch (tagError) {
-                console.warn(`[QUANTITY SYNC] Failed to add BitrixUpdated tag: ${tagError.message}`);
+                logger.warn('quantity_sync_tag_error', 'Failed to add BitrixUpdated tag', { shopifyOrderId, dealId, error: tagError.message }, { entityType: 'order', entityId: shopifyOrderId });
               }
             }
           } else {
@@ -2378,7 +2375,6 @@ async function handleDealUpdate(dealId, requestId) {
       }
     } catch (quantitySyncError) {
       // Non-blocking: if we can't sync quantities, continue with normal flow
-      console.warn(`[QUANTITY SYNC] Could not sync quantities: ${quantitySyncError.message}`);
             logger.info('QUANTITY_SYNC_ERROR', 'QUANTITY_SYNC_ERROR', {requestId,
         dealId,
         shopifyOrderId,
@@ -2430,7 +2426,7 @@ async function handleDealUpdate(dealId, requestId) {
         }
       }
     } catch (recheckError) {
-      console.warn(`[BITRIX TO SHOPIFY] Error rechecking deal for shopifyOrderId:`, recheckError);
+      logger.warn('deal_recheck_error', 'Error rechecking deal for shopifyOrderId', { dealId, requestId, error: recheckError?.message }, { entityType: 'deal', entityId: dealId });
     }
 
     // If still should create, check Shopify for existing order by tag
@@ -2454,9 +2450,9 @@ async function handleDealUpdate(dealId, requestId) {
               UF_CRM_1742556489: existingOrderId
             }
           });
-          console.log(`[BITRIX TO SHOPIFY] Updated deal ${dealId} with found shopifyOrderId ${existingOrderId}`);
+          logger.info('deal_shopify_order_id_updated', 'Updated deal with found shopifyOrderId', { dealId, existingOrderId }, { entityType: 'deal', entityId: dealId });
         } catch (updateError) {
-          console.warn(`[BITRIX TO SHOPIFY] Failed to update deal with found shopifyOrderId:`, updateError);
+          logger.warn('deal_shopify_order_id_update_error', 'Failed to update deal with found shopifyOrderId', { dealId, existingOrderId, error: updateError?.message }, { entityType: 'deal', entityId: dealId });
         }
       }
     }
@@ -2533,7 +2529,7 @@ async function handleDealUpdate(dealId, requestId) {
                   parsedAddress.country = countryMatch.name;
                 }
               } catch (countryError) {
-                console.warn(`[BITRIX TO SHOPIFY] Failed to resolve country code: ${countryError.message}`);
+                logger.warn('order_create_country_resolve_error', 'Failed to resolve country code for order create', { dealId, country: parsedAddress?.country, error: countryError.message }, { entityType: 'deal', entityId: dealId });
               }
             }
             shippingAddress = parsedAddress;
@@ -2563,7 +2559,7 @@ async function handleDealUpdate(dealId, requestId) {
                 orderName = existingOrder.name;
               }
             } catch (fetchError) {
-              console.warn(`[BITRIX TO SHOPIFY] Failed to fetch order name: ${fetchError.message}`);
+              logger.warn('order_name_fetch_error', 'Failed to fetch order name', { dealId, createdOrderId, error: fetchError.message }, { entityType: 'order', entityId: createdOrderId });
             }
           }
 
@@ -2595,7 +2591,7 @@ async function handleDealUpdate(dealId, requestId) {
               order_name: orderName,
             });
           } catch (updateError) {
-            console.error(`[BITRIX TO SHOPIFY] Error updating deal: ${updateError.message}`);
+            logger.error('deal_update_after_order_error', 'Error updating deal after order creation', { dealId, error: updateError.message }, { entityType: 'deal', entityId: dealId });
           }
         } else {
                     logger.info('UNIFIED_ORDER_CREATE_ERROR', 'UNIFIED_ORDER_CREATE_ERROR', {requestId,
@@ -2614,7 +2610,7 @@ async function handleDealUpdate(dealId, requestId) {
           message: String(categoryId) === '4' ? 'Missing Brand/Model/Size or variant not found' : 'No product rows'});
       }
     } catch (orderCreateError) {
-      console.error(`[BITRIX TO SHOPIFY] Error in unified order creation: ${orderCreateError.message}`);
+      logger.error('unified_order_create_error', 'Error in unified order creation', { dealId, requestId, error: orderCreateError.message }, { entityType: 'deal', entityId: dealId });
     }
   }
 
@@ -2638,7 +2634,7 @@ async function handleDealUpdate(dealId, requestId) {
           noteAfter: bitrixComment.substring(0, 100)});
       }
     } catch (commentErr) {
-      console.warn(`[BITRIX WEBHOOK] ⚠️ Comment sync failed: ${commentErr.message}`);
+      logger.warn('comment_sync_error', 'Comment sync failed', { shopifyOrderId, dealId, error: commentErr.message }, { entityType: 'order', entityId: shopifyOrderId });
     }
   }
 
@@ -2652,23 +2648,19 @@ async function handleDealUpdate(dealId, requestId) {
       const expectedTitle = shopifyOrder?.name || null; // e.g. "#2990"
 
       if (expectedTitle && dealData.TITLE !== expectedTitle) {
-        console.warn(`[BITRIX WEBHOOK] ⚠️ TITLE MISMATCH: "${dealData.TITLE}" → "${expectedTitle}"`);
+        logger.warn('title_mismatch_detected', 'Deal title mismatch with Shopify order name', { dealId, shopifyOrderId, dealTitle: dealData.TITLE, expectedTitle }, { entityType: 'deal', entityId: dealId });
         try {
           await callBitrix('/crm.deal.update.json', {
             id: dealId,
             fields: { TITLE: expectedTitle }
           });
-                    logger.info('TITLE_IDENTITY_FIX', 'TITLE_IDENTITY_FIX', {requestId,
-            dealId,
-            shopifyOrderId,
-            oldTitle: dealData.TITLE,
-            newTitle: expectedTitle});
+          logger.info('title_identity_fixed', 'Deal title fixed to match Shopify order name', { requestId, dealId, shopifyOrderId, oldTitle: dealData.TITLE, newTitle: expectedTitle }, { entityType: 'deal', entityId: dealId });
         } catch (titleErr) {
-          console.error(`[BITRIX WEBHOOK] ❌ TITLE fix failed: ${titleErr.message}`);
+          logger.error('title_fix_error', 'Failed to fix deal title', { dealId, shopifyOrderId, error: titleErr.message }, { entityType: 'deal', entityId: dealId });
         }
       }
     } catch (titleCheckErr) {
-      console.warn(`[BITRIX WEBHOOK] ⚠️ Title identity check failed: ${titleCheckErr.message}`);
+      logger.warn('title_check_error', 'Title identity check failed', { shopifyOrderId, dealId, error: titleCheckErr.message });
     }
   }
 
@@ -2697,7 +2689,7 @@ async function handleDealUpdate(dealId, requestId) {
   if (decision.stageMatch && decision.shopifyOrderIdPresent) {
 
     // 🚀 FULL CONTROL SYNC: DELIVERY AUTOMATION (Intercepted)
-    console.log(`[DELIVERY TRIGGER] 🚀 Starting Full Fulfillment Sync...`);
+    logger.info('delivery_trigger_start', 'Starting Full Fulfillment Sync', { shopifyOrderId, dealId, requestId, stageId }, { entityType: 'order', entityId: shopifyOrderId });
     const { fulfillAllOpenItems } = await import('../../../src/lib/shopify/fulfillment.js');
     const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
     const { updateOrder, getOrder } = await import('../../../src/lib/shopify/adminClient.js');
@@ -2715,9 +2707,9 @@ async function handleDealUpdate(dealId, requestId) {
     });
 
     if (fulfillmentResult.success) {
-      console.log(`[DELIVERY TRIGGER] ✅ Fulfilled Status: ${fulfillmentResult.skipped ? 'Skipped/No-Op' : 'Success'}`, fulfillmentResult);
+      logger.info('delivery_trigger_fulfilled', 'Fulfillment sync result', { shopifyOrderId, dealId, skipped: fulfillmentResult.skipped, result: fulfillmentResult }, { entityType: 'order', entityId: shopifyOrderId });
     } else {
-      console.error(`[DELIVERY TRIGGER] ❌ Fulfillment Error: ${fulfillmentResult.message}`);
+      logger.error('delivery_trigger_fulfillment_error', 'Fulfillment sync failed', { shopifyOrderId, dealId, error: fulfillmentResult.message }, { entityType: 'order', entityId: shopifyOrderId });
     }
 
     // 3. Update Order Note & Tags
@@ -2734,7 +2726,7 @@ async function handleDealUpdate(dealId, requestId) {
         }
       }
     } catch (e) {
-      console.warn(`[DELIVERY TRIGGER] Tag/Note update failed: ${e.message}`);
+      logger.warn('delivery_trigger_tag_note_error', 'Tag/Note update failed after delivery trigger', { shopifyOrderId, dealId, error: e.message }, { entityType: 'order', entityId: shopifyOrderId });
     }
 
     // Return immediately to bypass legacy logic
@@ -2834,7 +2826,7 @@ async function handleDealUpdate(dealId, requestId) {
           stageId,
           noteUpdated: true});
       } catch (noteError) {
-        console.warn(`[BITRIX TO SHOPIFY] Failed to update order note: ${noteError.message}`);
+        logger.warn('order_note_update_error', 'Failed to update order note', { shopifyOrderId, dealId, error: noteError.message }, { entityType: 'order', entityId: shopifyOrderId });
       }
 
       // Step 6: Update existing fulfillment OR create new one
@@ -2884,7 +2876,7 @@ async function handleDealUpdate(dealId, requestId) {
             await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
             await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
           } catch (tagError) {
-            console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
+            logger.warn('tags_add_error', 'Failed to add tags to order', { shopifyOrderId, dealId, error: tagError.message }, { entityType: 'order', entityId: shopifyOrderId });
           }
           return { success: true, triggerMatch: true, correlationId };
         }
@@ -2901,7 +2893,7 @@ async function handleDealUpdate(dealId, requestId) {
             await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
             await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
           } catch (tagError) {
-            console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
+            logger.warn('tags_add_error', 'Failed to add tags to order', { shopifyOrderId, dealId, error: tagError.message }, { entityType: 'order', entityId: shopifyOrderId });
           }
           return { success: true, triggerMatch: true, correlationId };
         }
@@ -2919,7 +2911,7 @@ async function handleDealUpdate(dealId, requestId) {
             await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
             await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
           } catch (tagError) {
-            console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
+            logger.warn('tags_add_error', 'Failed to add tags to order', { shopifyOrderId, dealId, error: tagError.message }, { entityType: 'order', entityId: shopifyOrderId });
           }
           return { success: true, triggerMatch: true, correlationId };
         }
@@ -2998,7 +2990,7 @@ async function handleDealUpdate(dealId, requestId) {
         await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
         await addTagToOrder(shopifyOrderId, 'IN_DELIVERY');
       } catch (tagError) {
-        console.warn(`[BITRIX TO SHOPIFY] Failed to add tags: ${tagError.message}`);
+        logger.warn('tags_add_error', 'Failed to add tags to order', { shopifyOrderId, dealId, error: tagError.message }, { entityType: 'order', entityId: shopifyOrderId });
       }
     } catch (error) {
       // Log any unexpected errors during fulfillment creation
@@ -3091,7 +3083,7 @@ async function handleDealCreate(dealId, requestId) {
       fulfillmentState: null
     });
   } catch (storeError) {
-    console.error(`[BITRIX WEBHOOK] Failed to store event (non-blocking):`, storeError);
+    logger.warn('store_event_error', 'Failed to store event (non-blocking)', { dealId, requestId, error: storeError?.message }, { entityType: 'deal', entityId: dealId });
   }
 
   // ✅ Check for MW action first (UF_MW_SHOPIFY_ACTION)
@@ -3113,11 +3105,11 @@ async function handleDealCreate(dealId, requestId) {
 
   let productCreateResult = null;
   if (createMode === '1') {
-    console.log(`[BITRIX WEBHOOK] Create Mode = 1: Creating product in Shopify before order...`);
+    logger.info('product_create_mode_start', 'Create Mode = 1: Creating product in Shopify before order', { dealId, requestId }, { entityType: 'deal', entityId: dealId });
     productCreateResult = await handleProductCreateMode(dealId, dealData, requestId);
 
     if (!productCreateResult.success) {
-      console.error(`[BITRIX WEBHOOK] Product create mode failed: ${productCreateResult.error}`);
+      logger.error('product_create_mode_failed', 'Product create mode failed', { dealId, error: productCreateResult.error }, { entityType: 'deal', entityId: dealId });
       return {
         success: false,
         reason: 'product_create_mode_failed',
@@ -3125,17 +3117,17 @@ async function handleDealCreate(dealId, requestId) {
       };
     }
 
-    console.log(`[BITRIX WEBHOOK] ✅ Product created: Shopify variant ${productCreateResult.variantId}, Bitrix product ${productCreateResult.bitrixProductId}`);
+    logger.info('product_create_mode_success', 'Product created before order', { dealId, variantId: productCreateResult.variantId, bitrixProductId: productCreateResult.bitrixProductId }, { entityType: 'deal', entityId: dealId });
 
     // Refresh deal data after product rows were updated
     try {
       const refreshedDealResp = await callBitrix('/crm.deal.get.json', { id: dealId });
       if (refreshedDealResp.result) {
         dealData = refreshedDealResp.result;
-        console.log(`[BITRIX WEBHOOK] Deal data refreshed after product creation`);
+        logger.info('deal_data_refreshed', 'Deal data refreshed after product creation', { dealId }, { entityType: 'deal', entityId: dealId });
       }
     } catch (refreshError) {
-      console.warn(`[BITRIX WEBHOOK] Failed to refresh deal data: ${refreshError.message}`);
+      logger.warn('deal_data_refresh_error', 'Failed to refresh deal data after product creation', { dealId, error: refreshError.message }, { entityType: 'deal', entityId: dealId });
     }
   }
 
@@ -3176,7 +3168,7 @@ async function handleDealCreate(dealId, requestId) {
         }
       }
     } catch (recheckError) {
-      console.warn(`[BITRIX TO SHOPIFY] Error rechecking deal for shopifyOrderId:`, recheckError);
+      logger.warn('deal_recheck_error', 'Error rechecking deal for shopifyOrderId', { dealId, requestId, error: recheckError?.message }, { entityType: 'deal', entityId: dealId });
     }
 
     // If still should create, check Shopify for existing order by tag
@@ -3200,9 +3192,9 @@ async function handleDealCreate(dealId, requestId) {
               UF_CRM_1742556489: existingOrderId
             }
           });
-          console.log(`[BITRIX TO SHOPIFY] Updated deal ${dealId} with found shopifyOrderId ${existingOrderId}`);
+          logger.info('deal_shopify_order_id_updated', 'Updated deal with found shopifyOrderId', { dealId, existingOrderId }, { entityType: 'deal', entityId: dealId });
         } catch (updateError) {
-          console.warn(`[BITRIX TO SHOPIFY] Failed to update deal with found shopifyOrderId:`, updateError);
+          logger.warn('deal_shopify_order_id_update_error', 'Failed to update deal with found shopifyOrderId', { dealId, existingOrderId, error: updateError?.message }, { entityType: 'deal', entityId: dealId });
         }
       }
     }
@@ -3251,7 +3243,7 @@ async function handleDealCreate(dealId, requestId) {
 
         if (!customerEmail && dealData.CONTACT_ID) {
           try {
-            console.log(`[CREATE MODE] Fetching contact ${dealData.CONTACT_ID} for email/info...`);
+            logger.info('create_mode_contact_fetch', 'Fetching contact for email/address', { dealId, contactId: dealData.CONTACT_ID }, { entityType: 'deal', entityId: dealId });
             const contactRes = await callBitrix('crm.contact.get', { id: dealData.CONTACT_ID });
             if (contactRes && contactRes.result) {
               const contact = contactRes.result;
@@ -3262,7 +3254,7 @@ async function handleDealCreate(dealId, requestId) {
               if (Array.isArray(contact.EMAIL) && contact.EMAIL.length > 0) {
                 customerEmail = contact.EMAIL[0].VALUE;
                 contactData.email = customerEmail;
-                console.log(`[CREATE MODE] Found email in contact: ${customerEmail}`);
+                logger.info('create_mode_email_found', 'Found email in contact', { dealId, email: customerEmail }, { entityType: 'deal', entityId: dealId });
               }
 
               // Bitrix fields: ADDRESS, ADDRESS_2, ADDRESS_CITY, ADDRESS_POSTAL_CODE, ADDRESS_REGION, ADDRESS_COUNTRY
@@ -3285,14 +3277,14 @@ async function handleDealCreate(dealId, requestId) {
               const updateAddressString = dealData.UF_CRM_1742037435676 || dealData.uf_crm_1742037435676;
 
               if (isContactAddressEmpty && updateAddressString) {
-                console.log(`[CREATE MODE] Contact address empty. Parsing fallback field UF_CRM_1742037435676: "${updateAddressString}"`);
+                logger.info('create_mode_address_fallback', 'Contact address empty, parsing fallback field', { dealId, updateAddressString }, { entityType: 'deal', entityId: dealId });
                 try {
                   // Dynamic import to allow using the logic from a different module
                   const { parseBitrixAddressString } = await import('../../../src/lib/blocks/addressUpdate.js');
                   const parsed = parseBitrixAddressString(updateAddressString);
 
                   if (parsed) {
-                    console.log(`[CREATE MODE] Successfully parsed fallback address using Update logic:`, JSON.stringify(parsed));
+                    logger.info('create_mode_address_parsed', 'Successfully parsed fallback address', { dealId, parsed }, { entityType: 'deal', entityId: dealId });
                     contactData.address.address1 = parsed.address1 || contactData.address.address1;
                     contactData.address.city = parsed.city || contactData.address.city;
                     contactData.address.zip = parsed.zip || contactData.address.zip;

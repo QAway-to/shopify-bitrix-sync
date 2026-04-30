@@ -66,8 +66,10 @@ function writeToDb(entry) {
  * @param {object} [metadata]   - arbitrary structured context
  * @param {string} [requestId]  - optional request correlation ID
  * @param {string} [source]     - optional source label (e.g. 'webhook/shopify')
+ * @param {string} [entityType] - e.g. 'deal' | 'order' | 'product'
+ * @param {string} [entityId]   - primary key of the entity
  */
-function log(level, eventType, message, metadata, requestId, source) {
+function log(level, eventType, message, metadata, requestId, source, entityType, entityId) {
   // 1. Console fallback — always runs synchronously before the DB write.
   const consoleFn =
     level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
@@ -88,7 +90,16 @@ function log(level, eventType, message, metadata, requestId, source) {
   }
 
   // 2. Async DB write — fire-and-forget, never throws.
-  writeToDb({ level, event_type: eventType, message, metadata, request_id: requestId, source });
+  writeToDb({
+    level,
+    event_type: eventType,
+    entity_type: entityType ?? null,
+    entity_id: entityId != null ? String(entityId) : null,
+    message,
+    metadata,
+    request_id: requestId,
+    source,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -100,27 +111,30 @@ export const logger = {
    * @param {string} eventType
    * @param {string} message
    * @param {object} [metadata]
+   * @param {{ entityType?: string, entityId?: string|number }} [entity]
    */
-  info(eventType, message, metadata) {
-    log('info', eventType, message, metadata, undefined, undefined);
+  info(eventType, message, metadata, { entityType, entityId } = {}) {
+    log('info', eventType, message, metadata, undefined, undefined, entityType, entityId);
   },
 
   /**
    * @param {string} eventType
    * @param {string} message
    * @param {object} [metadata]
+   * @param {{ entityType?: string, entityId?: string|number }} [entity]
    */
-  warn(eventType, message, metadata) {
-    log('warn', eventType, message, metadata, undefined, undefined);
+  warn(eventType, message, metadata, { entityType, entityId } = {}) {
+    log('warn', eventType, message, metadata, undefined, undefined, entityType, entityId);
   },
 
   /**
    * @param {string} eventType
    * @param {string} message
    * @param {object} [metadata]
+   * @param {{ entityType?: string, entityId?: string|number }} [entity]
    */
-  error(eventType, message, metadata) {
-    log('error', eventType, message, metadata, undefined, undefined);
+  error(eventType, message, metadata, { entityType, entityId } = {}) {
+    log('error', eventType, message, metadata, undefined, undefined, entityType, entityId);
   },
 };
 
@@ -138,14 +152,14 @@ export const logger = {
  */
 export function createRequestLogger(requestId, source) {
   return {
-    info(eventType, message, metadata) {
-      log('info', eventType, message, metadata, requestId, source);
+    info(eventType, message, metadata, { entityType, entityId } = {}) {
+      log('info', eventType, message, metadata, requestId, source, entityType, entityId);
     },
-    warn(eventType, message, metadata) {
-      log('warn', eventType, message, metadata, requestId, source);
+    warn(eventType, message, metadata, { entityType, entityId } = {}) {
+      log('warn', eventType, message, metadata, requestId, source, entityType, entityId);
     },
-    error(eventType, message, metadata) {
-      log('error', eventType, message, metadata, requestId, source);
+    error(eventType, message, metadata, { entityType, entityId } = {}) {
+      log('error', eventType, message, metadata, requestId, source, entityType, entityId);
     },
   };
 }
