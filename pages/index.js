@@ -1,8 +1,8 @@
 import Head from 'next/head';
 import { useState, useEffect } from 'react';
-import WebhookInfo from '../src/components/shopify/WebhookInfo';
 import LockedSection from '../src/components/common/LockedSection';
 import DealSyncMonitor from '../src/components/monitor/DealSyncMonitor';
+import DealSnapshotMonitor from '../src/components/monitor/DealSnapshotMonitor';
 
 export default function ShopifyPage() {
   const [events, setEvents] = useState([]);
@@ -964,9 +964,6 @@ export default function ShopifyPage() {
           </div>
         )}
 
-        {/* Webhook Configuration */}
-        <WebhookInfo onBitrixUrlChange={setBitrixWebhookUrl} />
-
         {/* Inventory Sync Section */}
         <div style={{
           marginTop: '30px',
@@ -1068,6 +1065,17 @@ export default function ShopifyPage() {
           border: '1px solid rgba(59, 130, 246, 0.2)'
         }}>
           <DealSyncMonitor />
+        </div>
+
+        {/* Deal Snapshot — daily Bitrix vs Shopify comparison */}
+        <div style={{
+          marginTop: '30px',
+          padding: '20px',
+          background: 'rgba(15, 23, 42, 0.6)',
+          borderRadius: '12px',
+          border: '1px solid rgba(59, 130, 246, 0.2)'
+        }}>
+          <DealSnapshotMonitor />
         </div>
       </main>
     </>
