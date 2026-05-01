@@ -2242,7 +2242,7 @@ async function handleDealUpdate(dealId, requestId) {
               }
             }
 
-            logger.info('quantity_sync_complete', 'Quantity sync finished', { requestId, dealId, shopifyOrderId, added, incremented, decremented, orphansCount: orphans.length, errorsCount, hasChanges });
+            logger.info('quantity_sync_complete', 'Quantity sync finished', { requestId, dealId, shopifyOrderId, added, incremented, decremented, orphansCount: orphans.length, discrepanciesCount: quantityChanges.length, errorsCount, hasChanges });
 
             // ✅ STEP C2.1: Clean up stub order if real products were added
             // If order was a stub (has BITRIX_STUB tag) and now has real products, remove stub marker
