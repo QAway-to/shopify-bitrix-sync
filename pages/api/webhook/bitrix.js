@@ -3292,16 +3292,16 @@ async function handleDealCreate(dealId, requestId) {
                     contactData.address.province = parsed.province || contactData.address.province;
                   }
                 } catch (parseErr) {
-                  console.warn(`[CREATE MODE] Failed to parse fallback address: ${parseErr.message}`);
+                  logger.warn('create_mode_address_fallback_parse_error', 'Failed to parse fallback address in create mode', { dealId, error: parseErr.message }, { entityType: 'deal', entityId: dealId });
                 }
               }
 
-              console.log(`[CREATE MODE] Found address in contact: ${contactData.address.city}, ${contactData.address.country}, ${contactData.address.province}`);
+              logger.info('create_mode_contact_address_found', 'Found address in contact for create mode', { dealId, city: contactData.address.city, country: contactData.address.country, province: contactData.address.province }, { entityType: 'deal', entityId: dealId });
 
               // Try to resolve Country Name to Code if > 2 chars
               if (contactData.address.country && contactData.address.country.length > 2) {
                 try {
-                  console.log(`[CREATE MODE] Resolving country name "${contactData.address.country}" to code...`);
+                  logger.info('create_mode_country_resolve_start', 'Resolving country name to code in create mode', { dealId, country: contactData.address.country }, { entityType: 'deal', entityId: dealId });
                   const { callShopifyAdmin } = await import('../../../src/lib/shopify/adminClient.js');
                   // Fetch countries (TODO: Cache this?)
                   const countriesResponse = await callShopifyAdmin('/countries.json');
@@ -3313,18 +3313,18 @@ async function handleDealCreate(dealId, requestId) {
                   );
 
                   if (countryMatch) {
-                    console.log(`[CREATE MODE] Resolved country "${contactData.address.country}" -> "${countryMatch.code}"`);
+                    logger.info('create_mode_country_resolved', 'Country name resolved to code in create mode', { dealId, countryName: contactData.address.country, countryCode: countryMatch.code }, { entityType: 'deal', entityId: dealId });
                     contactData.address.country = countryMatch.code; // Set to ISO 2-char code
                   } else {
-                    console.warn(`[CREATE MODE] Could not resolve country "${contactData.address.country}" to a Shopify country code. Available countries: ${countries.map(c => c.name).join(', ')}`);
+                    logger.warn('create_mode_country_unresolved', 'Could not resolve country to Shopify country code in create mode', { dealId, country: contactData.address.country, availableCountriesCount: countries.length }, { entityType: 'deal', entityId: dealId });
                   }
                 } catch (countryErr) {
-                  console.warn(`[CREATE MODE] Error resolving country code: ${countryErr.message}`);
+                  logger.warn('create_mode_country_resolve_error', 'Error resolving country code in create mode', { dealId, error: countryErr.message }, { entityType: 'deal', entityId: dealId });
                 }
               }
             }
           } catch (contactErr) {
-            console.warn(`[CREATE MODE] Error fetching contact ${dealData.CONTACT_ID}:`, contactErr.message);
+            logger.warn('create_mode_contact_fetch_error', 'Error fetching contact in create mode', { dealId, contactId: dealData.CONTACT_ID, error: contactErr.message }, { entityType: 'deal', entityId: dealId });
           }
         }
 
@@ -3366,7 +3366,7 @@ async function handleDealCreate(dealId, requestId) {
               order_name: orderName,
             });
           } catch (updateError) {
-            console.warn(`[CREATE MODE] Failed to update deal: ${updateError.message}`);
+            logger.warn('create_mode_deal_update_error', 'Failed to update deal after create mode order', { dealId, error: updateError.message }, { entityType: 'deal', entityId: dealId });
           }
 
           return {
@@ -3376,7 +3376,7 @@ async function handleDealCreate(dealId, requestId) {
             orderName: orderResult.orderName
           };
         } else {
-          console.error(`[CREATE MODE] Order creation failed: ${orderResult.error}`);
+          logger.error('create_mode_order_create_failed', 'Order creation failed in create mode', { dealId, error: orderResult.error }, { entityType: 'deal', entityId: dealId });
           return {
             success: false,
             error: 'order_creation_failed',
@@ -3445,20 +3445,20 @@ async function handleDealCreate(dealId, requestId) {
                     sku: code.trim(),
                     qty: row.QUANTITY || 1
                   });
-                  console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using CODE as SKU: ${code.trim()}`);
+                  logger.info('product_sku_resolved', 'Bitrix product resolved via CODE as SKU', { dealId, productId, sku: code.trim() }, { entityType: 'deal', entityId: dealId });
                 } else if (xmlId && xmlId.toString().trim() !== '') {
                   // Use XML_ID directly as variant_id (no SKU lookup needed)
                   items.push({
                     variantId: xmlId.toString().trim(),
                     qty: row.QUANTITY || 1
                   });
-                  console.log(`[BITRIX TO SHOPIFY] Product ${productId}: Using XML_ID as variantId directly: ${xmlId}`);
+                  logger.info('product_variant_id_resolved', 'Bitrix product resolved via XML_ID as variantId', { dealId, productId, variantId: xmlId }, { entityType: 'deal', entityId: dealId });
                 } else {
-                  console.warn(`[BITRIX TO SHOPIFY] Product ${productId} has no CODE (SKU) or XML_ID (variant_id), skipping`);
+                  logger.warn('product_sku_missing', 'Bitrix product has no CODE (SKU) or XML_ID (variant_id), skipping', { dealId, productId }, { entityType: 'deal', entityId: dealId });
                 }
               }
             } catch (productError) {
-              console.error(`[BITRIX TO SHOPIFY] Error getting product ${productId}:`, productError);
+              logger.error('product_fetch_error', 'Error fetching Bitrix product during order create', { dealId, productId, error: productError?.message || String(productError) }, { entityType: 'deal', entityId: dealId });
             }
           }
 
@@ -3548,7 +3548,7 @@ async function handleDealCreate(dealId, requestId) {
                       parsedAddress.country = countryMatch.name; // Use exact name from Shopify
                     }
                   } catch (countryError) {
-                    console.warn(`[BITRIX TO SHOPIFY] Failed to resolve country code: ${countryError.message}`);
+                    logger.warn('order_create_country_code_resolve_error', 'Failed to resolve country code during order create', { dealId, country: parsedAddress?.country, error: countryError.message }, { entityType: 'deal', entityId: dealId });
                   }
                 }
                 shippingAddress = parsedAddress;
@@ -3629,7 +3629,7 @@ async function handleDealCreate(dealId, requestId) {
                           reason: 'duplicate_order_real_name_fetch'});
                       }
                     } catch (fetchError) {
-                      console.warn(`[BITRIX TO SHOPIFY] Failed to fetch order name for duplicate: ${fetchError.message}`);
+                      logger.warn('order_name_fetch_duplicate_error', 'Failed to fetch order name for duplicate order', { dealId, shopifyOrderId: existingShopifyOrderId, error: fetchError.message }, { entityType: 'deal', entityId: dealId });
                     }
                   }
 
@@ -3721,7 +3721,7 @@ async function handleDealCreate(dealId, requestId) {
                   try {
                     await syncShopifyPaymentStatusFromBitrix(dealData, existingShopifyOrderId, requestId, dealId);
                   } catch (paySyncErr) {
-                    console.error(`[BITRIX TO SHOPIFY] Failed to sync payment status after create:`, paySyncErr);
+                    logger.error('payment_status_sync_after_create_error', 'Failed to sync payment status after order create', { dealId, shopifyOrderId: existingShopifyOrderId, error: paySyncErr?.message || String(paySyncErr) }, { entityType: 'deal', entityId: dealId });
                   }
 
                   return {
@@ -3732,7 +3732,7 @@ async function handleDealCreate(dealId, requestId) {
                     wasDuplicate: orderResult.wasDuplicate || false
                   };
                 } catch (updateError) {
-                  console.error(`[BITRIX TO SHOPIFY] Error updating deal with shopifyOrderId:`, updateError);
+                  logger.error('deal_update_shopify_order_id_error', 'Error updating deal with shopifyOrderId after order create', { dealId, shopifyOrderId: existingShopifyOrderId, error: updateError?.message || String(updateError) }, { entityType: 'deal', entityId: dealId });
                   return {
                     success: true,
                     triggerMatch: true,
@@ -3799,7 +3799,7 @@ async function handleDealCreate(dealId, requestId) {
                 parsedAddress.country = countryMatch.name;
               }
             } catch (countryError) {
-              console.warn(`[CATALOG ORDER] Failed to resolve country code: ${countryError.message}`);
+              logger.warn('catalog_order_country_resolve_error', 'Failed to resolve country code for catalog order', { dealId, error: countryError.message }, { entityType: 'deal', entityId: dealId });
             }
             shippingAddress = parsedAddress;
           }
@@ -3846,7 +3846,7 @@ async function handleDealCreate(dealId, requestId) {
             try {
               await syncShopifyPaymentStatusFromBitrix(dealData, createdOrderId, requestId, dealId);
             } catch (paySyncErr) {
-              console.error(`[CATALOG ORDER] Failed to sync payment status:`, paySyncErr);
+              logger.error('catalog_order_payment_status_sync_error', 'Failed to sync payment status after catalog order create', { dealId, shopifyOrderId: createdOrderId, error: paySyncErr?.message || String(paySyncErr) }, { entityType: 'order', entityId: createdOrderId });
             }
 
             return {
@@ -3857,7 +3857,7 @@ async function handleDealCreate(dealId, requestId) {
               orderType: 'CATALOG'
             };
           } catch (updateError) {
-            console.error(`[CATALOG ORDER] Error updating deal:`, updateError);
+            logger.error('catalog_order_deal_update_error', 'Error updating deal after catalog order create', { dealId, shopifyOrderId: createdOrderId, error: updateError?.message || String(updateError) }, { entityType: 'deal', entityId: dealId });
             return {
               success: true,
               triggerMatch: true,
@@ -3921,7 +3921,6 @@ export default async function handler(req, res) {
   const hasAuthToken = !!authToken;
 
   // ✅ Structured logging: [BITRIX_WEBHOOK_INCOMING]
-  console.log(`[BITRIX WEBHOOK] 🔖 CODE VERSION: ${BITRIX_WEBHOOK_VERSION}`);
     logger.info('BITRIX_WEBHOOK_INCOMING', 'BITRIX_WEBHOOK_INCOMING', {requestId,
     method: req.method,
     contentType,
