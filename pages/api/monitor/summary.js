@@ -25,8 +25,6 @@ function getMskDateString(offsetDays = 0) {
   return msk.toISOString().slice(0, 10);
 }
 
-const GLOBAL_KEY = '__monitorLastAggregatedDate';
-
 async function ensureTable() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS deal_sync_summary (
@@ -46,92 +44,156 @@ async function ensureTable() {
       UNIQUE (date, deal_id)
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS monitor_aggregation_runs (
+      aggregated_date DATE PRIMARY KEY,
+      status          VARCHAR NOT NULL DEFAULT 'running',
+      started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      finished_at     TIMESTAMPTZ,
+      deals_processed INT,
+      error_message   TEXT
+    )
+  `);
+}
+
+/**
+ * Atomically claims the aggregation slot for the given date.
+ * Returns true if this caller won the race and should run aggregation.
+ * Returns false if another process already succeeded or is actively running.
+ * Re-claims stuck 'running' rows older than 30 minutes.
+ */
+async function tryClaimAggregation(date) {
+  const claim = await pool.query(
+    `INSERT INTO monitor_aggregation_runs (aggregated_date, status)
+     VALUES ($1, 'running')
+     ON CONFLICT (aggregated_date) DO UPDATE
+       SET status = 'running', started_at = NOW(), finished_at = NULL, error_message = NULL
+       WHERE monitor_aggregation_runs.status = 'failed'
+          OR (monitor_aggregation_runs.status = 'running'
+              AND monitor_aggregation_runs.started_at < NOW() - INTERVAL '30 minutes')
+     RETURNING aggregated_date`,
+    [date]
+  );
+  return claim.rows.length > 0;
+}
+
+async function markAggregationDone(date, dealsProcessed, errorMessage = null) {
+  if (errorMessage) {
+    await pool.query(
+      `UPDATE monitor_aggregation_runs
+       SET status = 'failed', finished_at = NOW(), error_message = $2
+       WHERE aggregated_date = $1`,
+      [date, errorMessage]
+    );
+  } else {
+    await pool.query(
+      `UPDATE monitor_aggregation_runs
+       SET status = 'success', finished_at = NOW(), deals_processed = $2
+       WHERE aggregated_date = $1`,
+      [date, dealsProcessed]
+    );
+  }
 }
 
 async function aggregateYesterday() {
   const yesterday = getMskDateString(-1);
 
-  // MSK day spans UTC: yesterday 21:00 → today 21:00
-  const result = await pool.query(
-    `SELECT
-       metadata->>'dealId'              AS deal_id,
-       metadata->>'shopifyOrderId'      AS order_id,
-       (metadata->>'added')::int        AS added,
-       (metadata->>'incremented')::int  AS incremented,
-       (metadata->>'decremented')::int  AS decremented,
-       (metadata->>'orphansCount')::int AS orphans_count,
-       (metadata->>'errorsCount')::int  AS errors_count,
-       created_at
-     FROM logs
-     WHERE event_type = 'quantity_sync_complete'
-       AND created_at >= ($1::date - INTERVAL '3 hours')
-       AND created_at <  ($1::date + INTERVAL '21 hours')
-       AND metadata->>'dealId' IS NOT NULL`,
-    [yesterday]
-  );
+  const claimed = await tryClaimAggregation(yesterday);
+  if (!claimed) return;
 
-  if (result.rows.length === 0) return 0;
-
-  const byDeal = new Map();
-  for (const row of result.rows) {
-    const key = row.deal_id;
-    if (!byDeal.has(key)) {
-      byDeal.set(key, {
-        deal_id: key,
-        order_id: row.order_id,
-        syncs_count: 0,
-        added: 0,
-        incremented: 0,
-        decremented: 0,
-        orphans_count: 0,
-        errors_count: 0,
-        last_sync_at: row.created_at,
-      });
-    }
-    const agg = byDeal.get(key);
-    agg.syncs_count += 1;
-    agg.added        += row.added        || 0;
-    agg.incremented  += row.incremented  || 0;
-    agg.decremented  += row.decremented  || 0;
-    agg.orphans_count = Math.max(agg.orphans_count, row.orphans_count || 0);
-    agg.errors_count += row.errors_count || 0;
-    if (new Date(row.created_at) > new Date(agg.last_sync_at)) {
-      agg.last_sync_at = row.created_at;
-    }
-  }
-
-  for (const agg of byDeal.values()) {
-    const status =
-      agg.errors_count  > 0 ? 'errors'
-      : agg.orphans_count > 0 ? 'orphans'
-      : agg.added + agg.incremented + agg.decremented > 0 ? 'ok'
-      : 'no_changes';
-
-    await pool.query(
-      `INSERT INTO deal_sync_summary
-         (date, deal_id, order_id, status, syncs_count, added, incremented, decremented,
-          orphans_count, errors_count, last_sync_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       ON CONFLICT (date, deal_id) DO UPDATE SET
-         order_id      = EXCLUDED.order_id,
-         status        = EXCLUDED.status,
-         syncs_count   = EXCLUDED.syncs_count,
-         added         = EXCLUDED.added,
-         incremented   = EXCLUDED.incremented,
-         decremented   = EXCLUDED.decremented,
-         orphans_count = EXCLUDED.orphans_count,
-         errors_count  = EXCLUDED.errors_count,
-         last_sync_at  = EXCLUDED.last_sync_at`,
-      [
-        yesterday,
-        agg.deal_id, agg.order_id, status,
-        agg.syncs_count, agg.added, agg.incremented, agg.decremented,
-        agg.orphans_count, agg.errors_count, agg.last_sync_at,
-      ]
+  try {
+    // MSK day spans UTC: yesterday 21:00 → today 21:00
+    const result = await pool.query(
+      `SELECT
+         metadata->>'dealId'              AS deal_id,
+         metadata->>'shopifyOrderId'      AS order_id,
+         (metadata->>'added')::int        AS added,
+         (metadata->>'incremented')::int  AS incremented,
+         (metadata->>'decremented')::int  AS decremented,
+         (metadata->>'orphansCount')::int AS orphans_count,
+         (metadata->>'errorsCount')::int  AS errors_count,
+         created_at
+       FROM logs
+       WHERE event_type = 'quantity_sync_complete'
+         AND created_at >= ($1::date - INTERVAL '3 hours')
+         AND created_at <  ($1::date + INTERVAL '21 hours')
+         AND metadata->>'dealId' IS NOT NULL`,
+      [yesterday]
     );
-  }
 
-  return byDeal.size;
+    if (result.rows.length === 0) {
+      await markAggregationDone(yesterday, 0);
+      return;
+    }
+
+    const byDeal = new Map();
+    for (const row of result.rows) {
+      const key = row.deal_id;
+      if (!byDeal.has(key)) {
+        byDeal.set(key, {
+          deal_id: key,
+          order_id: row.order_id,
+          syncs_count: 0,
+          added: 0,
+          incremented: 0,
+          decremented: 0,
+          orphans_count: 0,
+          errors_count: 0,
+          last_sync_at: row.created_at,
+        });
+      }
+      const agg = byDeal.get(key);
+      agg.syncs_count += 1;
+      agg.added        += row.added        || 0;
+      agg.incremented  += row.incremented  || 0;
+      agg.decremented  += row.decremented  || 0;
+      agg.orphans_count = Math.max(agg.orphans_count, row.orphans_count || 0);
+      agg.errors_count += row.errors_count || 0;
+      if (new Date(row.created_at) > new Date(agg.last_sync_at)) {
+        agg.last_sync_at = row.created_at;
+      }
+    }
+
+    for (const agg of byDeal.values()) {
+      const status =
+        agg.errors_count  > 0 ? 'errors'
+        : agg.orphans_count > 0 ? 'orphans'
+        : agg.added + agg.incremented + agg.decremented > 0 ? 'ok'
+        : 'no_changes';
+
+      await pool.query(
+        `INSERT INTO deal_sync_summary
+           (date, deal_id, order_id, status, syncs_count, added, incremented, decremented,
+            orphans_count, errors_count, last_sync_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON CONFLICT (date, deal_id) DO UPDATE SET
+           order_id      = EXCLUDED.order_id,
+           status        = EXCLUDED.status,
+           syncs_count   = EXCLUDED.syncs_count,
+           added         = EXCLUDED.added,
+           incremented   = EXCLUDED.incremented,
+           decremented   = EXCLUDED.decremented,
+           orphans_count = EXCLUDED.orphans_count,
+           errors_count  = EXCLUDED.errors_count,
+           last_sync_at  = EXCLUDED.last_sync_at`,
+        [
+          yesterday,
+          agg.deal_id, agg.order_id, status,
+          agg.syncs_count, agg.added, agg.incremented, agg.decremented,
+          agg.orphans_count, agg.errors_count, agg.last_sync_at,
+        ]
+      );
+    }
+
+    await markAggregationDone(yesterday, byDeal.size);
+  } catch (err) {
+    try {
+      await markAggregationDone(yesterday, 0, String(err?.message ?? err));
+    } catch (markErr) {
+      console.error('[monitor] Failed to record aggregation failure:', markErr.message);
+    }
+    throw err;
+  }
 }
 
 export default async function handler(req, res) {
@@ -141,10 +203,8 @@ export default async function handler(req, res) {
   try {
     await ensureTable();
 
-    // Auto-aggregate at 10:00 MSK
-    const todayMsk = getMskDateString(0);
-    if (getMskHour() >= 10 && globalThis[GLOBAL_KEY] !== todayMsk) {
-      globalThis[GLOBAL_KEY] = todayMsk;
+    // Auto-aggregate at 10:00 MSK — fire-and-forget, claim is guarded in DB
+    if (getMskHour() >= 10) {
       aggregateYesterday().catch(err =>
         console.error('[monitor] Aggregation failed:', err.message)
       );
@@ -172,7 +232,7 @@ export default async function handler(req, res) {
        WHERE date = $1
        ORDER BY
          CASE status WHEN 'errors' THEN 0 WHEN 'orphans' THEN 1 WHEN 'ok' THEN 2 ELSE 3 END,
-         deal_id::bigint DESC NULLS LAST`,
+         CASE WHEN deal_id ~ '^\d+$' THEN deal_id::bigint END DESC NULLS LAST`,
       [date]
     );
 
@@ -190,6 +250,6 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error('[monitor/summary] Error:', err.message);
-    return res.status(500).json({ error: 'Internal server error', message: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }
