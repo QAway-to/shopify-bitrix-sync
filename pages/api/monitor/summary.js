@@ -37,13 +37,15 @@ async function ensureTable() {
       added         INT DEFAULT 0,
       incremented   INT DEFAULT 0,
       decremented   INT DEFAULT 0,
-      orphans_count INT DEFAULT 0,
-      errors_count  INT DEFAULT 0,
+      orphans_count       INT DEFAULT 0,
+      errors_count        INT DEFAULT 0,
+      discrepancies_count INT DEFAULT 0,
       last_sync_at  TIMESTAMPTZ,
       created_at    TIMESTAMPTZ DEFAULT NOW(),
       UNIQUE (date, deal_id)
     )
   `);
+  await pool.query(`ALTER TABLE deal_sync_summary ADD COLUMN IF NOT EXISTS discrepancies_count INT DEFAULT 0`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS monitor_aggregation_runs (
       aggregated_date DATE PRIMARY KEY,

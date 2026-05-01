@@ -51,12 +51,26 @@ function SummaryBar({ summary }) {
   );
 }
 
+const monthNames = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+
 export default function DealSyncMonitor() {
   const [availableDates, setAvailableDates] = useState([]);
+  const [selectedYearMonth, setSelectedYearMonth] = useState(null);
   const [selectedDate, setSelectedDate]     = useState(null);
   const [data, setData]                     = useState(null);
   const [loading, setLoading]               = useState(true);
   const [error, setError]                   = useState(null);
+
+  // Group dates by year-month key
+  const dateTree = availableDates.reduce((tree, d) => {
+    const [y, m] = d.split('-');
+    const key = `${y}-${m}`;
+    if (!tree[key]) tree[key] = { year: y, month: m, dates: [] };
+    tree[key].dates.push(d);
+    return tree;
+  }, {});
+
+  const yearMonthKeys = Object.keys(dateTree); // sorted desc by API
 
   // Load available dates once
   useEffect(() => {
@@ -65,11 +79,24 @@ export default function DealSyncMonitor() {
       .then(json => {
         const dates = json.dates || [];
         setAvailableDates(dates);
-        if (dates.length > 0) setSelectedDate(dates[0]); // most recent
-        else setLoading(false);
+        if (dates.length > 0) {
+          const [y, m] = dates[0].split('-');
+          const firstKey = `${y}-${m}`;
+          setSelectedYearMonth(firstKey);
+          setSelectedDate(dates[0]);
+        } else {
+          setLoading(false);
+        }
       })
       .catch(() => setLoading(false));
   }, []);
+
+  // When year-month changes, auto-select most recent date in that month
+  const handleYearMonthChange = (key) => {
+    setSelectedYearMonth(key);
+    const datesInMonth = dateTree[key]?.dates || [];
+    if (datesInMonth.length > 0) setSelectedDate(datesInMonth[0]);
+  };
 
   // Load summary when date changes
   useEffect(() => {
@@ -88,16 +115,17 @@ export default function DealSyncMonitor() {
 
   const logsApiUrl = 'https://render-agent-a-mvp.onrender.com/api/logs/query';
 
-  // Group available dates by year → month
-  const dateTree = availableDates.reduce((tree, d) => {
-    const [y, m] = d.split('-');
-    const key = `${y}-${m}`;
-    if (!tree[key]) tree[key] = { year: y, month: m, dates: [] };
-    tree[key].dates.push(d);
-    return tree;
-  }, {});
+  const selectStyle = {
+    background: '#1e293b',
+    border: '1px solid rgba(255,255,255,0.12)',
+    borderRadius: '6px',
+    color: '#f1f5f9',
+    padding: '4px 8px',
+    fontSize: '13px',
+    cursor: 'pointer',
+  };
 
-  const monthNames = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  const datesInSelectedMonth = selectedYearMonth ? (dateTree[selectedYearMonth]?.dates || []) : [];
 
   return (
     <div style={{ marginBottom: '32px' }}>
@@ -115,29 +143,31 @@ export default function DealSyncMonitor() {
         </a>
       </div>
 
-      {/* Date picker — only available dates */}
+      {/* Two-level date picker */}
       {availableDates.length > 0 && (
         <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Дата:</span>
+          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Период:</span>
+          <select
+            value={selectedYearMonth || ''}
+            onChange={e => handleYearMonthChange(e.target.value)}
+            style={selectStyle}
+          >
+            {yearMonthKeys.map(key => {
+              const { year, month } = dateTree[key];
+              return (
+                <option key={key} value={key}>
+                  {monthNames[parseInt(month, 10) - 1]} {year}
+                </option>
+              );
+            })}
+          </select>
           <select
             value={selectedDate || ''}
             onChange={e => setSelectedDate(e.target.value)}
-            style={{
-              background: '#1e293b',
-              border: '1px solid rgba(255,255,255,0.12)',
-              borderRadius: '6px',
-              color: '#f1f5f9',
-              padding: '4px 8px',
-              fontSize: '13px',
-              cursor: 'pointer',
-            }}
+            style={selectStyle}
           >
-            {Object.values(dateTree).map(({ year, month, dates }) => (
-              <optgroup key={`${year}-${month}`} label={`${monthNames[parseInt(month,10)-1]} ${year}`}>
-                {dates.map(d => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </optgroup>
+            {datesInSelectedMonth.map(d => (
+              <option key={d} value={d}>{d}</option>
             ))}
           </select>
         </div>
