@@ -10,6 +10,7 @@
  */
 
 import { logger } from '../logging/logger.js';
+import { getValidAccessToken } from '../shopify/adminClient.js';
 
 // ============ SECTION MAPPING ============
 export const SECTION_MAP = {
@@ -47,8 +48,7 @@ const SIZE_ENUM_MAP = {
 
 // ============ CREDENTIALS ============
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE || "83bfa8-c4.myshopify.com";
-const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN || "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";
-const BITRIX_WEBHOOK = process.env.BITRIX_WEBHOOK_BASE || "https://bfcshoes.bitrix24.eu/rest/52/zrbhiktlam8mz1yr/";
+const BITRIX_WEBHOOK = process.env.BITRIX_WEBHOOK_BASE;
 
 // ============ UTILITIES ============
 function getSizeEnumId(sizeText) {
@@ -91,7 +91,7 @@ async function fetchShopifyProducts(progressCallback) {
 
         const response = await fetch(url, {
             headers: {
-                'X-Shopify-Access-Token': SHOPIFY_TOKEN,
+                'X-Shopify-Access-Token': await getValidAccessToken(),
                 'Content-Type': 'application/json'
             }
         });

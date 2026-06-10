@@ -5,9 +5,9 @@
  */
 
 import { callBitrix } from '../bitrix/client.js';
+import { getValidAccessToken } from '../shopify/adminClient.js';
 
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE || "83bfa8-c4.myshopify.com";
-const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN || "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";
 
 const BATCH_SIZE = 50; // Increased batch size for efficiency
 const DELAY_BETWEEN_BATCHES_MS = 1000; // Reduced delay
@@ -65,7 +65,7 @@ async function getShopifyImagesBulk(variantIds) {
         // Shopify limits ids parameter to ~100 usually. We process in batch of 50 so it fits.
         const variantsUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/variants.json?ids=${validVariantIds.join(',')}&fields=id,product_id,image_id`;
         const variantsResp = await fetch(variantsUrl, {
-            headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN }
+            headers: { 'X-Shopify-Access-Token': await getValidAccessToken() }
         });
 
         if (!variantsResp.ok) {
@@ -85,7 +85,7 @@ async function getShopifyImagesBulk(variantIds) {
         // Split productIds if > 50 (unlikely for 50 variants but possible)
         const productsUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/products.json?ids=${productIds.join(',')}&fields=id,images,image`;
         const productsResp = await fetch(productsUrl, {
-            headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN }
+            headers: { 'X-Shopify-Access-Token': await getValidAccessToken() }
         });
 
         if (!productsResp.ok) {

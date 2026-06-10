@@ -15,6 +15,7 @@ import skuMappingSemantic from './skuMappingSemantic.json' assert { type: 'json'
 // ✅ NEW: Category-based mapping with hybrid search (cache + Bitrix API)
 import { findProductIdBySku, loadAllMappings } from './mappingUtils.js';
 import { resolveResponsibleId } from './responsible.js';
+import { callShopifyAdmin } from '../shopify/adminClient.js';
 
 // Known certificate variant_id -> Bitrix PRODUCT_ID mapping (fallback when SKU is missing)
 // Based on provided Shopify variants for E-Certificate
@@ -150,27 +151,17 @@ function getSectionIdBySku(sku) {
 }
 
 // ============ SHOPIFY IMAGE HELPERS ============
-const SHOPIFY_STORE = "83bfa8-c4.myshopify.com";
-const SHOPIFY_TOKEN = "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";
 
 async function getShopifyImageBase64(variantId) {
   try {
     // 1. Get Variant to find image_id and product_id
-    const vUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/variants/${variantId}.json`;
-    const vResp = await fetch(vUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
-    if (!vResp.ok) return null;
-
-    const vData = await vResp.json();
+    const vData = await callShopifyAdmin(`/variants/${variantId}.json`);
     const variant = vData.variant;
 
     if (!variant || !variant.image_id) return null;
 
     // 2. Get Product Image URL
-    const pUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${variant.product_id}/images/${variant.image_id}.json`;
-    const pResp = await fetch(pUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
-    if (!pResp.ok) return null;
-
-    const pData = await pResp.json();
+    const pData = await callShopifyAdmin(`/products/${variant.product_id}/images/${variant.image_id}.json`);
     const imageUrl = pData.image ? pData.image.src : null;
 
     if (!imageUrl) return null;
@@ -191,20 +182,12 @@ async function getShopifyImageBase64(variantId) {
 async function getShopifyProductDescription(variantId) {
   try {
     // 1. Get Variant to find product_id
-    const vUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/variants/${variantId}.json`;
-    const vResp = await fetch(vUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
-    if (!vResp.ok) return null;
-
-    const vData = await vResp.json();
+    const vData = await callShopifyAdmin(`/variants/${variantId}.json`);
     const productId = vData.variant?.product_id;
     if (!productId) return null;
 
     // 2. Get Product Description (body_html)
-    const pUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${productId}.json`;
-    const pResp = await fetch(pUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
-    if (!pResp.ok) return null;
-
-    const pData = await pResp.json();
+    const pData = await callShopifyAdmin(`/products/${productId}.json`);
     return pData.product?.body_html || "";
 
   } catch (e) {
@@ -220,20 +203,12 @@ async function getShopifyProductDescription(variantId) {
 async function getShopifyProductMetadata(variantId) {
   try {
     // 1. Get Variant to find product_id
-    const vUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/variants/${variantId}.json`;
-    const vResp = await fetch(vUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
-    if (!vResp.ok) return null;
-
-    const vData = await vResp.json();
+    const vData = await callShopifyAdmin(`/variants/${variantId}.json`);
     const variant = vData.variant;
     if (!variant?.product_id) return null;
 
     // 2. Get Product
-    const pUrl = `https://${SHOPIFY_STORE}/admin/api/2024-01/products/${variant.product_id}.json`;
-    const pResp = await fetch(pUrl, { headers: { "X-Shopify-Access-Token": SHOPIFY_TOKEN } });
-    if (!pResp.ok) return null;
-
-    const pData = await pResp.json();
+    const pData = await callShopifyAdmin(`/products/${variant.product_id}.json`);
     const product = pData.product;
 
     // 3. Parse Size/Color from Options (like sync_inventory_batch.py)

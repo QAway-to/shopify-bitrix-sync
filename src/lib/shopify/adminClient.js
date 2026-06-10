@@ -1,87 +1,144 @@
 /**
  * Shopify Admin API Client
- * Uses Shopify Admin API token for authenticated requests
+ * Authenticates via OAuth 2.0 client_credentials grant (Shopify Jan 2026+)
  */
 
 const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_24_DOMAIN || process.env.SHOPIFY_STORE_DOMAIN || '83bfa8-c4.myshopify.com';
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-01';
 
-const SHOPIFY_ADMIN_TOKEN_ENV_KEYS = [
-  'SHOPIFY_24_ADMIN',
-  'SHOPIFY_ADMIN_TOKEN',
-  'SHOPIFY_ADMIN_API_ACCESS_TOKEN',
-  'SHOPIFY_ACCESS_TOKEN',
-  'SHOPIFY_TOKEN',
-];
+let _tokenCache = null;   // { accessToken: string, expiresAtMs: number }
+let _inflightFetch = null; // Promise<string> | null
 
 /**
- * Resolve Shopify Admin token from environment.
- * This intentionally supports multiple env var names because different deploy setups use different conventions.
+ * Request a new access token from Shopify using client credentials.
+ * Writes result to _tokenCache before returning. Always clears _inflightFetch.
  */
-export function getShopifyAdminToken() {
-  for (const key of SHOPIFY_ADMIN_TOKEN_ENV_KEYS) {
-    const v = process.env[key];
-    if (typeof v === 'string' && v.trim() !== '') return v.trim();
+export async function getValidAccessToken() {
+  const now = Date.now();
+  if (_tokenCache && now < _tokenCache.expiresAtMs - 60 * 60 * 1000) {
+    return _tokenCache.accessToken;
   }
-  return null;
-}
 
-function requireShopifyAdminToken() {
-  const token = getShopifyAdminToken();
-  if (!token) {
-    throw new Error(
-      `Shopify Admin token is not configured. Set one of: ${SHOPIFY_ADMIN_TOKEN_ENV_KEYS.join(', ')}`
-    );
-  }
-  return token;
+  if (_inflightFetch) return _inflightFetch;
+
+  _inflightFetch = (async () => {
+    try {
+      const clientId = process.env.SHOPIFY_CLIENT_ID;
+      const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
+
+      if (!clientId || !clientSecret) {
+        throw new Error('Shopify OAuth credentials not configured. Set SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET.');
+      }
+
+      const domain = SHOPIFY_STORE_DOMAIN.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const response = await fetch(`https://${domain}/admin/oauth/access_token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: clientId,
+          client_secret: clientSecret,
+        }).toString(),
+      });
+
+      const body = await response.json();
+
+      if (!response.ok || body.error) {
+        throw new Error(`Shopify OAuth error: ${body.error || response.status}`);
+      }
+
+      const expiresIn = typeof body.expires_in === 'number' ? body.expires_in : 86399;
+      _tokenCache = {
+        accessToken: body.access_token,
+        expiresAtMs: Date.now() + expiresIn * 1000,
+      };
+
+      return _tokenCache.accessToken;
+    } finally {
+      _inflightFetch = null;
+    }
+  })();
+
+  return _inflightFetch;
 }
 
 /**
- * Get Shopify Admin API base URL
+ * Get Shopify Admin API base URL. Synchronous — validates env, no network I/O.
  */
 export function getShopifyAdminBase() {
-  requireShopifyAdminToken();
+  if (!process.env.SHOPIFY_CLIENT_ID || !process.env.SHOPIFY_CLIENT_SECRET) {
+    throw new Error('Shopify OAuth credentials not configured. Set SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET.');
+  }
 
-  // Remove protocol if present, ensure it's just the domain
   const domain = SHOPIFY_STORE_DOMAIN.replace(/^https?:\/\//, '').replace(/\/$/, '');
-
   return `https://${domain}/admin/api/${SHOPIFY_API_VERSION}`;
 }
 
 /**
- * Make authenticated request to Shopify Admin API
- * @param {string} endpoint - API endpoint (e.g., '/orders.json')
- * @param {object} options - Fetch options (method, body, etc.)
- * @returns {Promise<object>} Response JSON
+ * Internal fetch wrapper: injects auth header, handles 401 with single retry.
+ * @param {string} url
+ * @param {object} fetchOptions
+ * @param {boolean} retried - prevents infinite retry loop
  */
-export async function callShopifyAdmin(endpoint, options = {}) {
-  const baseUrl = getShopifyAdminBase();
-  const url = `${baseUrl}${endpoint}`;
-  const token = requireShopifyAdminToken();
+async function shopifyFetch(url, fetchOptions = {}, retried = false) {
+  const token = await getValidAccessToken();
 
   const headers = {
     'Content-Type': 'application/json',
     'X-Shopify-Access-Token': token,
-    ...options.headers,
+    ...fetchOptions.headers,
   };
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  const response = await fetch(url, { ...fetchOptions, headers });
+
+  if (response.status === 401 && !retried) {
+    _tokenCache = null;
+    return shopifyFetch(url, fetchOptions, true);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Shopify Admin API error (${response.status}): ${errorText}`);
+    throw new Error(`Shopify API error (${response.status}): ${errorText}`);
   }
 
-  return await response.json();
+  return response.json();
 }
 
 /**
- * Get order by ID from Shopify Admin API
- * @param {string|number} orderId - Shopify order ID
- * @returns {Promise<object>} Order object
+ * Make authenticated request to Shopify Admin REST API.
+ * @param {string} endpoint - e.g. '/orders.json'
+ * @param {object} options - fetch options (method, body, etc.)
+ */
+export async function callShopifyAdmin(endpoint, options = {}) {
+  const baseUrl = getShopifyAdminBase();
+  return shopifyFetch(`${baseUrl}${endpoint}`, options);
+}
+
+/**
+ * Make authenticated GraphQL request to Shopify Admin API.
+ * @param {string} query
+ * @param {object} variables
+ */
+export async function callShopifyGraphQL(query, variables = {}) {
+  const domain = SHOPIFY_STORE_DOMAIN.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const url = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+
+  const result = await shopifyFetch(url, {
+    method: 'POST',
+    body: JSON.stringify({ query, variables }),
+  });
+
+  if (result.errors && result.errors.length > 0) {
+    const errorMessages = result.errors.map(e => e.message).join('; ');
+    throw new Error(`Shopify GraphQL errors: ${errorMessages}`);
+  }
+
+  return result.data;
+}
+
+/**
+ * Get order by ID.
+ * @param {string|number} orderId
  */
 export async function getOrder(orderId) {
   const response = await callShopifyAdmin(`/orders/${orderId}.json`);
@@ -89,10 +146,9 @@ export async function getOrder(orderId) {
 }
 
 /**
- * Update order in Shopify (if needed in future)
- * @param {string|number} orderId - Shopify order ID
- * @param {object} orderData - Order data to update
- * @returns {Promise<object>} Updated order
+ * Update order in Shopify.
+ * @param {string|number} orderId
+ * @param {object} orderData
  */
 export async function updateOrder(orderId, orderData) {
   const response = await callShopifyAdmin(`/orders/${orderId}.json`, {
@@ -103,64 +159,10 @@ export async function updateOrder(orderId, orderData) {
 }
 
 /**
- * Make GraphQL request to Shopify Admin API
- * @param {string} query - GraphQL query string
- * @param {object} variables - GraphQL variables (optional)
- * @returns {Promise<object>} GraphQL response data
- */
-export async function callShopifyGraphQL(query, variables = {}) {
-  const token = requireShopifyAdminToken();
-
-  // GraphQL endpoint: https://{domain}/admin/api/{version}/graphql.json
-  const domain = SHOPIFY_STORE_DOMAIN.replace(/^https?:\/\//, '').replace(/\/$/, '');
-  const url = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
-
-  const headers = {
-    'Content-Type': 'application/json',
-    'X-Shopify-Access-Token': token,
-  };
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      query,
-      variables,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Shopify GraphQL API error (${response.status}): ${errorText}`);
-  }
-
-  const result = await response.json();
-
-  // Check for GraphQL errors
-  if (result.errors && result.errors.length > 0) {
-    const errorMessages = result.errors.map(e => e.message).join('; ');
-    throw new Error(`Shopify GraphQL errors: ${errorMessages}`);
-  }
-
-  return result.data;
-}
-
-/**
- * Find Shopify variant by attributes (Brand, Model, Size)
- * Based on user's working Python script:
- * - Filter by TITLE (model) instead of vendor (vendor data may be empty/wrong)
- * - Check brand in BOTH vendor AND title
- * - Fuzzy size matching (size IN option value)
- * 
- * @param {Object} criteria
- * @param {string} criteria.brand - Brand name (checked in vendor or title)
- * @param {string} criteria.model - Model name (used for API title filter)
- * @param {string} criteria.size - Size value
- * @returns {Promise<Object|null>} Found variant or null
+ * Find Shopify variant by brand, model, size.
  */
 export async function findShopifyVariantByAttributes({ brand, model, size }) {
   try {
-    // Use TITLE filter instead of vendor (this is the key fix!)
     const endpoint = `/products.json?limit=50&title=${encodeURIComponent(model)}`;
     const response = await callShopifyAdmin(endpoint);
     const products = response.products || [];
@@ -169,28 +171,15 @@ export async function findShopifyVariantByAttributes({ brand, model, size }) {
     const targetModel = model.toLowerCase().trim();
     const targetSize = String(size).toLowerCase().trim();
 
-    // Debug: Log what we're searching for and what we found
-    console.log(JSON.stringify({
-      event: 'FIND_VARIANT_DEBUG',
-      searchCriteria: { brand, model, size },
-      productsFound: products.length,
-      productTitles: products.slice(0, 5).map(p => ({ title: p.title, vendor: p.vendor })),
-      timestamp: new Date().toISOString()
-    }));
-
     for (const product of products) {
       const pTitle = product.title.toLowerCase();
       const pVendor = (product.vendor || '').toLowerCase();
 
-      // Check brand in BOTH vendor AND title (like Python script)
       const brandMatch = pVendor.includes(targetBrand) || pTitle.includes(targetBrand);
-
-      // Check model in title
       const modelMatch = pTitle.includes(targetModel);
 
       if (!brandMatch || !modelMatch) continue;
 
-      // Check variants for size match
       for (const variant of product.variants) {
         const vOptions = [
           String(variant.option1 || '').toLowerCase().trim(),
@@ -198,30 +187,22 @@ export async function findShopifyVariantByAttributes({ brand, model, size }) {
           String(variant.option3 || '').toLowerCase().trim()
         ];
 
-        // Exact match first
         if (vOptions.includes(targetSize)) {
-          console.log(`[FIND VARIANT] ✅ Found exact match: ${product.title} - Size ${size}`);
           return formatVariantResult(variant, product);
         }
 
-        // Fuzzy match: size contained in option (e.g., "40" in "EU 40" or "40 (Toddler)")
         if (vOptions.some(opt => opt && opt.includes(targetSize))) {
-          console.log(`[FIND VARIANT] ✅ Found fuzzy match: ${product.title} - Size ${size}`);
           return formatVariantResult(variant, product);
         }
       }
     }
 
-    // No match found
-    console.warn(`[FIND VARIANT] No match for ${brand} ${model} ${size} in ${products.length} products`);
     return null;
   } catch (error) {
-    console.error(`[FIND VARIANT] Error searching Shopify (REST): ${error.message}`);
-    throw error;
+    throw new Error(`Shopify variant search failed: ${error.message}`);
   }
 }
 
-// Helper to format variant result consistently
 function formatVariantResult(variant, product) {
   return {
     variant: {
@@ -240,38 +221,26 @@ function formatVariantResult(variant, product) {
 }
 
 /**
- * Create a pending order in Shopify for Pre-order
- * @param {string} variantGraphQLId - Variant ID (gid://...)
- * @param {Object} options - extra fields (dealId, email, customer, etc.)
- * @param {string} options.dealId - Bitrix deal ID
- * @param {string} options.email - Customer email
- * @param {Object} options.customer - Customer data { firstName, lastName, phone, address }
+ * Create a pending order in Shopify for Pre-order.
+ * @param {string} variantGraphQLId
+ * @param {object} options - dealId, email, customer, customerId
  */
 export async function createShopifyOrderForPreorder(variantGraphQLId, options = {}) {
-  // Convert GID to numeric ID if needed (REST API often takes numeric, but variant_id can handle string sometimes?)
-  // Actually REST API needs numeric variant_id usually.
   const variantId = variantGraphQLId.split('/').pop();
 
   const orderData = {
-    line_items: [
-      {
-        variant_id: Number(variantId),
-        quantity: 1
-      }
-    ],
+    line_items: [{ variant_id: Number(variantId), quantity: 1 }],
     financial_status: 'pending',
     tags: `Bitrix Pre-order, BITRIX:${options.dealId || ''}`,
     note: `Pre-order from Bitrix Deal #${options.dealId || ''}`,
   };
 
-  // Customer handling
   if (options.customerId) {
     orderData.customer = { id: options.customerId };
   } else if (options.email) {
     orderData.email = options.email;
   }
 
-  // ✅ Build shipping/billing address from customer data
   const customer = options.customer || {};
   const addressObj = {
     first_name: customer.firstName || 'Preorder',
@@ -293,9 +262,8 @@ export async function createShopifyOrderForPreorder(variantGraphQLId, options = 
 
   const response = await callShopifyAdmin('/orders.json', {
     method: 'POST',
-    body: JSON.stringify({ order: orderData })
+    body: JSON.stringify({ order: orderData }),
   });
 
   return response.order;
 }
-

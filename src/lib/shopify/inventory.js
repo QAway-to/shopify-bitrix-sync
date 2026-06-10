@@ -3,7 +3,7 @@
  * Handles fetching product variants and inventory quantities from Shopify
  */
 
-import { getShopifyAdminBase, getShopifyAdminToken } from './adminClient.js';
+import { getShopifyAdminBase, getValidAccessToken } from './adminClient.js';
 import { getCategoryByHandle } from '../bitrix/mappingUtils.js';
 import { logger } from '../logging/logger.js';
 
@@ -36,7 +36,7 @@ export async function getProductVariantsByTitle(productTitle) {
 
       const fetchResponse = await fetch(url.toString(), {
         headers: {
-          'X-Shopify-Access-Token': getShopifyAdminToken(),
+          'X-Shopify-Access-Token': await getValidAccessToken(),
           'Content-Type': 'application/json'
         }
       });
@@ -126,7 +126,7 @@ export async function getProductVariantsByHandle(handle) {
     const fetchResponse = await fetch(url.toString(), {
       method: 'GET',
       headers: {
-        'X-Shopify-Access-Token': getShopifyAdminToken(),
+        'X-Shopify-Access-Token': await getValidAccessToken(),
         'Content-Type': 'application/json'
       }
     });
@@ -222,7 +222,7 @@ export async function getAllProductsFromShopify() {
 
       const fetchResponse = await fetch(url.toString(), {
         headers: {
-          'X-Shopify-Access-Token': getShopifyAdminToken(),
+          'X-Shopify-Access-Token': await getValidAccessToken(),
           'Content-Type': 'application/json'
         }
       });
