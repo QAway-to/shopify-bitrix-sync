@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react';
 
 const STATUS_CONFIG = {
-  ok:         { label: '✅ OK',        color: '#10b981', bg: 'rgba(16,185,129,0.1)' },
-  errors:     { label: '❌ Ошибки',    color: '#ef4444', bg: 'rgba(239,68,68,0.1)'  },
-  orphans:    { label: '⚠️ Orphans',   color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
-  no_changes: { label: '— Без изм.',   color: '#6b7280', bg: 'rgba(107,114,128,0.1)'},
+  critical:   { label: 'Critical',  color: '#ef4444', bg: 'rgba(239,68,68,0.1)'   },
+  warning:    { label: 'Warning',   color: '#f59e0b', bg: 'rgba(245,158,11,0.1)'  },
+  ok:         { label: 'OK',        color: '#10b981', bg: 'rgba(16,185,129,0.1)'  },
+  quiet:      { label: 'Quiet',     color: '#6b7280', bg: 'rgba(107,114,128,0.1)' },
+  // legacy values from old records
+  errors:     { label: 'Warning',   color: '#f59e0b', bg: 'rgba(245,158,11,0.1)'  },
+  orphans:    { label: 'Warning',   color: '#f59e0b', bg: 'rgba(245,158,11,0.1)'  },
+  no_changes: { label: 'Quiet',     color: '#6b7280', bg: 'rgba(107,114,128,0.1)' },
 };
 
 function StatusBadge({ status }) {
-  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.no_changes;
+  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.quiet;
   return (
     <span style={{
       display: 'inline-block',
@@ -30,11 +34,11 @@ function SummaryBar({ summary }) {
   return (
     <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
       {[
-        { label: 'Всего сделок', value: summary.total,       color: '#94a3b8' },
-        { label: 'OK',           value: summary.ok,           color: '#10b981' },
-        { label: 'Ошибки',       value: summary.withErrors,   color: '#ef4444' },
-        { label: 'Orphans',      value: summary.withOrphans,  color: '#f59e0b' },
-        { label: 'Без изменений',value: summary.noChanges,    color: '#6b7280' },
+        { label: 'Total',    value: summary.total,    color: '#94a3b8' },
+        { label: 'OK',       value: summary.ok,       color: '#10b981' },
+        { label: 'Critical', value: summary.critical, color: '#ef4444' },
+        { label: 'Warning',  value: summary.warning,  color: '#f59e0b' },
+        { label: 'Quiet',    value: summary.quiet,    color: '#6b7280' },
       ].map(({ label, value, color }) => (
         <div key={label} style={{
           padding: '8px 14px',
@@ -51,7 +55,7 @@ function SummaryBar({ summary }) {
   );
 }
 
-const monthNames = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 export default function DealSyncMonitor() {
   const [availableDates, setAvailableDates] = useState([]);
@@ -131,7 +135,7 @@ export default function DealSyncMonitor() {
     <div style={{ marginBottom: '32px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: '#f1f5f9', margin: 0 }}>
-          Монитор синхронизации
+          Sync Monitor
         </h2>
         <a
           href={logsApiUrl}
@@ -139,14 +143,14 @@ export default function DealSyncMonitor() {
           rel="noopener noreferrer"
           style={{ fontSize: '12px', color: '#3b82f6', textDecoration: 'none' }}
         >
-          API логов →
+          Logs API →
         </a>
       </div>
 
       {/* Two-level date picker */}
       {availableDates.length > 0 && (
         <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Период:</span>
+          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Period:</span>
           <select
             value={selectedYearMonth || ''}
             onChange={e => handleYearMonthChange(e.target.value)}
@@ -174,11 +178,11 @@ export default function DealSyncMonitor() {
       )}
 
       {loading && (
-        <p style={{ color: '#94a3b8', fontSize: '13px' }}>Загрузка...</p>
+        <p style={{ color: '#94a3b8', fontSize: '13px' }}>Loading...</p>
       )}
 
       {error && (
-        <p style={{ color: '#ef4444', fontSize: '13px' }}>Ошибка: {error}</p>
+        <p style={{ color: '#ef4444', fontSize: '13px' }}>Error: {error}</p>
       )}
 
       {!loading && !error && data && (
@@ -186,13 +190,13 @@ export default function DealSyncMonitor() {
           <SummaryBar summary={data.summary} />
 
           {data.deals.length === 0 ? (
-            <p style={{ color: '#94a3b8', fontSize: '13px' }}>Нет данных за {data.date}</p>
+            <p style={{ color: '#94a3b8', fontSize: '13px' }}>No data for {data.date}</p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', color: '#94a3b8' }}>
-                    {['Сделка','Заказ','Синков','Добавл.','Изм. кол','Orphans','Ошибки','Статус'].map(h => (
+                    {['Deal','Order','Syncs','Added','Qty Changes','Orphans','Errors','Status'].map(h => (
                       <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -228,7 +232,7 @@ export default function DealSyncMonitor() {
 
       {!loading && !error && availableDates.length === 0 && (
         <p style={{ color: '#94a3b8', fontSize: '13px' }}>
-          Данных пока нет. Монитор заполнится после первой агрегации в 10:00 МСК.
+          No data yet. Monitor populates after first aggregation at 10:00 MSK.
         </p>
       )}
     </div>

@@ -157,11 +157,18 @@ async function aggregateYesterday() {
     }
 
     for (const agg of byDeal.values()) {
+      // errorRatio is 0 when syncs_count === 0 (no syncs recorded yet)
+      const errorRatio = agg.syncs_count > 0 ? agg.errors_count / agg.syncs_count : 0;
+      const allFailed = agg.errors_count > 0 && (agg.added + agg.incremented + agg.decremented) === 0;
+
       const status =
-        agg.errors_count  > 0 ? 'errors'
-        : agg.orphans_count > 0 ? 'orphans'
-        : agg.added + agg.incremented + agg.decremented > 0 ? 'ok'
-        : 'no_changes';
+        (errorRatio >= 0.5 && agg.errors_count >= 3) || (allFailed && agg.errors_count >= 2)
+          ? 'critical'
+        : agg.errors_count > 0 || agg.orphans_count > 0
+          ? 'warning'
+        : agg.added + agg.incremented + agg.decremented > 0
+          ? 'ok'
+        : 'quiet';
 
       await pool.query(
         `INSERT INTO deal_sync_summary
@@ -233,7 +240,7 @@ export default async function handler(req, res) {
        FROM deal_sync_summary
        WHERE date = $1
        ORDER BY
-         CASE status WHEN 'errors' THEN 0 WHEN 'orphans' THEN 1 WHEN 'ok' THEN 2 ELSE 3 END,
+         CASE status WHEN 'critical' THEN 0 WHEN 'errors' THEN 0 WHEN 'warning' THEN 1 WHEN 'orphans' THEN 1 WHEN 'ok' THEN 2 ELSE 3 END,
          CASE WHEN deal_id ~ '^\d+$' THEN deal_id::bigint END DESC NULLS LAST`,
       [date]
     );
@@ -242,11 +249,11 @@ export default async function handler(req, res) {
     return res.status(200).json({
       date,
       summary: {
-        total:       rows.length,
-        ok:          rows.filter(r => r.status === 'ok').length,
-        withErrors:  rows.filter(r => r.status === 'errors').length,
-        withOrphans: rows.filter(r => r.status === 'orphans').length,
-        noChanges:   rows.filter(r => r.status === 'no_changes').length,
+        total:    rows.length,
+        ok:       rows.filter(r => r.status === 'ok').length,
+        critical: rows.filter(r => r.status === 'critical').length,
+        warning:  rows.filter(r => r.status === 'warning' || r.status === 'errors' || r.status === 'orphans').length,
+        quiet:    rows.filter(r => r.status === 'quiet' || r.status === 'no_changes').length,
       },
       deals: rows,
     });

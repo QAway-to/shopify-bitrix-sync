@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-const monthNames = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 const selectStyle = {
   background: '#1e293b',
@@ -36,9 +36,9 @@ function PositionDiffRow({ diff }) {
     missing_in_bitrix:  '#3b82f6',
   };
   const labels = {
-    qty_mismatch:       'Кол-во',
-    missing_in_shopify: 'Нет в Shopify',
-    missing_in_bitrix:  'Нет в Bitrix',
+    qty_mismatch:       'Qty mismatch',
+    missing_in_shopify: 'Missing in Shopify',
+    missing_in_bitrix:  'Missing in Bitrix',
   };
   const color = colors[diff.type] || '#94a3b8';
   return (
@@ -86,7 +86,7 @@ function DealRow({ deal }) {
         </td>
         <td style={{ padding: '8px 10px' }}>
           {deal.has_discrepancy
-            ? <span style={{ color: '#ef4444', fontSize: '12px', fontWeight: 600 }}>Расхождение</span>
+            ? <span style={{ color: '#ef4444', fontSize: '12px', fontWeight: 600 }}>Mismatch</span>
             : <span style={{ color: '#10b981', fontSize: '12px' }}>OK</span>}
         </td>
       </tr>
@@ -165,12 +165,12 @@ export default function DealSnapshotMonitor() {
       const res = await fetch('/api/monitor/snapshot', { method: 'POST' });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(body.error || `Ошибка запуска (${res.status})`);
+        setError(body.error || `Failed to start (${res.status})`);
         setTriggering(false);
         return;
       }
       if (body.skipped) {
-        setError('Снапшот за сегодня уже выполнен');
+        setError('Snapshot already completed for today');
         setTriggering(false);
         return;
       }
@@ -179,7 +179,7 @@ export default function DealSnapshotMonitor() {
         setTriggering(false);
       }, 2000);
     } catch {
-      setError('Ошибка сети');
+      setError('Network error');
       setTriggering(false);
     }
   };
@@ -191,13 +191,13 @@ export default function DealSnapshotMonitor() {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: '#f1f5f9', margin: 0 }}>
-          Сравнение сделок
+          Deal Comparison
         </h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {lastRun && (
             <span style={{ fontSize: '11px', color: lastRun.status === 'success' ? '#10b981' : lastRun.status === 'failed' ? '#ef4444' : '#94a3b8' }}>
               {lastRun.date} · {lastRun.status}
-              {lastRun.deals_checked != null ? ` · ${lastRun.deals_checked} сделок` : ''}
+              {lastRun.deals_checked != null ? ` · ${lastRun.deals_checked} deals` : ''}
             </span>
           )}
           <button
@@ -213,7 +213,7 @@ export default function DealSnapshotMonitor() {
               cursor: triggering ? 'not-allowed' : 'pointer',
             }}
           >
-            {triggering ? '...' : 'Запустить'}
+            {triggering ? '...' : 'Run'}
           </button>
         </div>
       </div>
@@ -221,7 +221,7 @@ export default function DealSnapshotMonitor() {
       {/* Date picker */}
       {availableDates.length > 0 && (
         <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Период:</span>
+          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Period:</span>
           <select value={selectedYearMonth || ''} onChange={e => handleYearMonthChange(e.target.value)} style={selectStyle}>
             {yearMonthKeys.map(key => {
               const { year, month } = dateTree[key];
@@ -234,19 +234,19 @@ export default function DealSnapshotMonitor() {
         </div>
       )}
 
-      {loading && <p style={{ color: '#94a3b8', fontSize: '13px' }}>Загрузка...</p>}
-      {error && <p style={{ color: '#ef4444', fontSize: '13px' }}>Ошибка: {error}</p>}
+      {loading && <p style={{ color: '#94a3b8', fontSize: '13px' }}>Loading...</p>}
+      {error && <p style={{ color: '#ef4444', fontSize: '13px' }}>Error: {error}</p>}
 
       {!loading && !error && data && (
         <>
           {/* Summary bar */}
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '16px' }}>
             {[
-              { label: 'Всего сделок',  value: data.summary.total,            color: '#94a3b8' },
-              { label: 'Расхождения',   value: data.summary.withDiscrepancy,  color: '#ef4444' },
-              { label: 'Статус',        value: data.summary.stageMismatch,    color: '#f59e0b' },
-              { label: 'Сумма',         value: data.summary.totalMismatch,    color: '#f59e0b' },
-              { label: 'Позиции',       value: data.summary.positionMismatch, color: '#f59e0b' },
+              { label: 'Total Deals',   value: data.summary.total,            color: '#94a3b8' },
+              { label: 'Discrepancies', value: data.summary.withDiscrepancy,  color: '#ef4444' },
+              { label: 'Stage',         value: data.summary.stageMismatch,    color: '#f59e0b' },
+              { label: 'Amount',        value: data.summary.totalMismatch,    color: '#f59e0b' },
+              { label: 'Positions',     value: data.summary.positionMismatch, color: '#f59e0b' },
             ].map(({ label, value, color }) => (
               <div key={label} style={{
                 padding: '8px 14px',
@@ -262,13 +262,13 @@ export default function DealSnapshotMonitor() {
           </div>
 
           {data.deals.length === 0 ? (
-            <p style={{ color: '#94a3b8', fontSize: '13px' }}>Нет данных за {data.date}</p>
+            <p style={{ color: '#94a3b8', fontSize: '13px' }}>No data for {data.date}</p>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', color: '#94a3b8' }}>
-                    {['Сделка','Заказ','Статус','Сумма','Позиции','Итог'].map(h => (
+                    {['Deal','Order','Stage','Amount','Positions','Result'].map(h => (
                       <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 500, whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
@@ -278,7 +278,7 @@ export default function DealSnapshotMonitor() {
                 </tbody>
               </table>
               <p style={{ fontSize: '11px', color: '#475569', marginTop: '8px' }}>
-                Нажмите на строку с расхождением позиций чтобы раскрыть детали.
+                Click a row with position discrepancies to expand details.
               </p>
             </div>
           )}
@@ -287,7 +287,7 @@ export default function DealSnapshotMonitor() {
 
       {!loading && !error && availableDates.length === 0 && (
         <p style={{ color: '#94a3b8', fontSize: '13px' }}>
-          Данных нет. Нажмите «Запустить» для первого снапшота.
+          No data yet. Click Run to trigger the first snapshot.
         </p>
       )}
     </div>
