@@ -10,6 +10,7 @@
  */
 
 import { pool } from '../../../src/lib/logging/db.js';
+import { requireAuth } from '../../../src/lib/auth/session.js';
 
 const MSK_OFFSET_HOURS = 3;
 
@@ -206,6 +207,7 @@ async function aggregateYesterday() {
 }
 
 export default async function handler(req, res) {
+  if (!requireAuth(req, res)) return;
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   if (!pool)               return res.status(503).json({ error: 'Database not available' });
 

@@ -9,8 +9,10 @@
  */
 
 import { pool } from '../../../src/lib/logging/db.js';
+import { requireAuth } from '../../../src/lib/auth/session.js';
 
 export default async function handler(req, res) {
+  if (!requireAuth(req, res)) return;
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -79,6 +81,6 @@ export default async function handler(req, res) {
     return res.status(200).send(logText);
   } catch (err) {
     console.error('[logs/download-bitrix] Query failed:', err.message);
-    return res.status(500).json({ error: 'Failed to download Bitrix logs', detail: err.message });
+    return res.status(500).json({ error: 'Failed to download Bitrix logs.' });
   }
 }

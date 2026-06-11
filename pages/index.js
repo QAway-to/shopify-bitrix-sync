@@ -586,11 +586,15 @@ export default function ShopifyPage() {
       return;
     }
     try {
-      const res = await fetch('/api/config/password');
-      const data = await res.json();
-      if (data.success && data.password === unlockPasswordInput.trim()) {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: unlockPasswordInput.trim() }),
+      });
+      if (res.ok) {
         setIsControlsUnlocked(true);
         setUnlockPasswordInput('');
+        setUnlockError('');
       } else {
         setUnlockError('Wrong password');
       }

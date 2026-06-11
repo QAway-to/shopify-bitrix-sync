@@ -15,6 +15,7 @@
 
 import { pool } from '../../../src/lib/logging/db.js';
 import { ensureSnapshotTables, runDealSnapshot } from '../../../src/lib/sync/dealSnapshotCore.js';
+import { requireAuth } from '../../../src/lib/auth/session.js';
 
 const MSK_OFFSET_HOURS = 3;
 
@@ -31,6 +32,7 @@ function getMskDateString(offsetDays = 0) {
 }
 
 export default async function handler(req, res) {
+  if (!requireAuth(req, res)) return;
   if (!['GET', 'POST'].includes(req.method)) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
