@@ -1607,7 +1607,7 @@ async function handleDealUpdate(dealId, requestId) {
   // ✅ Structured logging: [BITRIX_WEBHOOK_RECEIVED]
     logger.info('BITRIX_WEBHOOK_RECEIVED', 'BITRIX_WEBHOOK_RECEIVED', {requestId,
     dealId,
-    eventType: 'UPDATE'});
+    eventType: 'UPDATE'}, { entityType: 'deal', entityId: String(dealId) });
 
   // Get full deal data from Bitrix REST API
   let dealData = null;
@@ -1750,7 +1750,18 @@ async function handleDealUpdate(dealId, requestId) {
   // ✅ STEP C: Check for MW action first (UF_MW_SHOPIFY_ACTION)
   const mwActionResult = await handleMWAction(dealId, requestId, dealData, shopifyOrderId);
   if (mwActionResult !== null) {
-    // MW action was processed (either success or error)
+    if (mwActionResult.success) {
+      try {
+        await callBitrix('/crm.deal.update.json', { id: dealId, fields: { UF_MW_SHOPIFY_ACTION: '' } });
+        logger.info('MW_ACTION_CONSUMED', 'UF_MW_SHOPIFY_ACTION cleared after successful execution', {
+          requestId, dealId, action: mwActionResult.action
+        }, { entityType: 'deal', entityId: String(dealId) });
+      } catch (consumeErr) {
+        logger.warn('MW_ACTION_CONSUME_FAILED', 'Failed to clear UF_MW_SHOPIFY_ACTION (non-blocking)', {
+          requestId, dealId, action: mwActionResult.action, error: consumeErr.message
+        }, { entityType: 'deal', entityId: String(dealId) });
+      }
+    }
     return mwActionResult;
   }
 
@@ -3040,7 +3051,7 @@ async function handleDealCreate(dealId, requestId) {
   // ✅ Structured logging: [BITRIX_WEBHOOK_RECEIVED] (CREATE)
     logger.info('BITRIX_WEBHOOK_RECEIVED', 'BITRIX_WEBHOOK_RECEIVED', {requestId,
     dealId,
-    eventType: 'CREATE'});
+    eventType: 'CREATE'}, { entityType: 'deal', entityId: String(dealId) });
 
   // Get full deal data from Bitrix REST API
   let dealData = null;
@@ -3089,7 +3100,18 @@ async function handleDealCreate(dealId, requestId) {
   // ✅ Check for MW action first (UF_MW_SHOPIFY_ACTION)
   const mwActionResult = await handleMWAction(dealId, requestId, dealData, shopifyOrderId);
   if (mwActionResult !== null) {
-    // MW action was processed (either success or error)
+    if (mwActionResult.success) {
+      try {
+        await callBitrix('/crm.deal.update.json', { id: dealId, fields: { UF_MW_SHOPIFY_ACTION: '' } });
+        logger.info('MW_ACTION_CONSUMED', 'UF_MW_SHOPIFY_ACTION cleared after successful execution', {
+          requestId, dealId, action: mwActionResult.action
+        }, { entityType: 'deal', entityId: String(dealId) });
+      } catch (consumeErr) {
+        logger.warn('MW_ACTION_CONSUME_FAILED', 'Failed to clear UF_MW_SHOPIFY_ACTION (non-blocking)', {
+          requestId, dealId, action: mwActionResult.action, error: consumeErr.message
+        }, { entityType: 'deal', entityId: String(dealId) });
+      }
+    }
     return mwActionResult;
   }
 

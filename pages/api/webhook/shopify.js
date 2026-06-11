@@ -1800,12 +1800,18 @@ async function handleOrderUpdated(order) {
       }
     } else {
       // All items removed — try to clear rows
-      console.log(`[SHOPIFY WEBHOOK] ⚠️ No product rows to update. Attempting to clear product rows in Bitrix.`);
+      logger.warn('SHOPIFY_PRODUCT_ROWS_CLEAR', 'Shopify order has no line items — clearing Bitrix deal product rows', {
+        dealId, shopifyOrderId
+      }, { entityType: 'deal', entityId: String(dealId) });
       try {
         await callBitrix('/crm.deal.productrows.set.json', { id: dealId, rows: [] });
-        console.log(`[SHOPIFY WEBHOOK] ✅ Product rows cleared for deal ${dealId}`);
+        logger.info('SHOPIFY_PRODUCT_ROWS_CLEARED', 'Bitrix deal product rows cleared (order fully refunded/empty)', {
+          dealId, shopifyOrderId
+        }, { entityType: 'deal', entityId: String(dealId) });
       } catch (clearError) {
-        console.error(`[SHOPIFY WEBHOOK] ⚠️ Failed to clear product rows (may be shipped): ${clearError.message}`);
+        logger.warn('SHOPIFY_PRODUCT_ROWS_CLEAR_FAILED', 'Failed to clear product rows (may be shipped)', {
+          dealId, shopifyOrderId, error: clearError.message
+        }, { entityType: 'deal', entityId: String(dealId) });
       }
     }
   } else {
