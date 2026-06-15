@@ -2097,7 +2097,7 @@ async function handleDealUpdate(dealId, requestId) {
     try {
             logger.info('QUANTITY_SYNC_START', 'QUANTITY_SYNC_START', {requestId,
         dealId,
-        shopifyOrderId});
+        shopifyOrderId}, { entityType: 'order', entityId: shopifyOrderId });
       const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
       const shopifyOrder = await getOrder(shopifyOrderId);
 
@@ -2121,11 +2121,11 @@ async function handleDealUpdate(dealId, requestId) {
                     logger.info('QUANTITY_SYNC_BITRIX_ROWS', 'QUANTITY_SYNC_BITRIX_ROWS', {requestId,
             dealId,
             shopifyOrderId,
-            rowsCount: bitrixRows.length});
+            rowsCount: bitrixRows.length}, { entityType: 'order', entityId: shopifyOrderId });
 
           // Get line items from Shopify
           const shopifyLineItems = shopifyOrder.line_items || [];
-          logger.info('quantity_sync_shopify_snapshot', 'Shopify line items snapshot', { requestId, dealId, shopifyOrderId, itemsCount: shopifyLineItems.length, items: shopifyLineItems.map(li => ({ sku: li.sku, variantId: li.variant_id, lineItemId: li.id, quantity: li.quantity, title: li.title, fulfillmentStatus: li.fulfillment_status, fulfillableQuantity: li.fulfillable_quantity })) });
+          logger.info('quantity_sync_shopify_snapshot', 'Shopify line items snapshot', { requestId, dealId, shopifyOrderId, itemsCount: shopifyLineItems.length, items: shopifyLineItems.map(li => ({ sku: li.sku, variantId: li.variant_id, lineItemId: li.id, quantity: li.quantity, title: li.title, fulfillmentStatus: li.fulfillment_status, fulfillableQuantity: li.fulfillable_quantity })) }, { entityType: 'order', entityId: shopifyOrderId });
 
           // Build map of identifier -> { quantity, isVariantId } from Bitrix
           // Priority: XML_ID (Shopify variant ID) first, CODE (SKU) as fallback
@@ -2144,24 +2144,24 @@ async function handleDealUpdate(dealId, requestId) {
                   if (xmlId && xmlId.toString().trim() !== '') {
                     // XML_ID = Shopify variant ID: addPositionToOrder uses it directly
                     bitrixQuantities.set(xmlId.toString().trim(), { quantity, isVariantId: true });
-                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: 'xml_id', identifier: xmlId.toString().trim(), quantity, productName: product.NAME || product.name || null });
+                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: 'xml_id', identifier: xmlId.toString().trim(), quantity, productName: product.NAME || product.name || null }, { entityType: 'order', entityId: shopifyOrderId });
                   } else if (code && code.trim() !== '') {
                     // Numeric-only CODE (≥10 digits) means variant_id was stored as fallback when Shopify sku was empty.
                     // Monitor 'code_as_variant_id' log events — if EAN barcodes are ever used as SKUs this heuristic would misclassify them.
                     const isVariantIdCode = /^\d{10,}$/.test(code.trim());
                     bitrixQuantities.set(code.trim(), { quantity, isVariantId: isVariantIdCode });
-                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: isVariantIdCode ? 'code_as_variant_id' : 'sku', identifier: code.trim(), quantity, productName: product.NAME || product.name || null });
+                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: isVariantIdCode ? 'code_as_variant_id' : 'sku', identifier: code.trim(), quantity, productName: product.NAME || product.name || null }, { entityType: 'order', entityId: shopifyOrderId });
                   } else {
-                    logger.warn('quantity_sync_bitrix_row_sku_missing', 'Bitrix product has no XML_ID or CODE', { requestId, dealId, shopifyOrderId, productId, availableKeys: typeof product === 'object' && product !== null ? Object.keys(product) : [] });
+                    logger.warn('quantity_sync_bitrix_row_sku_missing', 'Bitrix product has no XML_ID or CODE', { requestId, dealId, shopifyOrderId, productId, availableKeys: typeof product === 'object' && product !== null ? Object.keys(product) : [] }, { entityType: 'order', entityId: shopifyOrderId });
                   }
                 }
               } catch (productError) {
-                logger.warn('quantity_sync_product_fetch_error', 'Failed to get Bitrix product', { requestId, dealId, shopifyOrderId, productId, error: productError.message });
+                logger.warn('quantity_sync_product_fetch_error', 'Failed to get Bitrix product', { requestId, dealId, shopifyOrderId, productId, error: productError.message }, { entityType: 'order', entityId: shopifyOrderId });
               }
             }
           }
 
-          logger.info('quantity_sync_bitrix_items', 'Bitrix quantities map built', { requestId, dealId, shopifyOrderId, items: Array.from(bitrixQuantities.entries()).map(([identifier, { quantity, isVariantId }]) => ({ identifier, quantity, isVariantId })) });
+          logger.info('quantity_sync_bitrix_items', 'Bitrix quantities map built', { requestId, dealId, shopifyOrderId, items: Array.from(bitrixQuantities.entries()).map(([identifier, { quantity, isVariantId }]) => ({ identifier, quantity, isVariantId })) }, { entityType: 'order', entityId: shopifyOrderId });
 
           const orphans = shopifyLineItems.filter(li => {
             const varId = li.variant_id ? String(li.variant_id).trim() : null;
@@ -2170,7 +2170,7 @@ async function handleDealUpdate(dealId, requestId) {
             return !bitrixQuantities.has(varId) && !bitrixQuantities.has(sku);
           });
           if (orphans.length > 0) {
-            logger.warn('quantity_sync_shopify_orphans', 'Shopify items not found in Bitrix', { requestId, dealId, shopifyOrderId, orphans: orphans.map(li => ({ sku: li.sku, variantId: li.variant_id, lineItemId: li.id, quantity: li.quantity })) });
+            logger.warn('quantity_sync_shopify_orphans', 'Shopify items not found in Bitrix', { requestId, dealId, shopifyOrderId, orphans: orphans.map(li => ({ sku: li.sku, variantId: li.variant_id, lineItemId: li.id, quantity: li.quantity })) }, { entityType: 'order', entityId: shopifyOrderId });
           }
 
           // Compare with Shopify and find differences.
@@ -2216,7 +2216,7 @@ async function handleDealUpdate(dealId, requestId) {
           }
 
           if (quantityChanges.length > 0) {
-            logger.info('quantity_sync_detected', 'Quantity changes detected', { requestId, dealId, shopifyOrderId, changesCount: quantityChanges.length, changes: quantityChanges });
+            logger.info('quantity_sync_detected', 'Quantity changes detected', { requestId, dealId, shopifyOrderId, changesCount: quantityChanges.length, changes: quantityChanges }, { entityType: 'order', entityId: shopifyOrderId });
 
             // Apply changes using orderEdit API
             const { incrementLineItemQuantity, decrementLineItemQuantity, addPositionToOrder } = await import('../../../src/lib/shopify/orderEdit.js');
@@ -2229,15 +2229,15 @@ async function handleDealUpdate(dealId, requestId) {
               try {
                 if (change.isNew) {
                   // Add new position
-                  logger.info('quantity_sync_add_intent', 'Adding new position to Shopify order', { requestId, dealId, shopifyOrderId, identifier: change.sku, quantity: change.newQty });
+                  logger.info('quantity_sync_add_intent', 'Adding new position to Shopify order', { requestId, dealId, shopifyOrderId, identifier: change.sku, quantity: change.newQty }, { entityType: 'order', entityId: shopifyOrderId });
                   const addResult = await addPositionToOrder(shopifyOrderId, change.sku, change.newQty);
                   if (addResult.success) {
                     hasChanges = true;
                     added++;
-                    logger.info('quantity_sync_add_success', 'Position added to Shopify order', { requestId, dealId, shopifyOrderId, sku: change.sku, quantity: change.newQty, shopifyOrderName: addResult.orderName || null });
+                    logger.info('quantity_sync_add_success', 'Position added to Shopify order', { requestId, dealId, shopifyOrderId, sku: change.sku, quantity: change.newQty, shopifyOrderName: addResult.orderName || null }, { entityType: 'order', entityId: shopifyOrderId });
                   } else {
                     errorsCount++;
-                    logger.warn('quantity_sync_add_error', 'Failed to add position to Shopify order', { requestId, dealId, shopifyOrderId, sku: change.sku, quantity: change.newQty, error: addResult.error, message: addResult.message });
+                    logger.warn('quantity_sync_add_error', 'Failed to add position to Shopify order', { requestId, dealId, shopifyOrderId, sku: change.sku, quantity: change.newQty, error: addResult.error, message: addResult.message }, { entityType: 'order', entityId: shopifyOrderId });
                   }
                 } else if (change.newQty > change.shopifyQty) {
                   // Increment quantity
@@ -2246,10 +2246,10 @@ async function handleDealUpdate(dealId, requestId) {
                   if (incrementResult.success) {
                     hasChanges = true;
                     incremented++;
-                    logger.info('quantity_sync_increment_success', 'Line item quantity incremented', { requestId, dealId, shopifyOrderId, sku: change.sku, previousQty: change.shopifyQty, newQty: incrementResult.newQuantity });
+                    logger.info('quantity_sync_increment_success', 'Line item quantity incremented', { requestId, dealId, shopifyOrderId, sku: change.sku, previousQty: change.shopifyQty, newQty: incrementResult.newQuantity }, { entityType: 'order', entityId: shopifyOrderId });
                   } else {
                     errorsCount++;
-                    logger.warn('quantity_sync_increment_error', 'Failed to increment line item quantity', { requestId, dealId, shopifyOrderId, sku: change.sku, incrementQty, error: incrementResult.error, message: incrementResult.message });
+                    logger.warn('quantity_sync_increment_error', 'Failed to increment line item quantity', { requestId, dealId, shopifyOrderId, sku: change.sku, incrementQty, error: incrementResult.error, message: incrementResult.message }, { entityType: 'order', entityId: shopifyOrderId });
                   }
                 } else if (change.newQty < change.shopifyQty) {
                   // Decrement quantity
@@ -2257,19 +2257,19 @@ async function handleDealUpdate(dealId, requestId) {
                   if (decrementResult.success) {
                     hasChanges = true;
                     decremented++;
-                    logger.info('quantity_sync_decrement_success', 'Line item quantity decremented', { requestId, dealId, shopifyOrderId, sku: change.sku, previousQty: change.shopifyQty, newQty: decrementResult.newQuantity });
+                    logger.info('quantity_sync_decrement_success', 'Line item quantity decremented', { requestId, dealId, shopifyOrderId, sku: change.sku, previousQty: change.shopifyQty, newQty: decrementResult.newQuantity }, { entityType: 'order', entityId: shopifyOrderId });
                   } else {
                     errorsCount++;
-                    logger.warn('quantity_sync_decrement_error', 'Failed to decrement line item quantity', { requestId, dealId, shopifyOrderId, sku: change.sku, newQty: change.newQty, error: decrementResult.error, message: decrementResult.message });
+                    logger.warn('quantity_sync_decrement_error', 'Failed to decrement line item quantity', { requestId, dealId, shopifyOrderId, sku: change.sku, newQty: change.newQty, error: decrementResult.error, message: decrementResult.message }, { entityType: 'order', entityId: shopifyOrderId });
                   }
                 }
               } catch (changeError) {
                 errorsCount++;
-                logger.warn('quantity_sync_change_error', 'Unexpected error applying quantity change', { requestId, dealId, shopifyOrderId, sku: change.sku, error: changeError.message });
+                logger.warn('quantity_sync_change_error', 'Unexpected error applying quantity change', { requestId, dealId, shopifyOrderId, sku: change.sku, error: changeError.message }, { entityType: 'order', entityId: shopifyOrderId });
               }
             }
 
-            logger.info('quantity_sync_complete', 'Quantity sync finished', { requestId, dealId, shopifyOrderId, added, incremented, decremented, orphansCount: orphans.length, discrepanciesCount: quantityChanges.length, errorsCount, hasChanges });
+            logger.info('quantity_sync_complete', 'Quantity sync finished', { requestId, dealId, shopifyOrderId, added, incremented, decremented, orphansCount: orphans.length, discrepanciesCount: quantityChanges.length, errorsCount, hasChanges }, { entityType: 'order', entityId: shopifyOrderId });
 
             // ✅ STEP C2.1: Clean up stub order if real products were added
             // If order was a stub (has BITRIX_STUB tag) and now has real products, remove stub marker
@@ -2280,7 +2280,7 @@ async function handleDealUpdate(dealId, requestId) {
                             logger.info('STUB_ORDER_CLEANUP_START', 'STUB_ORDER_CLEANUP_START', {requestId,
                 dealId,
                 shopifyOrderId,
-                bitrixProductsCount: bitrixQuantities.size});
+                bitrixProductsCount: bitrixQuantities.size}, { entityType: 'order', entityId: shopifyOrderId });
 
               try {
                 // Step 1: Remove default variant (53051786756360) if it exists
@@ -2316,7 +2316,7 @@ async function handleDealUpdate(dealId, requestId) {
                                                 logger.info('STUB_ORDER_DEFAULT_VARIANT_REMOVED', 'STUB_ORDER_DEFAULT_VARIANT_REMOVED', {requestId,
                           dealId,
                           shopifyOrderId,
-                          defaultVariantId});
+                          defaultVariantId}, { entityType: 'order', entityId: shopifyOrderId });
                       }
                     }
                   }
@@ -2353,7 +2353,7 @@ async function handleDealUpdate(dealId, requestId) {
                                             logger.info('STUB_ORDER_TAG_REMOVED', 'STUB_ORDER_TAG_REMOVED', {requestId,
                         dealId,
                         shopifyOrderId,
-                        removedTag: 'BITRIX_STUB'});
+                        removedTag: 'BITRIX_STUB'}, { entityType: 'order', entityId: shopifyOrderId });
                     }
 
                     if (shouldUpdateNote) {
@@ -2361,21 +2361,21 @@ async function handleDealUpdate(dealId, requestId) {
                         dealId,
                         shopifyOrderId,
                         oldNote: currentNote.substring(0, 100),
-                        newNote: updatedNote});
+                        newNote: updatedNote}, { entityType: 'order', entityId: shopifyOrderId });
                     }
                   }
                 }
 
                                 logger.info('STUB_ORDER_CLEANUP_SUCCESS', 'STUB_ORDER_CLEANUP_SUCCESS', {requestId,
                   dealId,
-                  shopifyOrderId});
+                  shopifyOrderId}, { entityType: 'order', entityId: shopifyOrderId });
               } catch (stubCleanupError) {
                 logger.warn('stub_cleanup_error', 'Failed to clean up stub order', { shopifyOrderId, dealId, error: stubCleanupError.message }, { entityType: 'order', entityId: shopifyOrderId });
                                 logger.info('STUB_ORDER_CLEANUP_ERROR', 'STUB_ORDER_CLEANUP_ERROR', {requestId,
                   dealId,
                   shopifyOrderId,
                   error: stubCleanupError.message,
-                  stack: stubCleanupError.stack});
+                  stack: stubCleanupError.stack}, { entityType: 'order', entityId: shopifyOrderId });
               }
             }
 
@@ -2385,7 +2385,7 @@ async function handleDealUpdate(dealId, requestId) {
                 await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
                                 logger.info('QUANTITY_SYNC_TAG_ADDED', 'QUANTITY_SYNC_TAG_ADDED', {requestId,
                   dealId,
-                  shopifyOrderId});
+                  shopifyOrderId}, { entityType: 'order', entityId: shopifyOrderId });
               } catch (tagError) {
                 logger.warn('quantity_sync_tag_error', 'Failed to add BitrixUpdated tag', { shopifyOrderId, dealId, error: tagError.message }, { entityType: 'order', entityId: shopifyOrderId });
               }
@@ -2396,7 +2396,7 @@ async function handleDealUpdate(dealId, requestId) {
               shopifyOrderId,
               bitrixItemsCount: bitrixQuantities.size,
               shopifyItemsCount: shopifyLineItems.length,
-              orphansCount: orphans.length});
+              orphansCount: orphans.length}, { entityType: 'order', entityId: shopifyOrderId });
           }
         }
       }
@@ -2406,7 +2406,7 @@ async function handleDealUpdate(dealId, requestId) {
         dealId,
         shopifyOrderId,
         error: quantitySyncError.message,
-        stack: quantitySyncError.stack});
+        stack: quantitySyncError.stack}, { entityType: 'order', entityId: shopifyOrderId });
       // Continue with normal flow - don't block order creation
     }
     } // end if (!c2LoopGuard)
@@ -2414,7 +2414,7 @@ async function handleDealUpdate(dealId, requestId) {
         logger.info('QUANTITY_SYNC_SKIP', 'QUANTITY_SYNC_SKIP', {requestId,
       dealId,
       shopifyOrderId: shopifyOrderId || 'empty',
-      reason: 'no_shopify_order_id'});
+      reason: 'no_shopify_order_id'}, { entityType: 'deal', entityId: dealId });
   }
 
   // ✅ STEP C3: Sync payment status from Bitrix to Shopify (best-effort)
