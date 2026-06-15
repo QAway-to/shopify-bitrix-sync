@@ -1040,22 +1040,19 @@ export async function mapShopifyOrderToBitrixDeal(order) {
           TAX_RATE: taxRate,
         };
 
-        // ✅ CRITICAL: ALWAYS use PRODUCT_ID (never PRODUCT_NAME)
-        // Bitrix requires PRODUCT_ID (XML_ID/SKU) to link product to catalog
-        // If productId is not found, skip this row (don't create custom row)
         if (productId && productId !== 0) {
-          row.PRODUCT_ID = Number(productId); // Ensure it's a number, not string
-          row.MEASURE_CODE = 1; // Pieces (как в рабочем скрипте)
-          // Don't set PRODUCT_NAME - Bitrix will use product name from catalog
+          row.PRODUCT_ID = Number(productId);
+          row.MEASURE_CODE = 1;
+        } else if (item.title) {
+          // Ad-hoc POS item (e.g. "Custom sale") — no catalog product, use name only
+          row.PRODUCT_NAME = productName || item.title;
+          logger.warn('item_custom_name_only', 'No PRODUCT_ID — using PRODUCT_NAME for ad-hoc item', { rowIndex: i + 1, itemTitle: item.title, sku: item.sku || null, variantId: item.variant_id || null, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
         } else {
-          // ❌ CRITICAL: Skip this row if PRODUCT_ID is not found
-          // Never create custom row with PRODUCT_NAME - always require PRODUCT_ID
-          logger.error('item_skipped', 'Skipping product row — no PRODUCT_ID found for item', { rowIndex: i + 1, quantity, itemTitle: item.title || null, sku: item.sku || null, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
-          continue; // Skip this row
+          logger.error('item_skipped', 'Skipping product row — no PRODUCT_ID and no title', { rowIndex: i + 1, itemTitle: null, sku: item.sku || null, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+          continue;
         }
 
         productRows.push(row);
-        const rowType = productId ? `PRODUCT_ID=${productId}` : `PRODUCT_NAME="${row.PRODUCT_NAME}"`;
       }
       logger.info('item_processed', 'Finished processing line item', { itemTitle: item.title || item.sku || null, quantity, rowsAdded: quantity, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
     }
