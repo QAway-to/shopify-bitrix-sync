@@ -2078,6 +2078,22 @@ async function handleDealUpdate(dealId, requestId) {
   // ✅ STEP C2: Sync product quantities from Bitrix to Shopify (if order exists)
   // NOTE: This only runs if shopifyOrderId exists, so it won't block order creation
   if (shopifyOrderId && shopifyOrderId.trim() !== '') {
+    // LOOP GUARD: Skip if last write was from Shopify within 60s.
+    // Race condition: crm.deal.update triggers this Bitrix webhook BEFORE
+    // crm.deal.productrows.set completes, so old Bitrix rows would be re-added to Shopify.
+    let c2LoopGuard = false;
+    try {
+      const prov = await getProvenanceMarker(shopifyOrderId);
+      if (prov?.exists && prov.value?.source === 'shopify') {
+        const diff = Date.now() - new Date(prov.value.ts).getTime();
+        if (diff < 60000) {
+          logger.warn('loop_guard_quantity_c2', 'STEP C2 skipped: last write from Shopify within 60s', { shopifyOrderId, dealId, timeDiff_ms: diff }, { entityType: 'order', entityId: shopifyOrderId });
+          c2LoopGuard = true;
+        }
+      }
+    } catch (pmErr) { /* non-blocking: if marker check fails, proceed normally */ }
+
+    if (!c2LoopGuard) {
     try {
             logger.info('QUANTITY_SYNC_START', 'QUANTITY_SYNC_START', {requestId,
         dealId,
@@ -2393,6 +2409,7 @@ async function handleDealUpdate(dealId, requestId) {
         stack: quantitySyncError.stack});
       // Continue with normal flow - don't block order creation
     }
+    } // end if (!c2LoopGuard)
   } else {
         logger.info('QUANTITY_SYNC_SKIP', 'QUANTITY_SYNC_SKIP', {requestId,
       dealId,
