@@ -3,12 +3,15 @@
  * Server-side only - avoids client-side bundle issues
  */
 import { shopifyAdapter } from '../../src/lib/adapters/shopify';
+import { requireAuth } from '../../src/lib/auth/session.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   try {
     const { shopifyOrder } = req.body;
