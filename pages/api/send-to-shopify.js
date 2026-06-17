@@ -6,6 +6,7 @@ import { normalizePayload, payloadHash } from '../../src/lib/utils/hash.js';
 import { setProvenanceMarker } from '../../src/lib/shopify/metafields.js';
 import { createOrderFromBitrix } from '../../src/lib/shopify/order.js';
 import { callBitrix } from '../../src/lib/bitrix/client.js';
+import { requireAuth } from '../../src/lib/auth/session.js';
 
 // ✅ Optional: allow creating Shopify order even when Bitrix deal has 0 product rows
 const BITRIX_ALLOW_EMPTY_PRODUCT_LINES = String(process.env.BITRIX_ALLOW_EMPTY_PRODUCT_LINES || 'true').toLowerCase() === 'true';
@@ -126,6 +127,8 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   const { selectedEvents } = req.body;
 
