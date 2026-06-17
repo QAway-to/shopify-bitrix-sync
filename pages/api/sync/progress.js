@@ -1,3 +1,5 @@
+import { requireAuth } from '../../../src/lib/auth/session.js';
+
 // API endpoint to get sync progress
 const isServer = typeof window === 'undefined';
 let readFileSync, existsSync, join;
@@ -17,6 +19,8 @@ export default async function handler(req, res) {
     res.setHeader('Allow', ['GET']);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   const requestId = req.query.requestId;
 
