@@ -2,6 +2,7 @@
 import { getCategoryProducts } from '../../../src/lib/shopify/inventory.js';
 import { syncProductVariantOptimized, refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
 import { logger } from '../../../src/lib/logging/logger.js';
+import { requireAuth } from '../../../src/lib/auth/session.js';
 
 // Server-only imports
 const isServer = typeof window === 'undefined';
@@ -54,6 +55,8 @@ export default async function handler(req, res) {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   const action = req.query.action || 'sync';
   const isCreateAction = action === 'create';
