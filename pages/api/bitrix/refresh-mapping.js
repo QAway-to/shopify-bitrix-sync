@@ -1,10 +1,13 @@
 import { refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
+import { requireAuth } from '../../../src/lib/auth/session.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ success: false, error: 'Method Not Allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   try {
     const result = await refreshBitrixMappingsFromCatalog();
