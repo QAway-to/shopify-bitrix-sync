@@ -3,7 +3,7 @@
  * Authenticates via OAuth 2.0 client_credentials grant (Shopify Jan 2026+)
  */
 
-const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_24_DOMAIN || process.env.SHOPIFY_STORE_DOMAIN || '83bfa8-c4.myshopify.com';
+const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_24_DOMAIN || process.env.SHOPIFY_STORE_DOMAIN;
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-01';
 
 let _tokenCache = null;   // { accessToken: string, expiresAtMs: number }
