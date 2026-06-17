@@ -1,10 +1,13 @@
 import { shopifyAdapter } from '../../src/lib/adapters/shopify';
 import { mapShopifyOrderToBitrixDeal } from '../../src/lib/bitrix/orderMapper.js';
+import { requireAuth } from '../../src/lib/auth/session.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   const { selectedEvents, bitrixWebhookUrl } = req.body;
 
