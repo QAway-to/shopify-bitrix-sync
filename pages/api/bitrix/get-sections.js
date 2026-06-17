@@ -1,11 +1,14 @@
 // API endpoint to get catalog sections from Bitrix
 import { callBitrix } from '../../../src/lib/bitrix/client.js';
+import { requireAuth } from '../../../src/lib/auth/session.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', ['GET']);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   try {
     // Get catalog ID from query (default: 14)
