@@ -1,5 +1,6 @@
 import { getCertificatesData } from '../../../src/lib/shopify/inventory.js';
 import { updateBitrixProductFields } from '../../../src/lib/bitrix/products.js';
+import { requireAuth } from '../../../src/lib/auth/session.js';
 
 // Hardcoded target product in Bitrix for E-Certificate 500$
 const TARGET_PRODUCT_ID = 4284;
@@ -11,6 +12,8 @@ export default async function handler(req, res) {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ success: false, error: 'Method Not Allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   try {
     // 1. Fetch certificates data from Shopify
