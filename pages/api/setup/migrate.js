@@ -8,6 +8,7 @@
  */
 
 import { pool } from '../../../src/lib/logging/db.js';
+import { requireAuth } from '../../../src/lib/auth/session.js';
 
 const MIGRATION_SQL = `
   CREATE TABLE IF NOT EXISTS logs (
@@ -35,6 +36,8 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   if (!pool) {
     return res.status(503).json({
