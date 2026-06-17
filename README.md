@@ -1,141 +1,87 @@
-# API Services MVP
+# Shopify–Bitrix24 Integration
 
-Шаблон для управления интеграциями с внешними API. Предоставляет удобную структуру для работы с различными API сервисами.
+A bi-directional integration dashboard connecting Shopify (e-commerce) and Bitrix24 (CRM). Receives webhooks from both platforms, syncs orders and deals, manages product catalog, and provides a monitoring UI.
 
-## Структура
+**Live:** https://render-agent-a-mvp.onrender.com
 
-```
-api-services/
-├── pages/
-│   ├── index.js              # Главная страница с выбором API
-│   ├── shopify/
-│   │   └── index.js          # Страница Shopify Webhook
-│   ├── wayback/
-│   │   └── index.js          # Страница Wayback Machine
-│   └── api/
-│       ├── send-to-bitrix.js # API endpoint для отправки в Bitrix
-│       ├── webhook/
-│       │   └── shopify.js    # Webhook endpoint для Shopify
-│       └── wayback/
-│           └── index.js      # API endpoint для Wayback Machine
-├── src/
-│   ├── lib/
-│   │   └── adapters/
-│   │       ├── shopify/      # Адаптер Shopify
-│   │       └── wayback/      # Адаптер Wayback Machine
-│   ├── components/
-│   │   ├── ApiCard.js        # Карточка для выбора API
-│   │   ├── shopify/          # Компоненты для Shopify
-│   │   └── wayback/          # Компоненты для Wayback Machine
-│   └── styles/
-│       └── global.css        # Глобальные стили
-└── package.json
-```
+## Features
 
-## Установка и запуск
+- **Shopify → Bitrix24** — inbound webhooks create and update deals, map line items to Bitrix products
+- **Bitrix24 → Shopify** — deal stage changes trigger fulfillments, refunds, address updates, and order creation
+- **Product catalog sync** — bulk sync of Shopify inventory to Bitrix24 by category (A–F, G–M, N–S, T–Z) and certificates
+- **On-demand product creation** — missing products are auto-created in Bitrix24 when an order arrives
+- **Duplicate prevention** — idempotency via payload hash, provenance tags, and in-memory locks
+- **Event monitoring** — real-time dashboard showing Shopify and Bitrix24 event streams
+- **Structured logging** — PostgreSQL-backed log storage with queryable API
+- **Auth** — HMAC-signed session cookies; all sensitive API routes protected
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 14 (Pages Router) |
+| Runtime | Node.js |
+| Database | PostgreSQL (Render managed) |
+| Deployment | Render |
+| External APIs | Shopify Admin API, Bitrix24 REST API |
+
+## Getting Started
 
 ```bash
 npm install
 npm run dev
 ```
 
-Приложение будет доступно на `http://localhost:3000`
+App runs at `http://localhost:3000`.
 
-## Реализованные API
+## Environment Variables
 
-### 🛍️ Shopify Webhook
+| Variable | Description |
+|----------|-------------|
+| `SHOPIFY_24_DOMAIN` | Shopify store domain (e.g. `store.myshopify.com`) |
+| `SHOPIFY_24_ADMIN` | Shopify Admin API access token |
+| `SHOPIFY_CLIENT_ID` | Shopify app client ID |
+| `SHOPIFY_CLIENT_SECRET` | Shopify app client secret |
+| `SHOPIFY_API_VERSION` | API version (e.g. `2025-07`) |
+| `BITRIX_WEBHOOK_BASE` | Bitrix24 inbound webhook URL |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `SESSION_SECRET` | Secret for HMAC session signing |
+| `WEBHOOK_PASSWORD` | Shared password for API route auth |
 
-Интеграция с Shopify для приема и обработки webhook событий. Позволяет:
-- Получать webhook события от Shopify в реальном времени
-- Просматривать детали заказов (товары, цены, покупатели)
-- Выбирать и отправлять выбранные события в Bitrix24
+## API Routes
 
-**Использование:**
-1. Откройте главную страницу
-2. Выберите "Shopify Webhook"
-3. Настройте webhook URL в Shopify на: `https://your-domain.vercel.app/api/webhook/shopify`
-4. Выберите нужные события чекбоксами
-5. Нажмите "Отправить в Bitrix" для отправки выбранных событий
+### Webhooks (inbound)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/webhook/shopify` | POST | Receive Shopify order events |
+| `/api/webhook/bitrix` | POST | Receive Bitrix24 deal updates |
 
-### 📚 Wayback Machine
+### Manual Operations (auth required)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/send-to-bitrix` | POST | Push selected events to Bitrix24 |
+| `/api/send-to-shopify` | POST | Push selected events to Shopify |
+| `/api/sync/category` | POST | Bulk sync product category |
+| `/api/sync/category-optimized` | POST | Parallel bulk sync with progress tracking |
+| `/api/sync/certificates` | POST | Sync gift certificates |
+| `/api/bitrix/refresh-mapping` | POST | Rebuild SKU→Bitrix product ID mapping |
 
-Интеграция с Wayback Machine для анализа исторических данных сайтов. Позволяет:
-- Поиск архивных снимков сайтов через CDX API
-- Получение HTML конкретного снимка
-- Тестирование интеграции
+### Monitoring (auth required)
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/api/events` | GET | All Shopify events |
+| `/api/events/bitrix` | GET | All Bitrix24 events |
+| `/api/events/latest` | GET | Latest Shopify event |
+| `/api/logs/stream` | GET | SSE log stream |
 
-**Использование:**
-1. Откройте главную страницу
-2. Выберите "Wayback Machine"
-3. Введите URL или домен (например: `example.com`)
-4. Нажмите "Test Wayback Machine"
+## Architecture
 
-## Добавление нового API
+See [`docs/current_flow.md`](docs/current_flow.md) for the full webhook processing flow and block diagram.
 
-Чтобы добавить новый API:
+## Deployment
 
-1. **Создайте адаптер** в `src/lib/adapters/your-api/`:
-   ```javascript
-   // src/lib/adapters/your-api/index.js
-   export class YourApiAdapter {
-     getName() { return 'your-api'; }
-     async yourMethod() { /* ... */ }
-   }
-   export const yourApiAdapter = new YourApiAdapter();
-   ```
-
-2. **Создайте API endpoint** в `pages/api/your-api/index.js`:
-   ```javascript
-   import { yourApiAdapter } from '../../../../src/lib/adapters/your-api/index.js';
-   
-   export default async function handler(req, res) {
-     // Обработка запроса
-   }
-   ```
-
-3. **Создайте UI компоненты** в `src/components/your-api/`:
-   - Форма для ввода параметров
-   - Компонент для отображения результатов
-   - Логи (опционально)
-
-4. **Создайте страницу** в `pages/your-api/index.js`:
-   - Интеграция формы и результатов
-   - Обработка ошибок
-   - Логирование
-
-5. **Добавьте карточку** на главную страницу (`pages/index.js`):
-   ```javascript
-   {
-     icon: '🔌',
-     title: 'Your API',
-     description: 'Описание вашего API',
-     href: '/your-api',
-     status: 'ready',
-   }
-   ```
-
-## Архитектура
-
-- **Адаптеры** - содержат всю бизнес-логику работы с API
-- **API Endpoints** - Next.js API routes для серверной части
-- **Компоненты** - React компоненты для UI
-- **Страницы** - Next.js pages, объединяющие компоненты
-
-## Стили
-
-Шаблон использует темную тему в стиле `email-campaign-manager`. Все стили находятся в `src/styles/global.css`.
-
-## Deploy
-
-Шаблон готов к деплою на Vercel. Файл `vercel.json` уже настроен.
-
-**Настройка webhook в Shopify:**
-1. В админке Shopify перейдите в Settings > Notifications > Webhooks
-2. Создайте новый webhook для события "Order creation"
-3. URL: `https://your-vercel-app.vercel.app/api/webhook/shopify`
-4. Format: JSON
+Deployed on [Render](https://render.com). Set the environment variables listed above in the Render dashboard under **Environment**.
 
 ## License
 
 MIT
-
