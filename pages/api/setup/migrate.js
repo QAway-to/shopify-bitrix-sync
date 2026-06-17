@@ -9,7 +9,6 @@
 
 import { pool } from '../../../src/lib/logging/db.js';
 import { requireAuth } from '../../../src/lib/auth/session.js';
-import { requireAuth } from '../../../src/lib/auth/session.js';
 
 const MIGRATION_SQL = `
   CREATE TABLE IF NOT EXISTS logs (
