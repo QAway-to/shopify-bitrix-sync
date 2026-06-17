@@ -1,6 +1,7 @@
 // API endpoint for syncing certificates from Shopify to Bitrix
 import { getCertificatesData } from '../../../src/lib/shopify/inventory.js';
 import { syncCertificateVariant, refreshBitrixMappingsFromCatalog } from '../../../src/lib/bitrix/products.js';
+import { requireAuth } from '../../../src/lib/auth/session.js';
 
 // Handle mapping for certificates (from handleMapping.json)
 const CERTIFICATE_HANDLES = {
@@ -14,6 +15,8 @@ export default async function handler(req, res) {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   // Check action: 'create' for creating new products, default is 'sync' (update quantities)
   const action = req.query.action || 'sync';
