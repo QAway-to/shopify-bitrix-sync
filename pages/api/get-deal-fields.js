@@ -1,10 +1,13 @@
 // Get Bitrix24 deal fields to find UF field codes
 import { callBitrix } from '../../src/lib/bitrix/client.js';
+import { requireAuth } from '../../src/lib/auth/session.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
+
+  if (!requireAuth(req, res)) return;
 
   try {
     console.log('[GET DEAL FIELDS] Fetching deal fields from Bitrix24...');
