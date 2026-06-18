@@ -287,7 +287,9 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                     }
                 } else if (change.newQty > change.shopifyQty) {
                     const incrementQty = change.newQty - change.shopifyQty;
-                    const incrementResult = await incrementLineItemQuantity(shopifyOrderId, change.sku, incrementQty);
+                    // Pass variantId so the line item is targeted by variant_id (unique), not by SKU
+                    // (SKU can be empty on POS items or non-unique across products).
+                    const incrementResult = await incrementLineItemQuantity(shopifyOrderId, change.sku, incrementQty, change.variantId);
                     if (incrementResult.success) {
                         hasChanges = true;
                         console.log(JSON.stringify({
@@ -307,7 +309,8 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                         });
                     }
                 } else if (change.newQty < change.shopifyQty) {
-                    const decrementResult = await decrementLineItemQuantity(shopifyOrderId, change.sku, change.newQty);
+                    // Pass variantId so the line item is targeted by variant_id (unique), not by SKU.
+                    const decrementResult = await decrementLineItemQuantity(shopifyOrderId, change.sku, change.newQty, change.variantId);
                     if (decrementResult.success) {
                         hasChanges = true;
                         if (change.newQty === 0) {

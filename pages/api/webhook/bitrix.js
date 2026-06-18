@@ -2102,6 +2102,16 @@ async function handleDealUpdate(dealId, requestId) {
       const shopifyOrder = await getOrder(shopifyOrderId);
 
       if (shopifyOrder) {
+        // Refund safety: never re-add or increase line items on a refunded/voided order.
+        // Bitrix may still hold the original rows; pushing increases would resurrect refunded items.
+        // Removals (decrements) are still allowed for cleanup.
+        const financialStatus = shopifyOrder.financial_status ? String(shopifyOrder.financial_status) : null;
+        const blockAddsDueToRefund = financialStatus
+          ? new Set(['refunded', 'partially_refunded', 'voided']).has(financialStatus)
+          : false;
+        if (blockAddsDueToRefund) {
+          logger.warn('quantity_sync_refund_block', 'Order is refunded/voided — increases/adds will be skipped, only removals applied', { requestId, dealId, shopifyOrderId, financialStatus }, { entityType: 'order', entityId: shopifyOrderId });
+        }
         // ✅ UPDATED: Sync quantities for ALL linked orders (Bitrix-created OR Shopify-created)
         // Same logic as LOSE/Cancel bypass: if order is linked, allow updates to propagate
         // Loop prevention: BitrixUpdated tag is added after sync, Shopify webhook will skip
@@ -2227,6 +2237,11 @@ async function handleDealUpdate(dealId, requestId) {
 
             for (const change of quantityChanges) {
               try {
+                // Refund guard: skip any add/increase on a refunded/voided order; allow removals only.
+                if (blockAddsDueToRefund && (change.isNew || change.newQty > change.shopifyQty)) {
+                  logger.warn('quantity_sync_refund_skip', 'Skipped add/increase on refunded/voided order', { requestId, dealId, shopifyOrderId, sku: change.sku, isNew: !!change.isNew, bitrixQty: change.newQty, shopifyQty: change.shopifyQty, financialStatus }, { entityType: 'order', entityId: shopifyOrderId });
+                  continue;
+                }
                 if (change.isNew) {
                   // Add new position
                   logger.info('quantity_sync_add_intent', 'Adding new position to Shopify order', { requestId, dealId, shopifyOrderId, identifier: change.sku, quantity: change.newQty }, { entityType: 'order', entityId: shopifyOrderId });
