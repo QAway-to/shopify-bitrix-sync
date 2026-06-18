@@ -13,7 +13,7 @@ import brandMapping from './brandMapping.json' assert { type: 'json' };
 // ✅ SEMANTIC MAPPING: Используем семантический маппинг с 100% совпадениями
 import skuMappingSemantic from './skuMappingSemantic.json' assert { type: 'json' };
 // ✅ NEW: Category-based mapping with hybrid search (cache + Bitrix API)
-import { findProductIdBySku, loadAllMappings } from './mappingUtils.js';
+import { findProductIdBySku, findProductIdByVariantId, loadAllMappings } from './mappingUtils.js';
 import { resolveResponsibleId } from './responsible.js';
 import { callShopifyAdmin } from '../shopify/adminClient.js';
 
@@ -730,33 +730,76 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       // CRITICAL: line_items are ALWAYS products, NEVER shipping
       // Even if a product has the same ID as shipping, it's still a product from line_items
 
-      // ===== STRICT MAPPING: SKU/XML_ID first, fallback to variant_id for certificates =====
+      // ===== STRICT MAPPING: variant_id (XML_ID) FIRST — globally unique. =====
+      // Shopify variant_id == Bitrix XML_ID. SKU (Bitrix CODE) is NOT unique and can collide
+      // across products, so it is only ever a guarded/last-resort fallback — never used when
+      // variant_id resolves a product.
       let productId = null;
       let mappingMethod = 'none';
 
-      if (item.sku) {
-        productId = await findProductIdBySku(item.sku);
+      // 1) PRIMARY: resolve by variant_id → Bitrix XML_ID (unique, collision-free)
+      if (item.variant_id) {
+        productId = await findProductIdByVariantId(item.variant_id);
         if (productId) {
-          mappingMethod = 'sku/xml_id';
-          logger.info('sku_resolved', 'SKU resolved via ' + mappingMethod, { sku: item.sku, productId, layer: mappingMethod });
-        } else {
-          logger.error('sku_not_found', 'SKU/XML_ID not found in Bitrix', { sku: item.sku, itemTitle: item.title || null, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+          mappingMethod = 'variant_id/xml_id';
+          logger.info('sku_resolved', 'Resolved via ' + mappingMethod, { sku: item.sku || null, variantId: String(item.variant_id), productId, layer: mappingMethod });
         }
-      } else {
-        logger.warn('sku_missing', 'SKU is missing for item', { itemTitle: item.title || null, variantId: item.variant_id || null, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
       }
 
-      // Fallback: variant_id for known certificates (no SKU in Shopify)
+      // 2) Certificate fallback by variant_id (certs have no XML_ID-keyed catalog product)
       if (!productId && item.variant_id) {
         const variantId = Number(item.variant_id);
         const certProductId = CERT_VARIANT_TO_PRODUCT_ID[variantId];
         if (certProductId) {
           productId = certProductId;
           mappingMethod = 'variant_id_certificate';
-          logger.info('sku_resolved', 'SKU resolved via ' + mappingMethod, { sku: item.sku, productId, layer: mappingMethod });
-        } else {
-          logger.error('certificate_variant_not_found', 'variant_id not found in certificate map', { variantId, sku: item.sku || null, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+          logger.info('sku_resolved', 'Resolved via ' + mappingMethod, { sku: item.sku || null, variantId: String(item.variant_id), productId, layer: mappingMethod });
         }
+      }
+
+      // 3) GUARDED SKU fallback — rescue legacy products not yet linked to a variant_id/XML_ID.
+      //    Fires only when variant_id is present but the XML_ID lookup missed. Accept a CODE=SKU
+      //    match ONLY if there is exactly one candidate AND its XML_ID is empty (legacy/unlinked)
+      //    or already equals this variant. A SKU whose XML_ID points to a DIFFERENT variant is the
+      //    duplicate-SKU collision we are fixing — reject it.
+      if (!productId && item.variant_id && item.sku) {
+        try {
+          const { callBitrix } = await import('./client.js');
+          const skuResp = await callBitrix('/crm.product.list.json', {
+            filter: { CODE: item.sku, ACTIVE: 'Y' },
+            select: ['ID', 'CODE', 'XML_ID']
+          });
+          const candidates = Array.isArray(skuResp?.result) ? skuResp.result : [];
+          const variantIdStr = String(item.variant_id);
+          if (candidates.length === 1) {
+            const candidate = candidates[0];
+            const xmlId = candidate.XML_ID == null ? '' : String(candidate.XML_ID);
+            if (xmlId === '' || xmlId === variantIdStr) {
+              productId = parseInt(candidate.ID, 10);
+              mappingMethod = 'sku_legacy_fallback';
+              logger.info('sku_resolved', 'Resolved via ' + mappingMethod, { sku: item.sku, productId, variantId: variantIdStr, candidateXmlId: xmlId, layer: mappingMethod });
+            } else {
+              logger.warn('sku_ambiguous', 'SKU match rejected: Bitrix product XML_ID belongs to a different variant', { sku: item.sku, candidateId: candidate.ID, candidateXmlId: xmlId, thisVariantId: variantIdStr, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+            }
+          } else if (candidates.length > 1) {
+            logger.warn('sku_ambiguous', 'SKU match rejected: multiple Bitrix products share this CODE', { sku: item.sku, candidateCount: candidates.length, thisVariantId: variantIdStr, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+          }
+        } catch (skuErr) {
+          logger.warn('sku_fallback_error', 'Guarded SKU fallback lookup failed', { sku: item.sku, error: skuErr.message, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+        }
+      }
+
+      // 4) LAST-RESORT: SKU lookup when the item has NO variant_id at all (legacy/edge items)
+      if (!productId && !item.variant_id && item.sku) {
+        productId = await findProductIdBySku(item.sku);
+        if (productId) {
+          mappingMethod = 'sku_no_variant';
+          logger.info('sku_resolved', 'Resolved via ' + mappingMethod, { sku: item.sku, productId, layer: mappingMethod });
+        } else {
+          logger.error('sku_not_found', 'SKU not found in Bitrix (item has no variant_id)', { sku: item.sku, itemTitle: item.title || null, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+        }
+      } else if (!productId && !item.variant_id && !item.sku) {
+        logger.warn('sku_missing', 'Item has neither variant_id nor SKU', { itemTitle: item.title || null, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
       }
 
       // ✅ ON-DEMAND PRODUCT CREATION: If product not found, auto-create in Bitrix
@@ -773,7 +816,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
 
           if (existingProductResp.result && existingProductResp.result.length > 0) {
             // Product exists by XML_ID
-            productId = existingProductResp.result[0].ID;
+            productId = parseInt(existingProductResp.result[0].ID, 10);
             mappingMethod = 'xml_id_lookup';
             logger.info('sku_resolved', 'SKU resolved via ' + mappingMethod, { sku: item.sku, productId, layer: mappingMethod });
           } else {
