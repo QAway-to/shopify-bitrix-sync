@@ -2143,6 +2143,15 @@ async function handleDealUpdate(dealId, requestId) {
           for (const row of bitrixRows) {
             const productId = row.PRODUCT_ID;
             if (productId) {
+              // Shipping rides along as an ordinary Bitrix product row, but in Shopify it is a
+              // shipping_line, not a line item — no variant exists to add, so every sync tried
+              // to add it, failed with "The variant does not exist in the shop", left the row
+              // permanently unmatched, and re-tried on the next webhook. Shipping is synced
+              // separately; skip it here.
+              if (String(productId) === String(BITRIX_CONFIG.SHIPPING_PRODUCT_ID)) {
+                logger.info('quantity_sync_shipping_row_skipped', 'Shipping product row skipped, not a Shopify line item', { requestId, dealId, shopifyOrderId, productId }, { entityType: 'order', entityId: shopifyOrderId });
+                continue;
+              }
               try {
                 const productResp = await callBitrix('/crm.product.get.json', { id: productId });
                 if (productResp.result) {

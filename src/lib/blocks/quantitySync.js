@@ -25,6 +25,7 @@ import {
 } from '../shopify/orderEdit.js';
 import { addTagToOrder } from '../shopify/order.js';
 import { callBitrix } from '../bitrix/client.js';
+import { BITRIX_CONFIG } from '../bitrix/config.js';
 
 // Default stub variant ID
 const BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID = String(process.env.BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID || '53051786756360');
@@ -98,6 +99,12 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         for (const row of bitrixRows) {
             const productId = row.PRODUCT_ID;
             if (productId) {
+                // Shipping is a shipping_line in Shopify, not a line item — there is no variant
+                // to add or match, so it can never reconcile here. Synced separately.
+                if (String(productId) === String(BITRIX_CONFIG.SHIPPING_PRODUCT_ID)) {
+                    logger.info('quantity_sync_shipping_row_skipped', 'Shipping product row skipped, not a Shopify line item', { dealId, shopifyOrderId, productId });
+                    continue;
+                }
                 try {
                     const productResp = await callBitrix('/crm.product.get.json', { id: productId });
                     if (productResp.result) {
