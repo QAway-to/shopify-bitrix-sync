@@ -103,6 +103,12 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId, o
                     // ✅ FIX: Check if order is ALREADY CANCELLED to prevent loop
                     // If Bitrix sends "LOSE" update -> we try to cancel -> if already cancelled, we MUST stop here
                     // otherwise we might update tags/notes which triggers Shopify webhook -> Bitrix update -> Loop
+                    //
+                    // This is what actually terminates the cancel echo loop in production. The
+                    // earlier breaker in webhook/shopify.js (skip when the deal is already in
+                    // LOSE) is meant to stop the echo one hop sooner but does not fire — see the
+                    // KNOWN GAP note there. Observed on deal 9996 on 2026-07-17: this guard hit
+                    // twice and ended it. Do not weaken it.
                     if (shopifyOrder.cancelled_at) {
                         logger.info('order_already_cancelled', 'Order already cancelled, skipping to prevent loop', { shopifyOrderId, dealId, cancelledAt: shopifyOrder.cancelled_at });
                         return {

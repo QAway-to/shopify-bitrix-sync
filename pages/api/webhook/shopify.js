@@ -2032,6 +2032,18 @@ export default async function handler(req, res) {
           // ✅ FIX: Break loop for refunded orders
           // If the deal is ALREADY in a LOSE stage, we don't need to update it again.
           // This prevents the shopify -> bitrix -> shopify -> bitrix loop.
+          //
+          // ⚠️ KNOWN GAP — this breaker does not fire in practice, unverified why.
+          // Observed on deal 9996 / order 8817217470728 on 2026-07-17T01:52Z: Bitrix
+          // cancelled the order, the echo webhook arrived here, the deal WAS already in
+          // LOSE, yet the echo still went through and pushed a redundant LOSE update
+          // (see the order_cancelled "forcing stage LOSE" log at 01:52:42Z). The likely
+          // cause is the lookup below failing or returning no deal, which lands in the
+          // catch and falls through by design. So the loop is actually terminated one hop
+          // later, by the cancelled_at guard at the top of blocks/cancel.js handleCancel.
+          // That backstop is load-bearing, not belt-and-braces — do not remove it while
+          // this breaker is unreliable. Fixing this one would save a redundant Bitrix
+          // write plus a webhook round trip per cancel.
           try {
             console.log(`[SHOPIFY WEBHOOK] 🔍 Checking if Loop Guard bypass is necessary for cancelled/refunded order...`);
             const listResp = await callBitrix('/crm.deal.list.json', {
