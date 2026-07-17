@@ -275,14 +275,13 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                     const addResult = await addPositionToOrder(shopifyOrderId, identifier, change.newQty);
                     if (addResult.success) {
                         hasChanges = true;
-                        console.log(JSON.stringify({
-                            event: 'QUANTITY_SYNC_ADD_SUCCESS',
+                        logger.info('quantity_sync_add_success', 'Position added to Shopify order', {
                             requestId, dealId, shopifyOrderId,
+                            syncPath: 'block',
                             variantId: change.variantId,
                             sku: change.sku,
-                            quantity: change.newQty,
-                            timestamp: new Date().toISOString()
-                        }));
+                            quantity: change.newQty
+                        }, { entityType: 'order', entityId: shopifyOrderId });
                     } else {
                         logger.warn('quantity_sync_add_error', 'Failed to add new item to Shopify order', {
                             dealId, shopifyOrderId,
@@ -299,12 +298,12 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                     const incrementResult = await incrementLineItemQuantity(shopifyOrderId, change.sku, incrementQty, change.variantId);
                     if (incrementResult.success) {
                         hasChanges = true;
-                        console.log(JSON.stringify({
-                            event: 'QUANTITY_SYNC_INCREMENT_SUCCESS',
+                        logger.info('quantity_sync_increment_success', 'Line item quantity incremented', {
                             requestId, dealId, shopifyOrderId,
-                            sku: change.sku, previousQty: change.shopifyQty, newQty: incrementResult.newQuantity,
-                            timestamp: new Date().toISOString()
-                        }));
+                            syncPath: 'block',
+                            sku: change.sku, variantId: change.variantId,
+                            previousQty: change.shopifyQty, newQty: incrementResult.newQuantity
+                        }, { entityType: 'order', entityId: shopifyOrderId });
                     } else {
                         logger.warn('quantity_sync_increment_error', 'Failed to increment line item quantity', {
                             dealId, shopifyOrderId,
@@ -321,19 +320,19 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                     if (decrementResult.success) {
                         hasChanges = true;
                         if (change.newQty === 0) {
-                            console.log(JSON.stringify({
-                                event: 'QUANTITY_SYNC_REMOVE_SUCCESS',
+                            logger.info('quantity_sync_remove_success', 'Line item removed from Shopify order', {
                                 requestId, dealId, shopifyOrderId,
-                                sku: change.sku, previousQty: change.shopifyQty,
-                                timestamp: new Date().toISOString()
-                            }));
+                                syncPath: 'block',
+                                sku: change.sku, variantId: change.variantId,
+                                previousQty: change.shopifyQty
+                            }, { entityType: 'order', entityId: shopifyOrderId });
                         } else {
-                            console.log(JSON.stringify({
-                                event: 'QUANTITY_SYNC_DECREMENT_SUCCESS',
+                            logger.info('quantity_sync_decrement_success', 'Line item quantity decremented', {
                                 requestId, dealId, shopifyOrderId,
-                                sku: change.sku, previousQty: change.shopifyQty, newQty: decrementResult.newQuantity,
-                                timestamp: new Date().toISOString()
-                            }));
+                                syncPath: 'block',
+                                sku: change.sku, variantId: change.variantId,
+                                previousQty: change.shopifyQty, newQty: decrementResult.newQuantity
+                            }, { entityType: 'order', entityId: shopifyOrderId });
                         }
                     } else {
                         logger.warn('quantity_sync_decrement_error', 'Failed to decrement line item quantity', {
@@ -366,11 +365,10 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         if (hasChanges) {
             try {
                 await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
-                console.log(JSON.stringify({
-                    event: 'QUANTITY_SYNC_TAG_ADDED',
+                logger.info('QUANTITY_SYNC_TAG_ADDED', 'BitrixUpdated tag added after quantity sync', {
                     requestId, dealId, shopifyOrderId,
-                    timestamp: new Date().toISOString()
-                }));
+                    syncPath: 'block'
+                }, { entityType: 'order', entityId: shopifyOrderId });
             } catch (tagError) {
                 logger.warn('quantity_sync_tag_error', 'Failed to add BitrixUpdated tag', { dealId, shopifyOrderId, error: tagError.message });
             }
