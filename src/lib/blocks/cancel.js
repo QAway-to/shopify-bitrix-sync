@@ -95,13 +95,10 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId, o
                         : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
                     const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
 
-                    // CHECK FULFILLMENT STATUS
+                    // Fulfillment no longer decides the strategy: a COD order can ship and still
+                    // never be paid, and cancelling it moves no money. Payment status alone
+                    // separates "cancel from Bitrix" from "refund, which Shopify masters".
                     const isFulfilled = shopifyOrder.fulfillment_status === 'fulfilled';
-                    const canCancel = !isFulfilled; // Prevent canceling fulfilled orders
-
-                    if (isFulfilled) {
-                        logger.warn('order_cancel_skip_fulfilled', 'Order is already fulfilled, skipping cancel', { shopifyOrderId, dealId });
-                    }
 
                     // ✅ FIX: Check if order is ALREADY CANCELLED to prevent loop
                     // If Bitrix sends "LOSE" update -> we try to cancel -> if already cancelled, we MUST stop here
@@ -148,36 +145,32 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId, o
                     }
 
                     // Determine Strategy
-                    // Unpaid = money was never captured, so cancelling moves no money.
+                    // Payment status is the only criterion. Unpaid means no money was ever
+                    // captured, so there is nothing to refund and the order is simply cancelled
+                    // — the loss reason only decides whether stock goes back. Paid means any
+                    // unwind is a refund, and refunds are mastered in Shopify.
                     const isUnpaid = shopifyOrder.financial_status === 'pending' || shopifyOrder.financial_status === 'authorized';
                     let doRefund = false;
                     let doCancel = false;
 
-                    if (isFulfilled) {
-                        // Must use Refund logic (Diff)
+                    if (isUnpaid) {
+                        doRefund = false;
+                        doCancel = true;
+                        if (isFulfilled) {
+                            logger.info('order_cancel_strategy_unpaid_fulfilled', 'Order shipped but was never paid, cancelling with no refund', { shopifyOrderId, dealId, financialStatus: shopifyOrder.financial_status });
+                        }
+                    } else {
+                        // Paid or partially paid: unwinding this moves money.
                         doRefund = true;
                         doCancel = false;
-                        logger.info('order_cancel_strategy_refund_forced', 'Order is fulfilled, forcing REFUND strategy, cancel disabled', { shopifyOrderId, dealId });
-                    } else {
-                        // Unfulfilled
-                        // ✅ FIX: If order is UNPAID (pending), we should CANCEL it even if action is REFUND
-                        // (Because you cannot "refund" money that wasn't taken, and "Refund" action implies VOIDING the transaction for unpaid orders)
-                        if (lossAction.action === 'CANCEL' || (lossAction.action === 'REFUND' && isUnpaid)) {
-                            doRefund = false; // Void/Cancel entire order (Refund not needed if unpaid)
-                            doCancel = true;
-                            if (isUnpaid && lossAction.action === 'REFUND') {
-                                logger.info('order_cancel_strategy_override', 'Action is REFUND but order is UNPAID, switching to CANCEL strategy', { shopifyOrderId, dealId, financialStatus: shopifyOrder.financial_status });
-                            }
-                        } else {
-                            // Action === 'REFUND' AND Order is PAID/PARTIALLY_PAID
-                            doRefund = true; // Refund specific items (Diff)
-                            doCancel = false; // Don't cancel the rest (keep as Refunded state)
-                        }
                     }
 
                     // Shopify is master for refunds, so Bitrix may only push the cancel of an
                     // order whose money was never captured. A refund, or a cancel of a paid
                     // order, both move money and are left for Shopify to originate.
+                    // doRefund and !isUnpaid are equivalent as written; both are checked on
+                    // purpose, so that reintroducing a strategy branch cannot quietly open a
+                    // money path without also updating this gate. Keep both.
                     if (!refundEnabled && (doRefund || !isUnpaid)) {
                         logger.info('order_cancel_money_path_skipped', 'LOSE stage needs a money-moving action, leaving it to Shopify', {
                             shopifyOrderId,
@@ -280,8 +273,8 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId, o
 
                     // STEP 2: CANCEL ORDER
                     let cancelError = null;
-                    if (doCancel && canCancel) {
-                        logger.info('order_cancel_executing', 'Executing full order cancel', { shopifyOrderId, dealId, reason: lossAction.reason });
+                    if (doCancel) {
+                        logger.info('order_cancel_executing', 'Executing full order cancel', { shopifyOrderId, dealId, reason: lossAction.reason, fulfillmentStatus: shopifyOrder.fulfillment_status });
                         const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
                         // refund and restock are both non-null arguments in API 2024-01.
                         // refund is always false here: this path only runs for unpaid orders.
@@ -305,7 +298,7 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId, o
                         `;
                         const cancelData = await callShopifyGraphQL(mutation, {
                             orderId: orderGid,
-                            restock: doRefund ? false : shouldRestock,
+                            restock: shouldRestock,
                             refund: false
                         });
 
@@ -336,10 +329,6 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId, o
                             if (!provenanceResult.success) {
                                 logger.warn('order_cancel_provenance_failed', 'Cancel succeeded but provenance marker failed, echo webhook may reach Bitrix', { shopifyOrderId, dealId, error: provenanceResult.message });
                             }
-                        }
-                    } else {
-                        if (!canCancel) {
-                            logger.info('order_cancel_skip', 'Skipping cancellation, order fulfilled or strategy override', { shopifyOrderId, dealId });
                         }
                     }
 
