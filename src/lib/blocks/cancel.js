@@ -16,6 +16,7 @@
 import { logger } from '../logging/logger.js';
 import { getOrder, callShopifyGraphQL } from '../shopify/adminClient.js';
 import { addTagToOrder, cancelOrderByDealId } from '../shopify/order.js';
+import { setProvenanceMarker } from '../shopify/metafields.js';
 import { createRefund, calculateRefundAmount } from '../shopify/refund.js';
 import { BITRIX_CONFIG } from '../bitrix/config.js';
 import { callBitrix } from '../bitrix/client.js';
@@ -39,9 +40,14 @@ export function isLoseStage(stageId) {
  * @param {string} dealId - Bitrix deal ID
  * @param {string} stageId - Current stage ID
  * @param {string} requestId - Request correlation ID
+ * @param {{refundEnabled?: boolean}} [options] - refundEnabled: allow money-moving
+ *   refund paths. Shopify is master for refunds, so this stays false in production;
+ *   only the cancel path for unpaid orders is pushed from Bitrix.
  * @returns {Promise<{handled: boolean, success?: boolean, action?: string}>}
  */
-export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
+export async function handleCancel(shopifyOrderId, dealId, stageId, requestId, options = {}) {
+    const { refundEnabled = false } = options;
+
     if (!isLoseStage(stageId)) {
         return { handled: false, reason: 'not_lose_stage' };
     }
@@ -121,7 +127,9 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         const overpayment = receivedAmount - currentTotal;
                         const currency = shopifyOrder.currency || 'EUR';
 
-                        if (overpayment > 0.01) {
+                        if (overpayment > 0.01 && !refundEnabled) {
+                            logger.info('order_cancel_reconciliation_skipped', 'Overpayment detected but refund path is disabled, leaving money untouched', { shopifyOrderId, dealId, overpayment, currency });
+                        } else if (overpayment > 0.01) {
                             logger.info('order_cancel_overpayment_detected', 'Overpayment detected, initiating reconciliation refund', { shopifyOrderId, dealId, overpayment, currency });
                             const reconciliationResult = await createRefund(shopifyOrderId, {
                                 amount: String(overpayment),
@@ -140,6 +148,8 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                     }
 
                     // Determine Strategy
+                    // Unpaid = money was never captured, so cancelling moves no money.
+                    const isUnpaid = shopifyOrder.financial_status === 'pending' || shopifyOrder.financial_status === 'authorized';
                     let doRefund = false;
                     let doCancel = false;
 
@@ -150,11 +160,8 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                         logger.info('order_cancel_strategy_refund_forced', 'Order is fulfilled, forcing REFUND strategy, cancel disabled', { shopifyOrderId, dealId });
                     } else {
                         // Unfulfilled
-                        // Unfulfilled
                         // ✅ FIX: If order is UNPAID (pending), we should CANCEL it even if action is REFUND
                         // (Because you cannot "refund" money that wasn't taken, and "Refund" action implies VOIDING the transaction for unpaid orders)
-                        const isUnpaid = shopifyOrder.financial_status === 'pending' || shopifyOrder.financial_status === 'authorized';
-
                         if (lossAction.action === 'CANCEL' || (lossAction.action === 'REFUND' && isUnpaid)) {
                             doRefund = false; // Void/Cancel entire order (Refund not needed if unpaid)
                             doCancel = true;
@@ -166,6 +173,21 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                             doRefund = true; // Refund specific items (Diff)
                             doCancel = false; // Don't cancel the rest (keep as Refunded state)
                         }
+                    }
+
+                    // Shopify is master for refunds, so Bitrix may only push the cancel of an
+                    // order whose money was never captured. A refund, or a cancel of a paid
+                    // order, both move money and are left for Shopify to originate.
+                    if (!refundEnabled && (doRefund || !isUnpaid)) {
+                        logger.info('order_cancel_money_path_skipped', 'LOSE stage needs a money-moving action, leaving it to Shopify', {
+                            shopifyOrderId,
+                            dealId,
+                            financialStatus: shopifyOrder.financial_status,
+                            fulfillmentStatus: shopifyOrder.fulfillment_status,
+                            doRefund,
+                            doCancel
+                        });
+                        return { handled: false, reason: 'money_path_disabled' };
                     }
 
                     // STEP 1: CALCULATE DIFF & REFUND
@@ -257,15 +279,19 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                     }
 
                     // STEP 2: CANCEL ORDER
+                    let cancelError = null;
                     if (doCancel && canCancel) {
                         logger.info('order_cancel_executing', 'Executing full order cancel', { shopifyOrderId, dealId, reason: lossAction.reason });
                         const orderGid = `gid://shopify/Order/${shopifyOrderId}`;
+                        // refund and restock are both non-null arguments in API 2024-01.
+                        // refund is always false here: this path only runs for unpaid orders.
                         const mutation = `
-                        mutation orderCancel($orderId: ID!, $restock: Boolean!) {
+                        mutation orderCancel($orderId: ID!, $restock: Boolean!, $refund: Boolean!) {
                           orderCancel(
                             orderId: $orderId,
                             reason: OTHER,
-                            restock: $restock
+                            restock: $restock,
+                            refund: $refund
                           ) {
                             userErrors {
                               field
@@ -277,27 +303,57 @@ export async function handleCancel(shopifyOrderId, dealId, stageId, requestId) {
                           }
                         }
                         `;
-                        cancelData = await callShopifyGraphQL(mutation, {
+                        const cancelData = await callShopifyGraphQL(mutation, {
                             orderId: orderGid,
-                            restock: doRefund ? false : shouldRestock
+                            restock: doRefund ? false : shouldRestock,
+                            refund: false
                         });
 
-                        if (cancelData?.orderCancel?.userErrors && cancelData.orderCancel.userErrors.length > 0) {
-                            const errorMessages = cancelData.orderCancel.userErrors.map(e => `${e.field}: ${e.message}`).join('; ');
+                        const cancelUserErrors = cancelData?.orderCancel?.userErrors || [];
+                        let isCancelConfirmed = cancelUserErrors.length === 0;
+
+                        if (cancelUserErrors.length > 0) {
+                            const errorMessages = cancelUserErrors.map(e => `${e.field}: ${e.message}`).join('; ');
 
                             // Check if order is already cancelled - treat as success
                             if (errorMessages.includes('already been canceled') || errorMessages.includes('already cancelled')) {
                                 logger.info('order_already_cancelled', 'Order already cancelled, ignoring error', { shopifyOrderId, dealId });
+                                isCancelConfirmed = true;
                             } else {
-                                logger.warn('order_cancel_graphql_warnings', 'Cancel warnings from GraphQL', { shopifyOrderId, dealId, userErrors: cancelData.orderCancel.userErrors });
+                                logger.warn('order_cancel_graphql_warnings', 'Cancel warnings from GraphQL', { shopifyOrderId, dealId, userErrors: cancelUserErrors });
+                                cancelError = errorMessages;
                             }
                         } else {
                             logger.info('order_cancel_success', 'Order cancelled successfully', { shopifyOrderId, dealId });
+                        }
+
+                        // Mark this write as Bitrix-originated so the orders/updated webhook that
+                        // the cancel triggers is recognised as our own echo and stops there.
+                        // Written only after a confirmed cancel: the provenance guard has no TTL,
+                        // so a marker left by a failed cancel would mute this order's sync for good.
+                        if (isCancelConfirmed) {
+                            const provenanceResult = await setProvenanceMarker(shopifyOrderId, requestId, 'order_cancel', null, 'bitrix');
+                            if (!provenanceResult.success) {
+                                logger.warn('order_cancel_provenance_failed', 'Cancel succeeded but provenance marker failed, echo webhook may reach Bitrix', { shopifyOrderId, dealId, error: provenanceResult.message });
+                            }
                         }
                     } else {
                         if (!canCancel) {
                             logger.info('order_cancel_skip', 'Skipping cancellation, order fulfilled or strategy override', { shopifyOrderId, dealId });
                         }
+                    }
+
+                    // A rejected cancel must not be reported as done. The BitrixUpdated tag has no
+                    // expiry, so tagging an order we failed to cancel would mute its future
+                    // Shopify -> Bitrix updates permanently.
+                    if (cancelError) {
+                        return {
+                            handled: true,
+                            success: false,
+                            action: 'order_cancel_failed',
+                            error: cancelError,
+                            shopifyOrderId
+                        };
                     }
 
                     if (!isBitrixOrder) await addTagToOrder(shopifyOrderId, 'BitrixUpdated');

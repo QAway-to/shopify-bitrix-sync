@@ -1699,14 +1699,15 @@ async function handleDealUpdate(dealId, requestId) {
     }
   }
 
-  // ✅ STEP A: Cancel/Refund logic from Bitrix -> Shopify is now DISABLED
-  // User request: All refund/return logic mastered in Shopify and pushed to Bitrix.
-  // Bitrix deals will passively adapt to Shopify refunds.
-  /*
+  // ✅ STEP A: Cancel from Bitrix -> Shopify, restricted to unpaid orders.
+  // Shopify stays master for refunds: refundEnabled=false makes handleCancel bail out of
+  // every money-moving path, so a LOSE deal only pushes the cancel of an order whose
+  // payment was never captured. Refunds and cancels of paid orders are originated in
+  // Shopify and flow back into Bitrix through the shopify webhook.
   const { handleCancel, isLoseStage } = await import('../../../src/lib/blocks/cancel.js');
 
   if (isLoseStage(stageId)) {
-    const cancelResult = await handleCancel(shopifyOrderId, dealId, stageId, requestId);
+    const cancelResult = await handleCancel(shopifyOrderId, dealId, stageId, requestId, { refundEnabled: false });
     if (cancelResult && cancelResult.handled) {
       if (cancelResult.success) {
         return {
@@ -1726,7 +1727,6 @@ async function handleDealUpdate(dealId, requestId) {
       }
     }
   }
-  */
 
 
 
