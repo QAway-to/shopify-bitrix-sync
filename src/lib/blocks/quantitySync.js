@@ -21,7 +21,8 @@ import {
     addPositionToOrder,
     beginOrderEdit,
     setLineItemQuantity,
-    commitOrderEdit
+    commitOrderEdit,
+    setVariantTotalQuantity
 } from '../shopify/orderEdit.js';
 import { addTagToOrder } from '../shopify/order.js';
 import { callBitrix } from '../bitrix/client.js';
@@ -266,14 +267,10 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                 } else if (contributingLines.length <= 1) {
                     quantityChanges.push(change);
                 } else {
-                    // Splitting a non-zero target across several live duplicates is ambiguous:
-                    // any single write would over- or under-correct. Refuse rather than guess,
-                    // and surface it — this has not been observed on real orders.
-                    logger.error('quantity_sync_multiline_target_unsupported', 'Variant spans several live line items — cannot apply a non-zero target to one of them, skipped', {
-                        dealId, shopifyOrderId, key: groupKey,
-                        bitrixQty: group.bitrixQty, shopifyQtyTotal: group.shopifyQty,
-                        contributingLines,
-                    }, { entityType: 'order', entityId: shopifyOrderId });
+                    // Several live line items hold this variant. A single-line write cannot
+                    // produce a correct sum (lines of 2 and 3 with a target of 4 would become
+                    // 7 or 6), so spread the difference across them in one edit session.
+                    quantityChanges.push({ ...change, distributeAcrossLines: true, contributingLines });
                 }
             }
         }
@@ -325,7 +322,34 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
         let hasChanges = false;
         for (const change of quantityChanges) {
             try {
-                if (change.isNew) {
+                if (change.distributeAcrossLines) {
+                    // expectedTotal guards the reading: if the edit session disagrees with what
+                    // we measured from the REST order, nothing is written.
+                    const spreadResult = await setVariantTotalQuantity(shopifyOrderId, {
+                        variantId: change.variantId,
+                        sku: change.sku,
+                        targetTotal: change.newQty,
+                        expectedCurrentTotal: change.shopifyQty,
+                        logContext: { dealId, requestId, syncPath: 'block' },
+                    });
+                    if (spreadResult.success) {
+                        if (!spreadResult.unchanged) hasChanges = true;
+                        logger.info('quantity_sync_distributed_success', 'Quantity spread across several live line items', {
+                            dealId, shopifyOrderId, requestId, syncPath: 'block',
+                            sku: change.sku, variantId: change.variantId,
+                            previousTotal: change.shopifyQty, newTotal: change.newQty,
+                            linesTouched: spreadResult.linesTouched,
+                        }, { entityType: 'order', entityId: shopifyOrderId });
+                    } else {
+                        logger.error('quantity_sync_distributed_error', 'Failed to spread quantity across line items', {
+                            dealId, shopifyOrderId, requestId, syncPath: 'block',
+                            sku: change.sku, variantId: change.variantId,
+                            previousTotal: change.shopifyQty, newTotal: change.newQty,
+                            contributingLines: change.contributingLines,
+                            error: spreadResult.error, message: spreadResult.message,
+                        }, { entityType: 'order', entityId: shopifyOrderId });
+                    }
+                } else if (change.isNew) {
                     // ✅ Use variantId first (direct lookup), fallback to sku (certificates)
                     const identifier = change.variantId || change.sku;
                     const addResult = await addPositionToOrder(shopifyOrderId, identifier, change.newQty);

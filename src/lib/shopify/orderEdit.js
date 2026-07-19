@@ -565,3 +565,134 @@ export async function decrementLineItemQuantity(orderId, sku, newQuantity, varia
   }
 }
 
+
+/**
+ * Set the TOTAL quantity a variant holds across every line item in an order.
+ *
+ * increment/decrementLineItemQuantity write an absolute quantity to ONE line item. When a
+ * variant sits on several live line items (an operator adding a position for an item the
+ * order already holds, or duplicates left by older concurrent order edits), no single-line
+ * write can produce a correct sum: with lines of 2 and 3 and a target of 4, writing 4 to
+ * either line yields 7 or 6. This spreads the difference across the matching lines instead,
+ * inside a single edit session.
+ *
+ * Quantities here come from the calculated order, where `quantity` is the live amount for
+ * the line — not the order's historical `line_item.quantity`, which keeps counting units
+ * that were refunded or removed long ago.
+ *
+ * @param {string|number} orderId
+ * @param {Object} params
+ * @param {string|number} [params.variantId] - preferred identifier
+ * @param {string} [params.sku] - fallback identifier
+ * @param {number} params.targetTotal - desired total across all matching line items
+ * @param {number} [params.expectedCurrentTotal] - total the caller measured from the REST
+ *   order. When given, a mismatch aborts the edit rather than writing a guessed quantity.
+ * @param {Object} [params.logContext]
+ */
+export async function setVariantTotalQuantity(orderId, { variantId, sku, targetTotal, expectedCurrentTotal = null, logContext = {} } = {}) {
+  if (!orderId) {
+    return { success: false, error: 'MISSING_ORDER_ID', message: 'Order ID is required' };
+  }
+  if (!variantId && !sku) {
+    return { success: false, error: 'MISSING_SKU', message: 'SKU or variant ID is required' };
+  }
+  if (!Number.isFinite(targetTotal) || targetTotal < 0) {
+    return { success: false, error: 'INVALID_QUANTITY', message: 'targetTotal must be zero or greater' };
+  }
+
+  try {
+    const beginResult = await beginOrderEdit(orderId);
+    if (!beginResult.success) return beginResult;
+
+    const { calculatedOrderId, lineItems } = beginResult;
+    const id = variantId != null ? String(variantId) : null;
+
+    let matches = id
+      ? lineItems.filter(item => item.variant && (item.variant.legacyResourceId === id || item.variant.id?.split('/').pop() === id))
+      : [];
+    if (matches.length === 0 && sku) {
+      matches = lineItems.filter(item => item.variant && item.variant.sku === sku);
+    }
+
+    if (matches.length === 0) {
+      logger.warn('set_variant_total_not_found', 'Variant not found in order', { orderId, variantId, sku, ...logContext });
+      return { success: false, error: 'LINE_ITEM_NOT_FOUND', message: `No line item for variant ${variantId ?? sku}` };
+    }
+
+    const currentTotal = matches.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
+
+    // The caller measured the current total from the REST order; if the edit session
+    // disagrees, one of the two readings is wrong and writing either would corrupt the
+    // order. Bail out visibly instead.
+    if (expectedCurrentTotal != null && Math.abs(currentTotal - expectedCurrentTotal) > 0.01) {
+      logger.error('set_variant_total_mismatch', 'Calculated order disagrees with the measured total — edit aborted', {
+        orderId, variantId, sku, currentTotal, expectedCurrentTotal,
+        lines: matches.map(m => ({ id: m.id, quantity: m.quantity, editableQuantity: m.editableQuantity })),
+        ...logContext,
+      });
+      return { success: false, error: 'CURRENT_TOTAL_MISMATCH', message: `Calculated total ${currentTotal} != expected ${expectedCurrentTotal}` };
+    }
+
+    let delta = targetTotal - currentTotal;
+    if (Math.abs(delta) < 0.01) {
+      return { success: true, unchanged: true, currentTotal, targetTotal };
+    }
+
+    // Largest editable line first: it absorbs the most before another line is touched.
+    const editable = matches
+      .filter(item => Number(item.editableQuantity ?? item.quantity ?? 0) > 0)
+      .sort((a, b) => Number(b.editableQuantity ?? b.quantity ?? 0) - Number(a.editableQuantity ?? a.quantity ?? 0));
+
+    const writes = [];
+
+    if (delta < 0) {
+      let toRemove = -delta;
+      for (const item of editable) {
+        if (toRemove <= 0.01) break;
+        const lineQuantity = Number(item.quantity ?? 0);
+        // editableQuantity should never exceed quantity; clamp so a surprising response
+        // cannot produce a negative write.
+        const capacity = Math.min(Number(item.editableQuantity ?? lineQuantity), lineQuantity);
+        const taken = Math.min(toRemove, capacity);
+        writes.push({ lineItemId: item.id, quantity: Math.max(0, lineQuantity - taken) });
+        toRemove -= taken;
+      }
+      if (toRemove > 0.01) {
+        logger.error('set_variant_total_insufficient_editable', 'Not enough editable quantity to reach the target — edit aborted', {
+          orderId, variantId, sku, currentTotal, targetTotal, shortBy: toRemove, ...logContext,
+        });
+        return { success: false, error: 'INSUFFICIENT_EDITABLE_QUANTITY', message: `Cannot reduce by ${-delta}: only ${-delta - toRemove} is editable` };
+      }
+    } else {
+      // Growing: one line absorbs the whole increase. Adding a variant that already sits on
+      // the order would create yet another duplicate line, so only do that if none exists.
+      const target = editable[0] || matches.find(item => Number(item.quantity ?? 0) > 0);
+      if (target) {
+        writes.push({ lineItemId: target.id, quantity: Number(target.quantity ?? 0) + delta });
+      } else {
+        const variantNumericId = matches[0].variant?.legacyResourceId || matches[0].variant?.id?.split('/').pop();
+        if (!variantNumericId) {
+          return { success: false, error: 'VARIANT_ID_UNAVAILABLE', message: 'Cannot re-add removed line item: variant ID unavailable' };
+        }
+        const addResult = await addVariantToEdit(calculatedOrderId, variantNumericId, delta);
+        if (!addResult.success) return addResult;
+      }
+    }
+
+    for (const write of writes) {
+      const setResult = await setLineItemQuantity(calculatedOrderId, write.lineItemId, write.quantity);
+      if (!setResult.success) return setResult;
+    }
+
+    const commitResult = await commitOrderEdit(calculatedOrderId);
+    if (!commitResult.success) return commitResult;
+
+    logger.info('set_variant_total_quantity', 'Variant total quantity set across line items', {
+      orderId, variantId, sku, currentTotal, targetTotal, linesTouched: writes.length, ...logContext,
+    });
+    return { ...commitResult, currentTotal, targetTotal, linesTouched: writes.length };
+  } catch (error) {
+    logger.error('set_variant_total_error', 'Failed to set variant total quantity', { orderId, variantId, sku, targetTotal, error: error.message, ...logContext });
+    return { success: false, error: 'SET_VARIANT_TOTAL_ERROR', message: error.message };
+  }
+}
