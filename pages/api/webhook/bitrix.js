@@ -36,6 +36,13 @@ import { BITRIX_DEAL_FIELDS } from '../../../src/lib/shared/constants.js';
 
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
+
+// Serializes webhook processing per deal. Bitrix fires several webhooks for one user
+// action; concurrent runs opened overlapping Shopify order-edit sessions on the same
+// order, which produced duplicate line items and 429s. Value carries a `dirty` flag so
+// a webhook that arrives mid-run is replayed once instead of being silently dropped.
+const processingDeals = new Map();
+const MAX_COALESCED_RERUNS = 3;
 const BITRIX_FALLBACK_CUSTOMER_EMAIL = String(process.env.BITRIX_FALLBACK_CUSTOMER_EMAIL || 'admin@fbfcshoes.com');
 
 async function resolveCustomerEmailFromDeal(dealData, requestId, dealId, context) {
@@ -3973,6 +3980,88 @@ async function handleDealCreate(dealId, requestId) {
 /**
  * Main webhook handler
  */
+/**
+ * Dispatch a Bitrix deal event to the matching handler.
+ */
+async function routeDealEvent(dealId, eventType, requestId) {
+  if (eventType === 'ONCRMDEALUPDATE' || eventType.includes('UPDATE')) {
+    logger.info('BITRIX_WEBHOOK_ROUTING_TO_UPDATE', 'BITRIX_WEBHOOK_ROUTING_TO_UPDATE', { requestId, dealId, eventType });
+    return await handleDealUpdate(dealId, requestId);
+  }
+
+  if (eventType === 'ONCRMDEALADD' || eventType.includes('ADD')) {
+    logger.info('BITRIX_WEBHOOK_ROUTING_TO_CREATE', 'BITRIX_WEBHOOK_ROUTING_TO_CREATE', { requestId, dealId, eventType });
+    return await handleDealCreate(dealId, requestId);
+  }
+
+  logger.info('BITRIX_WEBHOOK_UNHANDLED_EVENT', 'BITRIX_WEBHOOK_UNHANDLED_EVENT', { requestId, dealId, eventType });
+  return { success: true, triggerMatch: false, skip_reason: `unhandled_event_type:${eventType}` };
+}
+
+/**
+ * Run a deal event with at most one active run per deal.
+ *
+ * A webhook arriving while the same deal is being processed is not dropped: it marks the
+ * active run dirty and records its own eventType, and the run replays once on completion
+ * against freshly fetched state. Replays are capped so a Bitrix echo webhook cannot sustain
+ * the chain indefinitely.
+ *
+ * Scope: `processingDeals` is per-process. This service runs as a single Render instance —
+ * scaling to more than one instance (or forking workers) needs a shared lock (Redis/DB),
+ * otherwise concurrent order-edit sessions across instances become possible again.
+ *
+ * The lock is deliberately held for the full run with no time-based takeover. A takeover
+ * cannot stop the run it displaces: the displaced run would later release a lock it no
+ * longer owns, letting unbounded concurrent runs pile up on one deal — the exact failure
+ * this lock prevents. Upstream calls use native fetch (undici), whose default 300s
+ * headers/body timeouts make a hung call reject on its own; the rejection unwinds through
+ * the finally below and releases the lock. Worst case is therefore one deal stalled for
+ * up to ~5 minutes, visible as repeated `deal_webhook_coalesced` warns for one dealId.
+ * Explicit AbortController timeouts would tighten that window and are tracked separately.
+ *
+ * @returns {Promise<Object>} handler result, or `{ coalesced: true }` if merged into an active run
+ */
+async function runDealEventCoalesced(dealId, eventType, requestId, rerunDepth = 0) {
+  const dealKey = String(dealId);
+  const activeRun = processingDeals.get(dealKey);
+
+  if (activeRun) {
+    activeRun.dirty = true;
+    // Replay whichever event arrived last: an UPDATE merged into a running CREATE must
+    // still replay as an UPDATE, or its quantity sync never runs.
+    activeRun.pendingEventType = eventType;
+    logger.warn('deal_webhook_coalesced', 'Deal already being processed — merged into active run', { requestId, dealId, eventType }, { entityType: 'deal', entityId: dealKey });
+    return { coalesced: true };
+  }
+
+  const runState = { dirty: false, pendingEventType: null };
+  processingDeals.set(dealKey, runState);
+
+  try {
+    return await routeDealEvent(dealId, eventType, requestId);
+  } finally {
+    processingDeals.delete(dealKey);
+
+    if (runState.dirty) {
+      const replayEventType = runState.pendingEventType || eventType;
+
+      if (rerunDepth >= MAX_COALESCED_RERUNS) {
+        // Handlers re-read full state, so a replay is a reconciliation rather than a delta —
+        // but dropping it still leaves the deal unsynced until the next unrelated webhook.
+        logger.error('deal_webhook_rerun_capped', 'Coalesced replay limit reached — pending deal update dropped, deal may be out of sync', { requestId, dealId, eventType, replayEventType, rerunDepth }, { entityType: 'deal', entityId: dealKey });
+      } else {
+        // Detached so the original webhook response is not held open.
+        setImmediate(() => {
+          runDealEventCoalesced(dealId, replayEventType, `${requestId}-rerun${rerunDepth + 1}`, rerunDepth + 1)
+            .catch(rerunError => {
+              logger.error('deal_webhook_rerun_error', 'Coalesced replay failed', { requestId, dealId, eventType: replayEventType, rerunDepth: rerunDepth + 1, error: rerunError?.message }, { entityType: 'deal', entityId: dealKey });
+            });
+        });
+      }
+    }
+  }
+}
+
 export default async function handler(req, res) {
   const requestId = crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}`;
   const slog = createRequestLogger(requestId, 'webhook/bitrix');
@@ -4041,24 +4130,24 @@ export default async function handler(req, res) {
     eventEVENT: event.EVENT});
 
   try {
-    // Route based on event type
-    let result = null;
-    if (eventType === 'ONCRMDEALUPDATE' || eventType.includes('UPDATE')) {
-            logger.info('BITRIX_WEBHOOK_ROUTING_TO_UPDATE', 'BITRIX_WEBHOOK_ROUTING_TO_UPDATE', {requestId,
-        dealId,
-        eventType});
-      result = await handleDealUpdate(dealId, requestId);
-    } else if (eventType === 'ONCRMDEALADD' || eventType.includes('ADD')) {
-            logger.info('BITRIX_WEBHOOK_ROUTING_TO_CREATE', 'BITRIX_WEBHOOK_ROUTING_TO_CREATE', {requestId,
-        dealId,
-        eventType});
-      result = await handleDealCreate(dealId, requestId);
-    } else {
-      // ✅ Structured logging: [BITRIX_WEBHOOK_UNHANDLED_EVENT]
-            logger.info('BITRIX_WEBHOOK_UNHANDLED_EVENT', 'BITRIX_WEBHOOK_UNHANDLED_EVENT', {requestId,
-        dealId,
-        eventType});
-      result = { success: true, triggerMatch: false, skip_reason: `unhandled_event_type:${eventType}` };
+    // Route based on event type, one active run per deal
+    const result = await runDealEventCoalesced(dealId, eventType, requestId);
+
+    if (result?.coalesced) {
+      slog.info('webhook_completed', 'Bitrix webhook merged into in-flight run', {
+        entity_id: String(dealId || ''),
+        event_type: eventType,
+        skip_reason: 'locked_processing',
+        duration_ms: Date.now() - startTime,
+      });
+      res.status(200).json({
+        success: true,
+        message: 'Merged into in-flight run for this deal',
+        skipped: 'locked_processing',
+        requestId,
+        dealId
+      });
+      return;
     }
 
     // ✅ Structured logging: [BITRIX_WEBHOOK_DONE]
