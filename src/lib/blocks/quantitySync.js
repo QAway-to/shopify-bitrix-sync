@@ -138,9 +138,6 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
 
         // Compare with Shopify and find differences
         const quantityChanges = [];
-        // Shopify may have duplicate line items for the same variant/SKU (from prior Order Edit re-adds).
-        // Bitrix has a unique entry per match key — first Shopify match wins.
-        const processedBitrixKeys = new Set();
 
         // Returns total quantity already fulfilled/shipped for a given line item id
         function getFulfilledQtyForLineItem(order, lineItemId) {
@@ -157,7 +154,19 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             return total;
         }
 
-        // Check existing Shopify items - match by variant_id first, then sku
+        // Group Shopify line items by the Bitrix row they match, and sum their quantities.
+        //
+        // An order can carry several line items for the same variant (left behind by earlier
+        // Order Edit re-adds). What Shopify actually holds in stock for that variant is their
+        // SUM. Comparing each line separately makes every line look correct on its own while
+        // the order as a whole reserves too much: with Bitrix at 1 and two lines of 1 each,
+        // both read as "matching" and the extra unit is never released.
+        //
+        // Per line the reserved amount is fulfillable + already fulfilled, capped by the
+        // ordered quantity. Raw `quantity` alone is the historical ordered amount and keeps
+        // counting units that were long since refunded or removed.
+        const shopifyTotals = new Map();
+
         for (const lineItem of shopifyLineItems) {
             const shopifyVariantId = lineItem.variant_id ? String(lineItem.variant_id) : null;
             const shopifySku = lineItem.sku ? String(lineItem.sku).trim() : null;
@@ -184,41 +193,88 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                 }
             }
 
-            if (matchedEntry && matchKey) {
-                if (processedBitrixKeys.has(matchKey)) {
-                    logger.info('quantity_sync_duplicate_skip', 'Duplicate Shopify line item skipped', {
-                        dealId, shopifyOrderId, lineItemId: lineItem.id, matchKey, shopifyVariantId, shopifySku,
-                    });
-                    continue;
-                }
-                processedBitrixKeys.add(matchKey);
-            }
-
-            const bitrixQty = matchedEntry ? matchedEntry.quantity : 0;
             const fulfillable = lineItem.fulfillable_quantity != null
                 ? parseFloat(lineItem.fulfillable_quantity)
                 : parseFloat(lineItem.current_quantity ?? lineItem.quantity ?? 0);
             const fulfilledForLine = getFulfilledQtyForLineItem(shopifyOrder, lineItem.id);
-            const shopifyQty = Math.min(fulfillable + fulfilledForLine, parseFloat(lineItem.quantity ?? 0));
+            const lineQty = Math.min(fulfillable + fulfilledForLine, parseFloat(lineItem.quantity ?? 0));
 
-            if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
+            // Unmatched lines still group (by their own identifier) so they reconcile to 0 —
+            // that is how items removed in Bitrix get removed from the Shopify order.
+            const groupKey = matchKey || shopifyVariantId || shopifySku;
+            const group = shopifyTotals.get(groupKey) || {
+                matched: !!matchedEntry,
+                bitrixQty: matchedEntry ? matchedEntry.quantity : 0,
+                variantId: matchedEntry?.variantId || shopifyVariantId,
+                sku: matchedEntry?.sku || shopifySku,
+                shopifyQty: 0,
+                lineItems: [],
+            };
+
+            group.shopifyQty += lineQty;
+            group.lineItems.push({ lineItemId: lineItem.id, quantity: lineItem.quantity, fulfillable, fulfilled: fulfilledForLine, counted: lineQty });
+            shopifyTotals.set(groupKey, group);
+        }
+
+        // Shopify line items with no Bitrix counterpart. Kept as a warn (not an action) —
+        // they are reconciled to 0 through the normal change path below.
+        const orphans = [...shopifyTotals.entries()].filter(([, group]) => !group.matched);
+        if (orphans.length > 0) {
+            logger.warn('quantity_sync_shopify_orphans', 'Shopify items not found in Bitrix', {
+                dealId, shopifyOrderId,
+                orphans: orphans.map(([key, group]) => ({ key, sku: group.sku, variantId: group.variantId, shopifyQty: group.shopifyQty, lineItems: group.lineItems })),
+            }, { entityType: 'order', entityId: shopifyOrderId });
+        }
+
+        for (const [groupKey, group] of shopifyTotals.entries()) {
+            if (group.lineItems.length > 1) {
+                logger.info('quantity_sync_duplicate_lines_aggregated', 'Several Shopify line items map to one Bitrix row — compared by their sum', {
+                    dealId, shopifyOrderId, key: groupKey, bitrixQty: group.bitrixQty, shopifyQtyTotal: group.shopifyQty, lineItems: group.lineItems,
+                }, { entityType: 'order', entityId: shopifyOrderId });
+            }
+
+            if (Math.abs(group.bitrixQty - group.shopifyQty) > 0.01) {
                 // forceRemove mode: only process removals (qty→0), skip other changes
-                if (forceRemove && !isBitrixManagedOrder && bitrixQty > 0) {
+                if (forceRemove && !isBitrixManagedOrder && group.bitrixQty > 0) {
                     continue;
                 }
                 // If order is refunded/partially_refunded/voided, do not push increases from Bitrix to Shopify.
                 // Allow only decreases/removals (e.g., cleanup) to avoid re-adding refunded items.
-                if (blockAddsDueToRefund && bitrixQty > shopifyQty) {
+                if (blockAddsDueToRefund && group.bitrixQty > group.shopifyQty) {
                     continue;
                 }
-                quantityChanges.push({
-                    key: matchKey || shopifyVariantId || shopifySku,
-                    variantId: matchedEntry?.variantId || shopifyVariantId,
-                    sku: matchedEntry?.sku || shopifySku,
-                    bitrixQty,
-                    shopifyQty,
-                    newQty: bitrixQty
-                });
+
+                const change = {
+                    key: groupKey,
+                    variantId: group.variantId,
+                    sku: group.sku,
+                    bitrixQty: group.bitrixQty,
+                    shopifyQty: group.shopifyQty,
+                    newQty: group.bitrixQty
+                };
+
+                // A change carries an absolute target and is applied to ONE line item, so a
+                // group target only lands correctly when a single line actually holds stock.
+                const contributingLines = group.lineItems.filter(line => line.counted > 0);
+
+                if (group.bitrixQty === 0) {
+                    // Removal is unambiguous: every contributing line goes to 0. Emit one change
+                    // per line — each apply re-opens the edit and targets the next live line.
+                    for (const line of contributingLines) {
+                        quantityChanges.push({ ...change, lineItemId: line.lineItemId });
+                    }
+                } else if (contributingLines.length <= 1) {
+                    quantityChanges.push(change);
+                } else {
+                    // Splitting a non-zero target across several live duplicates is ambiguous:
+                    // any single write would over- or under-correct. Refuse rather than guess,
+                    // and surface it — this has not been observed on real orders.
+                    logger.error('quantity_sync_multiline_target_unsupported', 'Variant spans several live line items — cannot apply a non-zero target to one of them, skipped', {
+                        dealId, shopifyOrderId, key: groupKey,
+                        bitrixQty: group.bitrixQty, shopifyQtyTotal: group.shopifyQty,
+                        contributingLines,
+                    }, { entityType: 'order', entityId: shopifyOrderId });
+                }
             }
         }
 

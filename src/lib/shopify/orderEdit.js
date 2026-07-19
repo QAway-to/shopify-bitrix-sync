@@ -26,6 +26,7 @@ export async function beginOrderEdit(orderId) {
               node {
                 id
                 quantity
+                editableQuantity
                 variant {
                   id
                   legacyResourceId
@@ -329,19 +330,49 @@ export async function addPositionToOrder(orderId, variantId, quantity) {
   }
 }
 
-function findLineItemBySku(lineItems, sku) {
-  return (
-    lineItems.find(item => item.variant && item.variant.sku === sku && item.quantity > 0)
-    || lineItems.find(item => item.variant && item.variant.sku === sku)
-  );
+/**
+ * Choose which of several matching line items to edit.
+ *
+ * An order can hold more than one line item for the same variant (prior Order Edit re-adds).
+ * Picking by `quantity > 0` alone lands on line items whose fulfillment order is already
+ * closed — `quantity` is the historical ordered amount, so a fully refunded/removed line
+ * still reports a positive value. Editing one fails the whole session with
+ * "Could not save the order edit". `editableQuantity` is the portion Shopify will actually
+ * let us change, so prefer the largest editable line and fall back to the old behaviour only
+ * when the field is absent.
+ *
+ * @param {Array} matches - calculated line items for one variant/SKU
+ * @param {Object} logContext - included in the multi-line warning
+ */
+function pickEditableLineItem(matches, logContext = {}) {
+  const editable = matches
+    .filter(item => Number(item.editableQuantity ?? item.quantity ?? 0) > 0)
+    .sort((a, b) => Number(b.editableQuantity ?? b.quantity ?? 0) - Number(a.editableQuantity ?? a.quantity ?? 0));
+
+  if (editable.length > 1) {
+    // Quantity is applied to a single line item, so spreading a target across several
+    // editable duplicates would under-correct. Not observed in practice — log it so we
+    // find out if it ever happens rather than silently syncing to a wrong total.
+    logger.warn('order_edit_multiple_editable_lines', 'Variant has several editable line items — quantity applied to the largest only', {
+      ...logContext,
+      editableLineItems: editable.map(item => ({ id: item.id, quantity: item.quantity, editableQuantity: item.editableQuantity })),
+    });
+  }
+
+  return editable[0]
+    || matches.find(item => item.quantity > 0)
+    || matches[0];
 }
 
-function findLineItemByVariantId(lineItems, variantId) {
+function findLineItemBySku(lineItems, sku, logContext = {}) {
+  const matches = lineItems.filter(item => item.variant && item.variant.sku === sku);
+  return pickEditableLineItem(matches, { ...logContext, sku });
+}
+
+function findLineItemByVariantId(lineItems, variantId, logContext = {}) {
   const id = String(variantId);
-  return (
-    lineItems.find(item => item.variant && (item.variant.legacyResourceId === id || item.variant.id?.split('/').pop() === id) && item.quantity > 0)
-    || lineItems.find(item => item.variant && (item.variant.legacyResourceId === id || item.variant.id?.split('/').pop() === id))
-  );
+  const matches = lineItems.filter(item => item.variant && (item.variant.legacyResourceId === id || item.variant.id?.split('/').pop() === id));
+  return pickEditableLineItem(matches, { ...logContext, variantId: id });
 }
 
 /**
@@ -386,8 +417,8 @@ export async function incrementLineItemQuantity(orderId, sku, quantityToAdd, var
     const { calculatedOrderId, lineItems } = beginResult;
 
     // Step 2: Find line item — variant_id first (handles empty-sku POS items), then SKU
-    const targetLineItem = (variantId && findLineItemByVariantId(lineItems, variantId))
-      || findLineItemBySku(lineItems, sku);
+    const targetLineItem = (variantId && findLineItemByVariantId(lineItems, variantId, { orderId }))
+      || findLineItemBySku(lineItems, sku, { orderId });
 
     if (!targetLineItem) {
       logger.warn('increment_line_item_not_found', 'SKU not found in order for increment', { orderId, sku });
@@ -484,8 +515,8 @@ export async function decrementLineItemQuantity(orderId, sku, newQuantity, varia
     const { calculatedOrderId, lineItems } = beginResult;
 
     // Step 2: Find line item — variant_id first (handles empty-sku POS items), then SKU
-    const targetLineItem = (variantId && findLineItemByVariantId(lineItems, variantId))
-      || findLineItemBySku(lineItems, sku);
+    const targetLineItem = (variantId && findLineItemByVariantId(lineItems, variantId, { orderId }))
+      || findLineItemBySku(lineItems, sku, { orderId });
 
     if (!targetLineItem) {
       logger.warn('decrement_line_item_not_found', 'SKU not found in order for decrement', { orderId, sku });
