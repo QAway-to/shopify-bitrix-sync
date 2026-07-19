@@ -5,7 +5,6 @@ import '../../../src/lib/logging/consoleCapture.js';
 import { createRequestLogger, logger } from '../../../src/lib/logging/logger.js';
 import { callBitrix } from '../../../src/lib/bitrix/client.js';
 import { bitrixAdapter } from '../../../src/lib/adapters/bitrix/index.js';
-import { BITRIX_CONFIG } from '../../../src/lib/bitrix/config.js';
 import { getFulfillmentOrders, getOrderForFulfillment, createFulfillment, getPostFulfillmentState } from '../../../src/lib/shopify/fulfillment.js';
 
 import { createHoldOrder } from '../../../src/lib/shopify/hold.js';
@@ -31,7 +30,7 @@ import { BITRIX_DEAL_FIELDS } from '../../../src/lib/shared/constants.js';
 // import { handlePreOrder } from '../../../src/lib/blocks/preOrder.js';
 // import { handleCancel, isLoseStage } from '../../../src/lib/blocks/cancel.js';
 // import { handleAddressUpdate } from '../../../src/lib/blocks/addressUpdate.js';
-// import { handleQuantitySync } from '../../../src/lib/blocks/quantitySync.js';
+import { handleQuantitySync } from '../../../src/lib/blocks/quantitySync.js';
 // import { handleOrderCreate } from '../../../src/lib/blocks/orderCreate.js';
 
 // Expected auth token from Bitrix
@@ -1669,42 +1668,6 @@ async function handleDealUpdate(dealId, requestId) {
     stageId,
     shopifyOrderId});
 
-  // ✅ STEP 0: Sync Item Quantities (Full Control)
-  // Ensure Shopify items match Bitrix items exactly (add/remove/update)
-  // SKIPPED if in LOSE stage (to allow handleCancel to manage partial refunds gracefully)
-  if (shopifyOrderId && shopifyOrderId.trim() !== '') {
-    try {
-      const { isLoseStage: checkLose } = await import('../../../src/lib/blocks/cancel.js');
-      const isLose = checkLose(stageId);
-
-      if (!isLose) {
-        // ✅ LOOP GUARD: Check Provenance
-        let skipQuantitySync = false;
-        try {
-          const { getProvenanceMarker } = await import('../../../src/lib/shopify/metafields.js');
-          const lastWrite = await getProvenanceMarker(shopifyOrderId);
-          if (lastWrite && lastWrite.exists && lastWrite.value && lastWrite.value.source === 'shopify') {
-            const timeDiff = Date.now() - new Date(lastWrite.value.ts).getTime();
-            if (timeDiff < 60000) { // 60 seconds debounce for loop guard
-              logger.warn('loop_guard_quantity', 'Skipping quantity sync: last write was from Shopify', { shopifyOrderId, dealId, timeDiff_ms: timeDiff }, { entityType: 'order', entityId: shopifyOrderId });
-              skipQuantitySync = true;
-            }
-          }
-        } catch (pmError) {
-          logger.error('loop_guard_provenance_error', 'Failed to read provenance marker', { shopifyOrderId, dealId, error: pmError.message }, { entityType: 'order', entityId: shopifyOrderId });
-        }
-
-        if (!skipQuantitySync) {
-          const { handleQuantitySync } = await import('../../../src/lib/blocks/quantitySync.js');
-          await handleQuantitySync(shopifyOrderId, dealId, requestId, { forceRemove: true });
-        }
-      } else {
-        logger.info('quantity_sync_skipped_lose', 'Quantity sync skipped in LOSE stage', { shopifyOrderId, dealId, stageId }, { entityType: 'order', entityId: shopifyOrderId });
-      }
-    } catch (syncError) {
-      logger.warn('quantity_sync_error', 'Quantity sync failed', { shopifyOrderId, dealId, error: syncError.message }, { entityType: 'order', entityId: shopifyOrderId });
-    }
-  }
 
   // ✅ STEP A: Cancel from Bitrix -> Shopify, restricted to unpaid orders.
   // Shopify stays master for refunds: refundEnabled=false makes handleCancel bail out of
@@ -2082,370 +2045,52 @@ async function handleDealUpdate(dealId, requestId) {
     }
   }
 
-  // ✅ STEP C2: Sync product quantities from Bitrix to Shopify (if order exists)
-  // NOTE: This only runs if shopifyOrderId exists, so it won't block order creation
+  // Quantity sync (single implementation: blocks/quantitySync.js).
+  // Runs here, after the MW action / address / contact steps, because those can modify
+  // the order themselves — reconciling before them would leave Shopify diverged from
+  // Bitrix until the next webhook. A second inline copy used to run at this point and
+  // fight this one over the same order; it compared line items one by one against raw
+  // `quantity` instead of summing what is actually reserved, and has been removed.
+  // ✅ Sync Item Quantities (Full Control)
+  // Ensure Shopify items match Bitrix items exactly (add/remove/update)
+  // SKIPPED if in LOSE stage (to allow handleCancel to manage partial refunds gracefully)
   if (shopifyOrderId && shopifyOrderId.trim() !== '') {
-    // LOOP GUARD: Skip if last write was from Shopify within 60s.
-    // Race condition: crm.deal.update triggers this Bitrix webhook BEFORE
-    // crm.deal.productrows.set completes, so old Bitrix rows would be re-added to Shopify.
-    let c2LoopGuard = false;
     try {
-      const prov = await getProvenanceMarker(shopifyOrderId);
-      if (prov?.exists && prov.value?.source === 'shopify') {
-        const diff = Date.now() - new Date(prov.value.ts).getTime();
-        if (diff < 60000) {
-          logger.warn('loop_guard_quantity_c2', 'STEP C2 skipped: last write from Shopify within 60s', { shopifyOrderId, dealId, timeDiff_ms: diff }, { entityType: 'order', entityId: shopifyOrderId });
-          c2LoopGuard = true;
+      const { isLoseStage: checkLose } = await import('../../../src/lib/blocks/cancel.js');
+      const isLose = checkLose(stageId);
+
+      if (!isLose) {
+        // ✅ LOOP GUARD: Check Provenance
+        let skipQuantitySync = false;
+        try {
+          const { getProvenanceMarker } = await import('../../../src/lib/shopify/metafields.js');
+          const lastWrite = await getProvenanceMarker(shopifyOrderId);
+          if (lastWrite && lastWrite.exists && lastWrite.value && lastWrite.value.source === 'shopify') {
+            const timeDiff = Date.now() - new Date(lastWrite.value.ts).getTime();
+            if (timeDiff < 60000) { // 60 seconds debounce for loop guard
+              logger.warn('loop_guard_quantity', 'Skipping quantity sync: last write was from Shopify', { shopifyOrderId, dealId, timeDiff_ms: timeDiff }, { entityType: 'order', entityId: shopifyOrderId });
+              skipQuantitySync = true;
+            }
+          }
+        } catch (pmError) {
+          logger.error('loop_guard_provenance_error', 'Failed to read provenance marker', { shopifyOrderId, dealId, error: pmError.message }, { entityType: 'order', entityId: shopifyOrderId });
         }
+
+        if (!skipQuantitySync) {
+          await handleQuantitySync(shopifyOrderId, dealId, requestId, { forceRemove: true });
+        }
+      } else {
+        logger.info('quantity_sync_skipped_lose', 'Quantity sync skipped in LOSE stage', { shopifyOrderId, dealId, stageId }, { entityType: 'order', entityId: shopifyOrderId });
       }
-    } catch (pmErr) { /* non-blocking: if marker check fails, proceed normally */ }
-
-    if (!c2LoopGuard) {
-    try {
-            logger.info('QUANTITY_SYNC_START', 'QUANTITY_SYNC_START', {requestId,
-        dealId,
-        shopifyOrderId}, { entityType: 'order', entityId: shopifyOrderId });
-      const { getOrder } = await import('../../../src/lib/shopify/adminClient.js');
-      const shopifyOrder = await getOrder(shopifyOrderId);
-
-      if (shopifyOrder) {
-        // Refund safety: never re-add or increase line items on a refunded/voided order.
-        // Bitrix may still hold the original rows; pushing increases would resurrect refunded items.
-        // Removals (decrements) are still allowed for cleanup.
-        const financialStatus = shopifyOrder.financial_status ? String(shopifyOrder.financial_status) : null;
-        const blockAddsDueToRefund = financialStatus
-          ? new Set(['refunded', 'partially_refunded', 'voided']).has(financialStatus)
-          : false;
-        if (blockAddsDueToRefund) {
-          logger.warn('quantity_sync_refund_block', 'Order is refunded/voided — increases/adds will be skipped, only removals applied', { requestId, dealId, shopifyOrderId, financialStatus }, { entityType: 'order', entityId: shopifyOrderId });
-        }
-        // ✅ UPDATED: Sync quantities for ALL linked orders (Bitrix-created OR Shopify-created)
-        // Same logic as LOSE/Cancel bypass: if order is linked, allow updates to propagate
-        // Loop prevention: BitrixUpdated tag is added after sync, Shopify webhook will skip
-        const orderTags = Array.isArray(shopifyOrder.tags)
-          ? shopifyOrder.tags
-          : (shopifyOrder.tags ? String(shopifyOrder.tags).split(',').map(t => t.trim()) : []);
-        const isBitrixOrder = orderTags.some(tag => String(tag).startsWith('BITRIX:'));
-
-        // Sync for ALL linked orders (removed isBitrixOrder restriction)
-        {
-          // Get product rows from Bitrix
-          const productRowsResp = await callBitrix('/crm.deal.productrows.get.json', {
-            id: dealId
-          });
-
-          const bitrixRows = Array.isArray(productRowsResp?.result) ? productRowsResp.result : [];
-                    logger.info('QUANTITY_SYNC_BITRIX_ROWS', 'QUANTITY_SYNC_BITRIX_ROWS', {requestId,
-            dealId,
-            shopifyOrderId,
-            rowsCount: bitrixRows.length}, { entityType: 'order', entityId: shopifyOrderId });
-
-          // Get line items from Shopify
-          const shopifyLineItems = shopifyOrder.line_items || [];
-          logger.info('quantity_sync_shopify_snapshot', 'Shopify line items snapshot', { requestId, dealId, shopifyOrderId, itemsCount: shopifyLineItems.length, items: shopifyLineItems.map(li => ({ sku: li.sku, variantId: li.variant_id, lineItemId: li.id, quantity: li.quantity, title: li.title, fulfillmentStatus: li.fulfillment_status, fulfillableQuantity: li.fulfillable_quantity })) }, { entityType: 'order', entityId: shopifyOrderId });
-
-          // Build map of identifier -> { quantity, isVariantId } from Bitrix
-          // Priority: XML_ID (Shopify variant ID) first, CODE (SKU) as fallback
-          const bitrixQuantities = new Map();
-          for (const row of bitrixRows) {
-            const productId = row.PRODUCT_ID;
-            if (productId) {
-              // Shipping rides along as an ordinary Bitrix product row, but in Shopify it is a
-              // shipping_line, not a line item — no variant exists to add, so every sync tried
-              // to add it, failed with "The variant does not exist in the shop", left the row
-              // permanently unmatched, and re-tried on the next webhook. Shipping is synced
-              // separately; skip it here.
-              if (String(productId) === String(BITRIX_CONFIG.SHIPPING_PRODUCT_ID)) {
-                logger.info('quantity_sync_shipping_row_skipped', 'Shipping product row skipped, not a Shopify line item', { requestId, dealId, shopifyOrderId, productId }, { entityType: 'order', entityId: shopifyOrderId });
-                continue;
-              }
-              try {
-                const productResp = await callBitrix('/crm.product.get.json', { id: productId });
-                if (productResp.result) {
-                  const product = productResp.result;
-                  const xmlId = product.XML_ID; // Shopify variant ID stored here
-                  const code = product.CODE || product.code || product.SKU || product.sku;
-                  const quantity = parseFloat(row.QUANTITY || row.quantity || 0);
-
-                  if (xmlId && xmlId.toString().trim() !== '') {
-                    // XML_ID = Shopify variant ID: addPositionToOrder uses it directly
-                    bitrixQuantities.set(xmlId.toString().trim(), { quantity, isVariantId: true });
-                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: 'xml_id', identifier: xmlId.toString().trim(), quantity, productName: product.NAME || product.name || null }, { entityType: 'order', entityId: shopifyOrderId });
-                  } else if (code && code.trim() !== '') {
-                    // Numeric-only CODE (≥10 digits) means variant_id was stored as fallback when Shopify sku was empty.
-                    // Monitor 'code_as_variant_id' log events — if EAN barcodes are ever used as SKUs this heuristic would misclassify them.
-                    const isVariantIdCode = /^\d{10,}$/.test(code.trim());
-                    bitrixQuantities.set(code.trim(), { quantity, isVariantId: isVariantIdCode });
-                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: isVariantIdCode ? 'code_as_variant_id' : 'sku', identifier: code.trim(), quantity, productName: product.NAME || product.name || null }, { entityType: 'order', entityId: shopifyOrderId });
-                  } else {
-                    logger.warn('quantity_sync_bitrix_row_sku_missing', 'Bitrix product has no XML_ID or CODE', { requestId, dealId, shopifyOrderId, productId, availableKeys: typeof product === 'object' && product !== null ? Object.keys(product) : [] }, { entityType: 'order', entityId: shopifyOrderId });
-                  }
-                }
-              } catch (productError) {
-                logger.warn('quantity_sync_product_fetch_error', 'Failed to get Bitrix product', { requestId, dealId, shopifyOrderId, productId, error: productError.message }, { entityType: 'order', entityId: shopifyOrderId });
-              }
-            }
-          }
-
-          logger.info('quantity_sync_bitrix_items', 'Bitrix quantities map built', { requestId, dealId, shopifyOrderId, items: Array.from(bitrixQuantities.entries()).map(([identifier, { quantity, isVariantId }]) => ({ identifier, quantity, isVariantId })) }, { entityType: 'order', entityId: shopifyOrderId });
-
-          const orphans = shopifyLineItems.filter(li => {
-            const varId = li.variant_id ? String(li.variant_id).trim() : null;
-            const sku = li.sku ? String(li.sku).trim() : null;
-            if (!varId && !sku) return false;
-            return !bitrixQuantities.has(varId) && !bitrixQuantities.has(sku);
-          });
-          if (orphans.length > 0) {
-            logger.warn('quantity_sync_shopify_orphans', 'Shopify items not found in Bitrix', { requestId, dealId, shopifyOrderId, orphans: orphans.map(li => ({ sku: li.sku, variantId: li.variant_id, lineItemId: li.id, quantity: li.quantity })) }, { entityType: 'order', entityId: shopifyOrderId });
-          }
-
-          // Compare with Shopify and find differences.
-          // IMPORTANT: If Bitrix rows are empty, we still must decrement all Shopify SKU-backed line items to 0.
-          const quantityChanges = [];
-          for (const lineItem of shopifyLineItems) {
-            const lineVariantId = lineItem.variant_id ? String(lineItem.variant_id).trim() : null;
-            const lineSku = lineItem.sku ? String(lineItem.sku).trim() : null;
-
-            // Match by variant_id first (unambiguous), then fall back to SKU
-            const matchKey = (lineVariantId && bitrixQuantities.has(lineVariantId))
-              ? lineVariantId
-              : (lineSku && bitrixQuantities.has(lineSku))
-                ? lineSku
-                : null;
-
-            const shopifyQty = parseFloat(lineItem.quantity || 0);
-            const bitrixQty = matchKey ? bitrixQuantities.get(matchKey).quantity : 0;
-            const sku = lineSku || lineVariantId;
-            if (!sku) continue;
-
-            if (Math.abs(bitrixQty - shopifyQty) > 0.01) {
-              quantityChanges.push({ sku, lineVariantId, bitrixQty, shopifyQty, newQty: bitrixQty });
-            }
-          }
-
-          // Also check for new items in Bitrix that don't exist in Shopify
-          for (const [identifier, { quantity: bitrixQty, isVariantId }] of bitrixQuantities.entries()) {
-            const existsInShopify = shopifyLineItems.some(li => {
-              if (isVariantId) return String(li?.variant_id || '').trim() === identifier;
-              return String(li?.sku || '').trim() === identifier;
-            });
-            if (!existsInShopify && bitrixQty > 0) {
-              quantityChanges.push({
-                sku: identifier, // numeric variantId string or SKU — addPositionToOrder handles both
-                lineVariantId: null,
-                bitrixQty,
-                shopifyQty: 0,
-                newQty: bitrixQty,
-                isNew: true
-              });
-            }
-          }
-
-          if (quantityChanges.length > 0) {
-            logger.info('quantity_sync_detected', 'Quantity changes detected', { requestId, dealId, shopifyOrderId, changesCount: quantityChanges.length, changes: quantityChanges }, { entityType: 'order', entityId: shopifyOrderId });
-
-            // Apply changes using orderEdit API
-            const { incrementLineItemQuantity, decrementLineItemQuantity, addPositionToOrder } = await import('../../../src/lib/shopify/orderEdit.js');
-            const { addTagToOrder } = await import('../../../src/lib/shopify/order.js');
-
-            let hasChanges = false;
-            let added = 0, incremented = 0, decremented = 0, errorsCount = 0;
-
-            for (const change of quantityChanges) {
-              try {
-                // Refund guard: skip any add/increase on a refunded/voided order; allow removals only.
-                if (blockAddsDueToRefund && (change.isNew || change.newQty > change.shopifyQty)) {
-                  logger.warn('quantity_sync_refund_skip', 'Skipped add/increase on refunded/voided order', { requestId, dealId, shopifyOrderId, sku: change.sku, isNew: !!change.isNew, bitrixQty: change.newQty, shopifyQty: change.shopifyQty, financialStatus }, { entityType: 'order', entityId: shopifyOrderId });
-                  continue;
-                }
-                if (change.isNew) {
-                  // Add new position
-                  logger.info('quantity_sync_add_intent', 'Adding new position to Shopify order', { requestId, dealId, shopifyOrderId, identifier: change.sku, quantity: change.newQty }, { entityType: 'order', entityId: shopifyOrderId });
-                  const addResult = await addPositionToOrder(shopifyOrderId, change.sku, change.newQty);
-                  if (addResult.success) {
-                    hasChanges = true;
-                    added++;
-                    logger.info('quantity_sync_add_success', 'Position added to Shopify order', { requestId, dealId, shopifyOrderId, sku: change.sku, quantity: change.newQty, shopifyOrderName: addResult.orderName || null }, { entityType: 'order', entityId: shopifyOrderId });
-                  } else {
-                    errorsCount++;
-                    logger.warn('quantity_sync_add_error', 'Failed to add position to Shopify order', { requestId, dealId, shopifyOrderId, sku: change.sku, quantity: change.newQty, error: addResult.error, message: addResult.message }, { entityType: 'order', entityId: shopifyOrderId });
-                  }
-                } else if (change.newQty > change.shopifyQty) {
-                  // Increment quantity
-                  const incrementQty = change.newQty - change.shopifyQty;
-                  const incrementResult = await incrementLineItemQuantity(shopifyOrderId, change.sku, incrementQty, change.lineVariantId);
-                  if (incrementResult.success) {
-                    hasChanges = true;
-                    incremented++;
-                    logger.info('quantity_sync_increment_success', 'Line item quantity incremented', { requestId, dealId, shopifyOrderId, sku: change.sku, previousQty: change.shopifyQty, newQty: incrementResult.newQuantity }, { entityType: 'order', entityId: shopifyOrderId });
-                  } else {
-                    errorsCount++;
-                    logger.warn('quantity_sync_increment_error', 'Failed to increment line item quantity', { requestId, dealId, shopifyOrderId, sku: change.sku, incrementQty, error: incrementResult.error, message: incrementResult.message }, { entityType: 'order', entityId: shopifyOrderId });
-                  }
-                } else if (change.newQty < change.shopifyQty) {
-                  // Decrement quantity
-                  const decrementResult = await decrementLineItemQuantity(shopifyOrderId, change.sku, change.newQty, change.lineVariantId);
-                  if (decrementResult.success) {
-                    hasChanges = true;
-                    decremented++;
-                    logger.info('quantity_sync_decrement_success', 'Line item quantity decremented', { requestId, dealId, shopifyOrderId, sku: change.sku, previousQty: change.shopifyQty, newQty: decrementResult.newQuantity }, { entityType: 'order', entityId: shopifyOrderId });
-                  } else {
-                    errorsCount++;
-                    logger.warn('quantity_sync_decrement_error', 'Failed to decrement line item quantity', { requestId, dealId, shopifyOrderId, sku: change.sku, newQty: change.newQty, error: decrementResult.error, message: decrementResult.message }, { entityType: 'order', entityId: shopifyOrderId });
-                  }
-                }
-              } catch (changeError) {
-                errorsCount++;
-                logger.warn('quantity_sync_change_error', 'Unexpected error applying quantity change', { requestId, dealId, shopifyOrderId, sku: change.sku, error: changeError.message }, { entityType: 'order', entityId: shopifyOrderId });
-              }
-            }
-
-            logger.info('quantity_sync_complete', 'Quantity sync finished', { requestId, dealId, shopifyOrderId, added, incremented, decremented, orphansCount: orphans.length, discrepanciesCount: quantityChanges.length, errorsCount, hasChanges }, { entityType: 'order', entityId: shopifyOrderId });
-
-            // ✅ STEP C2.1: Clean up stub order if real products were added
-            // If order was a stub (has BITRIX_STUB tag) and now has real products, remove stub marker
-            const hasStubTag = orderTags.includes('BITRIX_STUB');
-            const hasRealProducts = bitrixQuantities.size > 0;
-
-            if (hasStubTag && hasRealProducts) {
-                            logger.info('STUB_ORDER_CLEANUP_START', 'STUB_ORDER_CLEANUP_START', {requestId,
-                dealId,
-                shopifyOrderId,
-                bitrixProductsCount: bitrixQuantities.size}, { entityType: 'order', entityId: shopifyOrderId });
-
-              try {
-                // Step 1: Remove default variant (53051786756360) if it exists
-                const defaultVariantId = BITRIX_EMPTY_ORDER_DEFAULT_VARIANT_ID;
-
-                // Use orderEdit API to find and remove the default variant line item
-                const { beginOrderEdit, setLineItemQuantity, commitOrderEdit } = await import('../../../src/lib/shopify/orderEdit.js');
-
-                const beginResult = await beginOrderEdit(shopifyOrderId);
-                if (beginResult.success) {
-                  // Find the line item with default variant in calculated order
-                  const calculatedLineItems = beginResult.lineItems || [];
-                  const calculatedDefaultItem = calculatedLineItems.find(li => {
-                    if (!li.variant) return false;
-                    // Try legacyResourceId first (numeric ID), then extract from GraphQL ID
-                    const liVariantId = li.variant.legacyResourceId
-                      ? String(li.variant.legacyResourceId)
-                      : (li.variant.id ? String(li.variant.id).split('/').pop() : null);
-                    return liVariantId === defaultVariantId;
-                  });
-
-                  if (calculatedDefaultItem && calculatedDefaultItem.quantity > 0) {
-                    // Set quantity to 0 to remove it
-                    const setResult = await setLineItemQuantity(
-                      beginResult.calculatedOrderId,
-                      calculatedDefaultItem.id,
-                      0
-                    );
-
-                    if (setResult.success) {
-                      const commitResult = await commitOrderEdit(beginResult.calculatedOrderId);
-                      if (commitResult.success) {
-                                                logger.info('STUB_ORDER_DEFAULT_VARIANT_REMOVED', 'STUB_ORDER_DEFAULT_VARIANT_REMOVED', {requestId,
-                          dealId,
-                          shopifyOrderId,
-                          defaultVariantId}, { entityType: 'order', entityId: shopifyOrderId });
-                      }
-                    }
-                  }
-                }
-
-                // Step 2: Remove BITRIX_STUB tag and update note
-                const { callShopifyAdmin, getOrder } = await import('../../../src/lib/shopify/adminClient.js');
-                const currentOrder = await getOrder(shopifyOrderId);
-
-                if (currentOrder) {
-                  const currentTags = Array.isArray(currentOrder.tags)
-                    ? currentOrder.tags
-                    : (currentOrder.tags ? String(currentOrder.tags).split(',').map(t => t.trim()) : []);
-
-                  const updatedTags = currentTags.filter(tag => tag !== 'BITRIX_STUB');
-                  const currentNote = currentOrder.note || '';
-                  const shouldUpdateNote = currentNote.includes('STUB ORDER');
-                  const updatedNote = shouldUpdateNote ? `Ордер из Bitrix. Сделка: ${dealId}` : currentNote;
-
-                  // Update order to remove BITRIX_STUB tag and update note if needed
-                  if (updatedTags.length !== currentTags.length || shouldUpdateNote) {
-                    await callShopifyAdmin(`/orders/${shopifyOrderId}.json`, {
-                      method: 'PUT',
-                      body: JSON.stringify({
-                        order: {
-                          id: shopifyOrderId,
-                          tags: updatedTags.join(', '),
-                          note: updatedNote
-                        }
-                      })
-                    });
-
-                    if (updatedTags.length !== currentTags.length) {
-                                            logger.info('STUB_ORDER_TAG_REMOVED', 'STUB_ORDER_TAG_REMOVED', {requestId,
-                        dealId,
-                        shopifyOrderId,
-                        removedTag: 'BITRIX_STUB'}, { entityType: 'order', entityId: shopifyOrderId });
-                    }
-
-                    if (shouldUpdateNote) {
-                                            logger.info('STUB_ORDER_NOTE_UPDATED', 'STUB_ORDER_NOTE_UPDATED', {requestId,
-                        dealId,
-                        shopifyOrderId,
-                        oldNote: currentNote.substring(0, 100),
-                        newNote: updatedNote}, { entityType: 'order', entityId: shopifyOrderId });
-                    }
-                  }
-                }
-
-                                logger.info('STUB_ORDER_CLEANUP_SUCCESS', 'STUB_ORDER_CLEANUP_SUCCESS', {requestId,
-                  dealId,
-                  shopifyOrderId}, { entityType: 'order', entityId: shopifyOrderId });
-              } catch (stubCleanupError) {
-                logger.warn('stub_cleanup_error', 'Failed to clean up stub order', { shopifyOrderId, dealId, error: stubCleanupError.message }, { entityType: 'order', entityId: shopifyOrderId });
-                                logger.info('STUB_ORDER_CLEANUP_ERROR', 'STUB_ORDER_CLEANUP_ERROR', {requestId,
-                  dealId,
-                  shopifyOrderId,
-                  error: stubCleanupError.message,
-                  stack: stubCleanupError.stack}, { entityType: 'order', entityId: shopifyOrderId });
-              }
-            }
-
-            // Add BitrixUpdated tag if any changes were made
-            if (hasChanges) {
-              try {
-                await addTagToOrder(shopifyOrderId, 'BitrixUpdated');
-                                logger.info('QUANTITY_SYNC_TAG_ADDED', 'QUANTITY_SYNC_TAG_ADDED', {requestId,
-                  dealId,
-                  shopifyOrderId}, { entityType: 'order', entityId: shopifyOrderId });
-              } catch (tagError) {
-                logger.warn('quantity_sync_tag_error', 'Failed to add BitrixUpdated tag', { shopifyOrderId, dealId, error: tagError.message }, { entityType: 'order', entityId: shopifyOrderId });
-              }
-            }
-          } else {
-                        logger.info('QUANTITY_SYNC_NO_CHANGES', 'QUANTITY_SYNC_NO_CHANGES', {requestId,
-              dealId,
-              shopifyOrderId,
-              bitrixItemsCount: bitrixQuantities.size,
-              shopifyItemsCount: shopifyLineItems.length,
-              orphansCount: orphans.length}, { entityType: 'order', entityId: shopifyOrderId });
-          }
-        }
-      }
-    } catch (quantitySyncError) {
-      // Non-blocking: if we can't sync quantities, continue with normal flow
-            logger.info('QUANTITY_SYNC_ERROR', 'QUANTITY_SYNC_ERROR', {requestId,
-        dealId,
-        shopifyOrderId,
-        error: quantitySyncError.message,
-        stack: quantitySyncError.stack}, { entityType: 'order', entityId: shopifyOrderId });
-      // Continue with normal flow - don't block order creation
+    } catch (syncError) {
+      logger.warn('quantity_sync_error', 'Quantity sync failed', { shopifyOrderId, dealId, error: syncError.message }, { entityType: 'order', entityId: shopifyOrderId });
     }
-    } // end if (!c2LoopGuard)
   } else {
-        logger.info('QUANTITY_SYNC_SKIP', 'QUANTITY_SYNC_SKIP', {requestId,
-      dealId,
+    logger.info('QUANTITY_SYNC_SKIP', 'QUANTITY_SYNC_SKIP', {
+      requestId, dealId,
       shopifyOrderId: shopifyOrderId || 'empty',
-      reason: 'no_shopify_order_id'}, { entityType: 'deal', entityId: dealId });
+      reason: 'no_shopify_order_id'
+    }, { entityType: 'deal', entityId: dealId });
   }
 
   // ✅ STEP C3: Sync payment status from Bitrix to Shopify (best-effort)
