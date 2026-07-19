@@ -213,7 +213,7 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
             };
 
             group.shopifyQty += lineQty;
-            group.lineItems.push({ lineItemId: lineItem.id, quantity: lineItem.quantity, fulfillable, fulfilled: fulfilledForLine, counted: lineQty });
+            group.lineItems.push({ lineItemId: lineItem.id, quantity: lineItem.quantity, fulfillable, fulfilled: fulfilledForLine, counted: lineQty, price: lineItem.price != null ? String(lineItem.price) : null });
             shopifyTotals.set(groupKey, group);
         }
 
@@ -270,7 +270,23 @@ export async function handleQuantitySync(shopifyOrderId, dealId, requestId, opti
                     // Several live line items hold this variant. A single-line write cannot
                     // produce a correct sum (lines of 2 and 3 with a target of 4 would become
                     // 7 or 6), so spread the difference across them in one edit session.
-                    quantityChanges.push({ ...change, distributeAcrossLines: true, contributingLines });
+                    //
+                    // Only when they cost the same, though. Duplicates can carry different
+                    // unit prices — a manually discounted original line beside one re-added at
+                    // catalog price — and distribution picks which line absorbs the change.
+                    // With differing prices that choice silently moves the order's value, so a
+                    // correct unit count would be bought with a wrong total. Refuse instead:
+                    // the reservation stays wrong, but no money moves on a guess.
+                    const prices = new Set(contributingLines.map(line => line.price));
+                    if (prices.size === 1) {
+                        quantityChanges.push({ ...change, distributeAcrossLines: true, contributingLines });
+                    } else {
+                        logger.error('quantity_sync_multiline_price_mismatch', 'Variant spans live line items at different unit prices — not distributing, quantity left unsynced', {
+                            dealId, shopifyOrderId, key: groupKey,
+                            bitrixQty: group.bitrixQty, shopifyQtyTotal: group.shopifyQty,
+                            contributingLines,
+                        }, { entityType: 'order', entityId: shopifyOrderId });
+                    }
                 }
             }
         }

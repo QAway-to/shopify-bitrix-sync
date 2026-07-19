@@ -624,6 +624,17 @@ export async function setVariantTotalQuantity(orderId, { variantId, sku, targetT
     // The caller measured the current total from the REST order; if the edit session
     // disagrees, one of the two readings is wrong and writing either would corrupt the
     // order. Bail out visibly instead.
+    // NaN would slip through the comparison below (NaN > 0.01 is false) and disable the very
+    // guard that backs the calculated-quantity assumption, so reject it outright.
+    if (!Number.isFinite(currentTotal) || (expectedCurrentTotal != null && !Number.isFinite(expectedCurrentTotal))) {
+      logger.error('set_variant_total_unusable_totals', 'Non-numeric quantity totals — edit aborted', {
+        orderId, variantId, sku, currentTotal, expectedCurrentTotal,
+        lines: matches.map(m => ({ id: m.id, quantity: m.quantity, editableQuantity: m.editableQuantity })),
+        ...logContext,
+      });
+      return { success: false, error: 'UNUSABLE_TOTALS', message: `Non-numeric totals: current=${currentTotal}, expected=${expectedCurrentTotal}` };
+    }
+
     if (expectedCurrentTotal != null && Math.abs(currentTotal - expectedCurrentTotal) > 0.01) {
       logger.error('set_variant_total_mismatch', 'Calculated order disagrees with the measured total — edit aborted', {
         orderId, variantId, sku, currentTotal, expectedCurrentTotal,
@@ -652,7 +663,7 @@ export async function setVariantTotalQuantity(orderId, { variantId, sku, targetT
         const lineQuantity = Number(item.quantity ?? 0);
         // editableQuantity should never exceed quantity; clamp so a surprising response
         // cannot produce a negative write.
-        const capacity = Math.min(Number(item.editableQuantity ?? lineQuantity), lineQuantity);
+        const capacity = Math.max(0, Math.min(Number(item.editableQuantity ?? lineQuantity), lineQuantity));
         const taken = Math.min(toRemove, capacity);
         writes.push({ lineItemId: item.id, quantity: Math.max(0, lineQuantity - taken) });
         toRemove -= taken;
@@ -666,9 +677,19 @@ export async function setVariantTotalQuantity(orderId, { variantId, sku, targetT
     } else {
       // Growing: one line absorbs the whole increase. Adding a variant that already sits on
       // the order would create yet another duplicate line, so only do that if none exists.
-      const target = editable[0] || matches.find(item => Number(item.quantity ?? 0) > 0);
+      const target = editable[0];
       if (target) {
         writes.push({ lineItemId: target.id, quantity: Number(target.quantity ?? 0) + delta });
+      } else if (matches.some(item => Number(item.quantity ?? 0) > 0)) {
+        // Lines exist but none is editable (fulfilled or otherwise locked). Writing to one
+        // would fail the whole session with an opaque "Could not save the order edit" on every
+        // retry, so name the situation instead.
+        logger.error('set_variant_total_no_editable_capacity', 'Variant has line items but none is editable — cannot grow, edit aborted', {
+          orderId, variantId, sku, currentTotal, targetTotal,
+          lines: matches.map(m => ({ id: m.id, quantity: m.quantity, editableQuantity: m.editableQuantity })),
+          ...logContext,
+        });
+        return { success: false, error: 'NO_EDITABLE_CAPACITY', message: `Cannot grow to ${targetTotal}: no editable line item` };
       } else {
         const variantNumericId = matches[0].variant?.legacyResourceId || matches[0].variant?.id?.split('/').pop();
         if (!variantNumericId) {
