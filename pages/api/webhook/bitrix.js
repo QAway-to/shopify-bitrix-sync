@@ -34,6 +34,18 @@ import { BITRIX_DEAL_FIELDS } from '../../../src/lib/shared/constants.js';
 // import { handleQuantitySync } from '../../../src/lib/blocks/quantitySync.js';
 // import { handleOrderCreate } from '../../../src/lib/blocks/orderCreate.js';
 
+// Shopify variant IDs are long numeric strings (14 digits as of 2026). Bitrix rows for
+// services (delivery, fees) carry a short XML_ID — often the Bitrix PRODUCT_ID itself —
+// which is not a Shopify variant and fails every add with ORDER_EDIT_ADD_VARIANT_ERROR.
+const VARIANT_ID_SHAPE = /^\d{10,}$/;
+
+// Serializes webhook processing per deal. Bitrix fires several webhooks for one user
+// action; concurrent runs opened overlapping Shopify order-edit sessions on the same
+// order, which produced duplicate line items and 429s. Value carries a `dirty` flag so
+// a webhook that arrives mid-run is replayed once instead of being silently dropped.
+const processingDeals = new Map();
+const MAX_COALESCED_RERUNS = 3;
+
 // Expected auth token from Bitrix
 const EXPECTED_AUTH_TOKEN = getBitrixExpectedAuthToken();
 const BITRIX_FALLBACK_CUSTOMER_EMAIL = String(process.env.BITRIX_FALLBACK_CUSTOMER_EMAIL || 'admin@fbfcshoes.com');
@@ -2151,16 +2163,26 @@ async function handleDealUpdate(dealId, requestId) {
                   const code = product.CODE || product.code || product.SKU || product.sku;
                   const quantity = parseFloat(row.QUANTITY || row.quantity || 0);
 
-                  if (xmlId && xmlId.toString().trim() !== '') {
+                  const xmlIdRaw = xmlId != null ? String(xmlId).trim() : '';
+                  const codeRaw = code != null ? String(code).trim() : '';
+                  const productName = product.NAME || product.name || null;
+
+                  if (xmlIdRaw !== '' && VARIANT_ID_SHAPE.test(xmlIdRaw)) {
                     // XML_ID = Shopify variant ID: addPositionToOrder uses it directly
-                    bitrixQuantities.set(xmlId.toString().trim(), { quantity, isVariantId: true });
-                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: 'xml_id', identifier: xmlId.toString().trim(), quantity, productName: product.NAME || product.name || null }, { entityType: 'order', entityId: shopifyOrderId });
-                  } else if (code && code.trim() !== '') {
+                    bitrixQuantities.set(xmlIdRaw, { quantity, isVariantId: true });
+                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: 'xml_id', identifier: xmlIdRaw, quantity, productName }, { entityType: 'order', entityId: shopifyOrderId });
+                  } else if (codeRaw !== '') {
                     // Numeric-only CODE (≥10 digits) means variant_id was stored as fallback when Shopify sku was empty.
                     // Monitor 'code_as_variant_id' log events — if EAN barcodes are ever used as SKUs this heuristic would misclassify them.
-                    const isVariantIdCode = /^\d{10,}$/.test(code.trim());
-                    bitrixQuantities.set(code.trim(), { quantity, isVariantId: isVariantIdCode });
-                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: isVariantIdCode ? 'code_as_variant_id' : 'sku', identifier: code.trim(), quantity, productName: product.NAME || product.name || null }, { entityType: 'order', entityId: shopifyOrderId });
+                    const isVariantIdCode = VARIANT_ID_SHAPE.test(codeRaw);
+                    bitrixQuantities.set(codeRaw, { quantity, isVariantId: isVariantIdCode });
+                    logger.info('quantity_sync_bitrix_row_resolved', 'Bitrix row resolved', { requestId, dealId, shopifyOrderId, productId, resolvedBy: isVariantIdCode ? 'code_as_variant_id' : 'sku', identifier: codeRaw, quantity, productName, ignoredXmlId: xmlIdRaw !== '' ? xmlIdRaw : undefined }, { entityType: 'order', entityId: shopifyOrderId });
+                  } else if (xmlIdRaw !== '') {
+                    // XML_ID present but not variant-shaped and no CODE to fall back on: this is a
+                    // service row (delivery, fee), not a Shopify-backed product. Skipping it stops the
+                    // endless ORDER_EDIT_ADD_VARIANT_ERROR retry loop. Shipping belongs on a shipping
+                    // line, which this sync does not manage.
+                    logger.warn('quantity_sync_row_not_a_variant', 'Bitrix row skipped: XML_ID is not a Shopify variant ID and no CODE fallback', { requestId, dealId, shopifyOrderId, productId, xmlId: xmlIdRaw, quantity, productName }, { entityType: 'order', entityId: shopifyOrderId });
                   } else {
                     logger.warn('quantity_sync_bitrix_row_sku_missing', 'Bitrix product has no XML_ID or CODE', { requestId, dealId, shopifyOrderId, productId, availableKeys: typeof product === 'object' && product !== null ? Object.keys(product) : [] }, { entityType: 'order', entityId: shopifyOrderId });
                   }
@@ -3964,6 +3986,91 @@ async function handleDealCreate(dealId, requestId) {
 /**
  * Main webhook handler
  */
+/**
+ * Dispatch a Bitrix deal event to the matching handler.
+ * @param {string} dealId
+ * @param {string} eventType
+ * @param {string} requestId
+ */
+async function routeDealEvent(dealId, eventType, requestId) {
+  if (eventType === 'ONCRMDEALUPDATE' || eventType.includes('UPDATE')) {
+    logger.info('BITRIX_WEBHOOK_ROUTING_TO_UPDATE', 'BITRIX_WEBHOOK_ROUTING_TO_UPDATE', { requestId, dealId, eventType });
+    return await handleDealUpdate(dealId, requestId);
+  }
+
+  if (eventType === 'ONCRMDEALADD' || eventType.includes('ADD')) {
+    logger.info('BITRIX_WEBHOOK_ROUTING_TO_CREATE', 'BITRIX_WEBHOOK_ROUTING_TO_CREATE', { requestId, dealId, eventType });
+    return await handleDealCreate(dealId, requestId);
+  }
+
+  logger.info('BITRIX_WEBHOOK_UNHANDLED_EVENT', 'BITRIX_WEBHOOK_UNHANDLED_EVENT', { requestId, dealId, eventType });
+  return { success: true, triggerMatch: false, skip_reason: `unhandled_event_type:${eventType}` };
+}
+
+/**
+ * Run a deal event with at most one active run per deal.
+ *
+ * A webhook arriving while the same deal is being processed is not dropped: it marks the
+ * active run dirty and records its own eventType, and the run replays once on completion
+ * against freshly fetched state. Replays are capped so a Bitrix echo webhook cannot sustain
+ * the chain indefinitely.
+ *
+ * Scope: `processingDeals` is per-process. This service runs as a single Render instance —
+ * scaling to more than one instance (or forking workers) needs a shared lock (Redis/DB),
+ * otherwise concurrent order-edit sessions across instances become possible again.
+ *
+ * The lock is deliberately held for the full run with no time-based takeover. A takeover
+ * cannot stop the run it displaces: the displaced run would later release a lock it no
+ * longer owns, letting unbounded concurrent runs pile up on one deal — the exact failure
+ * this lock prevents. Upstream calls use native fetch (undici), whose default 300s
+ * headers/body timeouts make a hung call reject on its own; the rejection unwinds through
+ * the finally below and releases the lock. Worst case is therefore one deal stalled for
+ * up to ~5 minutes, visible as repeated `deal_webhook_coalesced` warns for one dealId.
+ * Explicit AbortController timeouts would tighten that window and are tracked separately.
+ *
+ * @returns {Promise<Object>} handler result, or `{ coalesced: true }` if merged into an active run
+ */
+async function runDealEventCoalesced(dealId, eventType, requestId, rerunDepth = 0) {
+  const dealKey = String(dealId);
+  const activeRun = processingDeals.get(dealKey);
+
+  if (activeRun) {
+    activeRun.dirty = true;
+    // Replay whichever event arrived last: an UPDATE merged into a running CREATE must
+    // still replay as an UPDATE, or its quantity sync never runs.
+    activeRun.pendingEventType = eventType;
+    logger.warn('deal_webhook_coalesced', 'Deal already being processed — merged into active run', { requestId, dealId, eventType }, { entityType: 'deal', entityId: dealKey });
+    return { coalesced: true };
+  }
+
+  const runState = { dirty: false, pendingEventType: null };
+  processingDeals.set(dealKey, runState);
+
+  try {
+    return await routeDealEvent(dealId, eventType, requestId);
+  } finally {
+    processingDeals.delete(dealKey);
+
+    if (runState.dirty) {
+      const replayEventType = runState.pendingEventType || eventType;
+
+      if (rerunDepth >= MAX_COALESCED_RERUNS) {
+        // Handlers re-read full state, so a replay is a reconciliation rather than a delta —
+        // but dropping it still leaves the deal unsynced until the next unrelated webhook.
+        logger.error('deal_webhook_rerun_capped', 'Coalesced replay limit reached — pending deal update dropped, deal may be out of sync', { requestId, dealId, eventType, replayEventType, rerunDepth }, { entityType: 'deal', entityId: dealKey });
+      } else {
+        // Detached so the original webhook response is not held open.
+        setImmediate(() => {
+          runDealEventCoalesced(dealId, replayEventType, `${requestId}-rerun${rerunDepth + 1}`, rerunDepth + 1)
+            .catch(rerunError => {
+              logger.error('deal_webhook_rerun_error', 'Coalesced replay failed', { requestId, dealId, eventType: replayEventType, rerunDepth: rerunDepth + 1, error: rerunError?.message }, { entityType: 'deal', entityId: dealKey });
+            });
+        });
+      }
+    }
+  }
+}
+
 export default async function handler(req, res) {
   const requestId = crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}`;
   const slog = createRequestLogger(requestId, 'webhook/bitrix');
@@ -4032,24 +4139,24 @@ export default async function handler(req, res) {
     eventEVENT: event.EVENT});
 
   try {
-    // Route based on event type
-    let result = null;
-    if (eventType === 'ONCRMDEALUPDATE' || eventType.includes('UPDATE')) {
-            logger.info('BITRIX_WEBHOOK_ROUTING_TO_UPDATE', 'BITRIX_WEBHOOK_ROUTING_TO_UPDATE', {requestId,
-        dealId,
-        eventType});
-      result = await handleDealUpdate(dealId, requestId);
-    } else if (eventType === 'ONCRMDEALADD' || eventType.includes('ADD')) {
-            logger.info('BITRIX_WEBHOOK_ROUTING_TO_CREATE', 'BITRIX_WEBHOOK_ROUTING_TO_CREATE', {requestId,
-        dealId,
-        eventType});
-      result = await handleDealCreate(dealId, requestId);
-    } else {
-      // ✅ Structured logging: [BITRIX_WEBHOOK_UNHANDLED_EVENT]
-            logger.info('BITRIX_WEBHOOK_UNHANDLED_EVENT', 'BITRIX_WEBHOOK_UNHANDLED_EVENT', {requestId,
-        dealId,
-        eventType});
-      result = { success: true, triggerMatch: false, skip_reason: `unhandled_event_type:${eventType}` };
+    // Route based on event type, one active run per deal
+    const result = await runDealEventCoalesced(dealId, eventType, requestId);
+
+    if (result?.coalesced) {
+      slog.info('webhook_completed', 'Bitrix webhook merged into in-flight run', {
+        entity_id: String(dealId || ''),
+        event_type: eventType,
+        skip_reason: 'locked_processing',
+        duration_ms: Date.now() - startTime,
+      });
+      res.status(200).json({
+        success: true,
+        message: 'Merged into in-flight run for this deal',
+        skipped: 'locked_processing',
+        requestId,
+        dealId
+      });
+      return;
     }
 
     // ✅ Structured logging: [BITRIX_WEBHOOK_DONE]
