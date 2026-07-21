@@ -11,8 +11,17 @@
  * 4. If stock < required → create incoming document to add difference
  */
 
+import { BITRIX_CONFIG } from '../bitrix/config.js';
+
 const BITRIX_WEBHOOK = process.env.BITRIX_WEBHOOK_BASE || "https://bfcshoes.bitrix24.eu/rest/52/zrbhiktlam8mz1yr/";
 const STORE_ID = 2;
+
+// Shipping ("ACS delivery") rides along as an ordinary Bitrix product row, but it is a
+// service product type. A store document that references it cannot be conducted — Bitrix
+// rejects it with "Inventory object refers to incorrect product type ID" — so the document
+// is left in status 'N' forever and never adds stock. It must be skipped here, exactly as
+// the quantity-sync paths skip it.
+const SHIPPING_PRODUCT_ID = BITRIX_CONFIG.SHIPPING_PRODUCT_ID;
 
 // Rate limiting: delay between API calls (ms)
 const API_DELAY_MS = 600; // Bitrix allows ~2 requests/second
@@ -88,6 +97,9 @@ async function getActiveDealsWithProducts(progressCallback) {
         const resp = await callBitrix('crm.deal.list', {
             select: ['ID', 'TITLE', 'STAGE_ID'],
             filter: {},
+            // Newest deals first: this job is long and can be cut short by a restart, so the
+            // deals managers are actively trying to close today must be served before old ones.
+            order: { ID: 'DESC' },
             start
         });
 
@@ -133,15 +145,23 @@ async function getActiveDealsWithProducts(progressCallback) {
 }
 
 /**
- * Get current stock for a product
+ * Get current stock for a product at STORE_ID.
+ * Returns both physical amount and the quantity reserved by deals. Bitrix blocks closing a
+ * deal on `available = amount - reserved`, not on `amount` alone, so the caller needs both.
+ * @returns {Promise<{ amount: number, reserved: number }>}
  */
 async function getCurrentStock(productId) {
     const resp = await callBitrix('catalog.storeproduct.list', {
         filter: { productId: productId, storeId: STORE_ID },
-        select: ['amount']
+        select: ['amount', 'quantityReserved']
     });
     await sleep(API_DELAY_MS);
-    return parseFloat(resp.result?.storeProducts?.[0]?.amount || 0);
+    const row = resp.result?.storeProducts?.[0];
+    return {
+        amount: parseFloat(row?.amount ?? row?.AMOUNT ?? 0),
+        // Tolerate either field casing, mirroring inventorySyncCore's getCurrentStocks.
+        reserved: parseFloat(row?.quantityReserved ?? row?.QUANTITY_RESERVED ?? 0)
+    };
 }
 
 /**
@@ -220,6 +240,7 @@ export async function runDealStockSync(options = {}) {
         stockAdded: 0,
         stockFailed: 0,
         skipped: 0,
+        shippingSkipped: 0,
         documents: [],
         errors: []
     };
@@ -246,14 +267,24 @@ export async function runDealStockSync(options = {}) {
                     continue;
                 }
 
-                try {
-                    const currentStock = await getCurrentStock(productId);
+                // Skip the shipping line — it is a service product and cannot be stocked.
+                if (productId === SHIPPING_PRODUCT_ID) {
+                    results.shippingSkipped++;
+                    continue;
+                }
 
-                    if (currentStock >= requiredQty) {
+                try {
+                    const { amount, reserved } = await getCurrentStock(productId);
+
+                    // The deal reserves `requiredQty`; Bitrix lets it close only when
+                    // available (amount - reserved) >= 0. Top up just enough to reach that,
+                    // guarding the case where the reservation has not been counted yet.
+                    const target = Math.max(reserved, requiredQty);
+                    const deficit = target - amount;
+
+                    if (deficit <= 0) {
                         results.stockOk++;
                     } else {
-                        const deficit = requiredQty - currentStock;
-
                         try {
                             const doc = await createIncomingDocument(productId, deficit, deal.ID);
                             results.stockAdded++;
