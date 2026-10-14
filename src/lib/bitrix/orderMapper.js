@@ -257,11 +257,79 @@ async function getShopifyProductMetadata(variantId) {
 }
 
 /**
+ * Globo pre-order collects only a deposit by putting a temporary
+ * "Prepaid amount for <product>" discount on the line item, so the customer is
+ * charged ~10% at checkout. A few seconds later Globo rewrites the order: the
+ * discounted line is removed and re-added at full price.
+ *
+ * The discount is therefore a checkout artefact, not a price reduction. Counting
+ * it makes the deal land on the deposit (12 EUR instead of 66 EUR). The title is
+ * also the only pre-order signal present on the very first webhook — Globo adds
+ * its `pre-order` / `partial-payment` tags only after the rewrite, by which time
+ * the deal already exists and CATEGORY_ID can no longer be changed.
+ */
+const PREPAID_DISCOUNT_TITLE_PREFIX = 'prepaid amount';
+
+/**
+ * @param {Object} order - Shopify order object
+ * @returns {Set<number>} indexes into order.discount_applications that are Globo deposits
+ */
+function getPrepaidDiscountIndexes(order) {
+  const applications = Array.isArray(order?.discount_applications) ? order.discount_applications : [];
+  const indexes = new Set();
+
+  applications.forEach((application, index) => {
+    const title = String(application?.title || '').trim().toLowerCase();
+    if (title.startsWith(PREPAID_DISCOUNT_TITLE_PREFIX)) {
+      indexes.add(index);
+    }
+  });
+
+  return indexes;
+}
+
+/**
+ * Sum a line item's real discounts, ignoring Globo deposit allocations
+ * @param {Object} item - Shopify line item
+ * @param {Set<number>} prepaidIndexes - Deposit indexes from getPrepaidDiscountIndexes
+ * @returns {number}
+ */
+function getRealItemDiscount(item, prepaidIndexes) {
+  const allocations = Array.isArray(item?.discount_allocations) ? item.discount_allocations : [];
+
+  if (allocations.length > 0) {
+    return allocations.reduce((sum, allocation) => {
+      if (prepaidIndexes.has(Number(allocation?.discount_application_index))) {
+        return sum;
+      }
+      return sum + Number(allocation?.amount ?? allocation?.amount_set?.shop_money?.amount ?? 0);
+    }, 0);
+  }
+
+  // No per-item allocations: total_discount is the only signal left, but it also
+  // carries the deposit and gives no way to tell the two apart, so it is dropped
+  // whenever a deposit exists on the order. Deliberate trade-off: under-reporting
+  // a real discount leaves the deal slightly too expensive, while trusting
+  // total_discount would reintroduce the deposit-priced deal this guards against.
+  // Shopify has not been observed to send this shape (0 cases in 4 weeks of
+  // webhooks: every item with total_discount > 0 also had allocations).
+  return prepaidIndexes.size > 0 ? 0 : Number(item?.total_discount || 0);
+}
+
+/**
  * Map Shopify order to Bitrix24 deal fields and product rows
  * @param {Object} order - Shopify order object
  * @returns {Object} { dealFields, productRows }
  */
 export async function mapShopifyOrderToBitrixDeal(order) {
+  // Globo deposit detection — drives price, category and payment status below
+  const prepaidDiscountIndexes = getPrepaidDiscountIndexes(order);
+  const hasPrepaidDeposit = prepaidDiscountIndexes.size > 0;
+
+  if (hasPrepaidDeposit) {
+    logger.info('prepaid_deposit_detected', 'Globo pre-order deposit detected — deposit discount ignored for pricing', { depositApplications: prepaidDiscountIndexes.size, financialStatus: order.financial_status, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+  }
+
   // ✅ Calculate total from active line_items (current_quantity > 0) to get sum of active items
   // This matches Shopify UI "Total" (sum of unfulfilled/active items), not "Paid" amount
   let totalPrice = 0;
@@ -295,13 +363,8 @@ export async function mapShopifyOrderToBitrixDeal(order) {
       if (currentQuantity > 0) {
         const itemPrice = Number(item.price || 0);
         const itemTotal = itemPrice * currentQuantity;
-        // Subtract discounts if present
-        const itemDiscount = Number(
-          item.discount_allocations?.[0]?.amount ||
-          item.discount_allocations?.[0]?.amount_set?.shop_money?.amount ||
-          item.total_discount ||
-          0
-        );
+        // Subtract real discounts if present (Globo deposit is not a discount)
+        const itemDiscount = getRealItemDiscount(item, prepaidDiscountIndexes);
         totalPrice += itemTotal - itemDiscount;
       }
     }
@@ -350,6 +413,10 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     preorderTags.some(preorderTag => tag.toLowerCase() === preorderTag.toLowerCase())
   );
 
+  // A Globo deposit means pre-order too, and unlike the tags above it is already
+  // present on the first webhook — CATEGORY_ID is immutable once the deal exists
+  const isPreorder = hasPreorderTag || hasPrepaidDeposit;
+
   // Category logic:
   // POS + Stock → 0 (Stock in the shop)
   // POS + Pre-order → 4 (Pre-order in the shop)
@@ -357,14 +424,14 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   // Site + Pre-order → 8 (Pre-order site)
   let categoryId;
   if (isPOS) {
-    categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_SHOP_PREORDER : BITRIX_CONFIG.CATEGORY_SHOP_STOCK;
+    categoryId = isPreorder ? BITRIX_CONFIG.CATEGORY_SHOP_PREORDER : BITRIX_CONFIG.CATEGORY_SHOP_STOCK;
   } else {
-    categoryId = hasPreorderTag ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
+    categoryId = isPreorder ? BITRIX_CONFIG.CATEGORY_PREORDER : BITRIX_CONFIG.CATEGORY_STOCK;
 
     // ✅ Fulfillable quantity check: if any line item cannot be fulfilled → pre-order
     // fulfillable_quantity = 0 means no stock available (genuine pre-order / oversell)
     // fulfillable_quantity > 0 means item is reserved and can be shipped (stock order)
-    if (!hasPreorderTag && order.line_items && Array.isArray(order.line_items)) {
+    if (!isPreorder && order.line_items && Array.isArray(order.line_items)) {
       for (const item of order.line_items) {
         const fulfillableQty = Number(item.fulfillable_quantity ?? item.quantity ?? 1);
         logger.info('category_fulfillable_check', 'Fulfillable quantity check for pre-order detection', { sku: item.sku, variantId: item.variant_id, fulfillableQuantity: fulfillableQty, orderId: order.id });
@@ -377,7 +444,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
     }
   }
 
-  logger.info('category_determined', 'Deal category set', { categoryId, source: isPOS ? 'POS' : 'Site', hasPreorderTag, sourceName, tags: orderTags, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+  logger.info('category_determined', 'Deal category set', { categoryId, source: isPOS ? 'POS' : 'Site', hasPreorderTag, hasPrepaidDeposit, sourceName, tags: orderTags, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
 
   // Customer name
   const customerName = order.customer
@@ -489,6 +556,11 @@ export async function mapShopifyOrderToBitrixDeal(order) {
   if (isCancelled) {
     paymentStatusEnumId = '58'; // Unpaid - cancelled orders are never paid
     logger.warn('payment_status_forced', 'Order is cancelled — forcing payment status to Unpaid (58)', { financialStatus: order.financial_status, paymentStatusEnumId, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
+  } else if (hasPrepaidDeposit) {
+    // Globo takes the deposit off-cycle, so Shopify still reports financial_status
+    // 'pending' — the deposit itself is the only evidence of a partial payment
+    paymentStatusEnumId = '60'; // 10% prepayment
+    logger.info('payment_status_prepaid', 'Globo deposit detected — payment status set to 10% prepayment (60)', { financialStatus: order.financial_status, paymentStatusEnumId, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
   } else {
     paymentStatusEnumId = financialStatusToPaymentStatus(order.financial_status);
     logger.info('payment_status_mapped', 'Payment status mapped from financial status', { financialStatus: order.financial_status, paymentStatusEnumId, orderId: order.id }, { entityType: 'order', entityId: String(order.id) });
@@ -1048,12 +1120,7 @@ export async function mapShopifyOrderToBitrixDeal(order) {
 
       // Prices and discounts
       const priceBrutto = Number(item.price || item.price_set?.shop_money?.amount || 0);
-      const discountAmount = Number(
-        item.discount_allocations?.[0]?.amount ||
-        item.discount_allocations?.[0]?.amount_set?.shop_money?.amount ||
-        item.total_discount ||
-        0
-      );
+      const discountAmount = getRealItemDiscount(item, prepaidDiscountIndexes);
       const priceAfterDiscount = priceBrutto - discountAmount;
       const discountRate = priceBrutto > 0 ? (discountAmount / priceBrutto) * 100 : 0;
 
